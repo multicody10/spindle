@@ -186,14 +186,15 @@ fn install_dir(app: &AppHandle, backend: RuntimeBackend) -> Result<PathBuf, Stri
 }
 
 fn executable_path(app: &AppHandle, backend: RuntimeBackend) -> Result<PathBuf, String> {
-    Ok(install_dir(app, backend)?.join("llama-server.exe"))
+    let directory = install_dir(app, backend)?;
+    find_server(&directory).ok_or_else(|| "The installed llama.cpp executable is missing.".to_string())
 }
 
 fn backend_status(app: &AppHandle, backend: RuntimeBackend) -> Result<BackendInstallStatus, String> {
-    let path = executable_path(app, backend)?;
+    let path = install_dir(app, backend)?;
     Ok(BackendInstallStatus {
         backend,
-        installed: path.is_file(),
+        installed: find_server(&path).is_some(),
         version: VERSION,
         asset: backend.asset(),
     })
@@ -222,7 +223,7 @@ pub async fn install(app: AppHandle, runtime: &ManagedRuntime, backend: RuntimeB
     }
 
     let destination = install_dir(&app, backend)?;
-    if destination.join("llama-server.exe").is_file() {
+    if find_server(&destination).is_some() {
         return backend_status(&app, backend);
     }
 
@@ -352,7 +353,9 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<(), String> {
 fn find_server(root: &Path) -> Option<PathBuf> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        let entries = fs::read_dir(directory).ok()?;
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -407,6 +410,7 @@ pub async fn start(
         return Err("A managed llama.cpp process is already running.".into());
     }
     crate::validate_configuration(&configuration)?;
+    crate::validate_model_constraints(&configuration)?;
     if configuration.model_path != model_path {
         return Err("The selected model path does not match the saved configuration.".into());
     }
@@ -415,9 +419,6 @@ pub async fn start(
         return Err("Select an existing GGUF model file before starting the runtime.".into());
     }
     let executable = executable_path(&app, backend)?;
-    if !executable.is_file() {
-        return Err(format!("The llama.cpp {backend:?} runtime is not installed yet."));
-    }
 
     runtime.clear_logs();
     runtime.push_log(format!("Starting llama.cpp {VERSION} ({})…", backend.id()));
