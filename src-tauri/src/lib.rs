@@ -54,16 +54,21 @@ fn cancel_chat(
     request_id: String,
     runtime: State<'_, chat::ChatRuntime>,
 ) -> bool {
+    if !is_valid_chat_request_id(&request_id) {
+        return false;
+    }
     runtime.cancel(&request_id)
 }
 
-fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
-    if request.request_id.len() != 36
-        || !request
-            .request_id
+fn is_valid_chat_request_id(request_id: &str) -> bool {
+    request_id.len() == 36
+        && request_id
             .chars()
             .all(|character| character.is_ascii_hexdigit() || character == '-')
-    {
+}
+
+fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
+    if !is_valid_chat_request_id(&request.request_id) {
         return Err("The chat request identifier is invalid.".into());
     }
     if request.model.trim().is_empty() || request.model.len() > 256 {
