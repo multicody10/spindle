@@ -22,7 +22,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 
 ## What is deliberately not claimed
 
-This milestone does **not** manage provider processes, launch a model itself, execute shell commands, edit project files, create coding-agent sessions, or provide a hardened sandbox. The Model Lab clearly labels settings as stored recommendations until a runtime adapter applies and verifies them. Agent execution will not be enabled before the permission broker and isolated worker are implemented.
+This milestone does **not** manage provider processes, launch a model itself, execute shell commands, edit project files, create coding-agent sessions, or provide a hardened sandbox. The Model Lab labels load-time runtime settings as recommendations until provider-side application and readback exist. Chat forwards generation controls supported by the selected provider; model loading and runtime configuration remain provider-managed. Agent execution will not be enabled before the permission broker and isolated worker are implemented.
 
 ## Development
 
