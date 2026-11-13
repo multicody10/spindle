@@ -681,12 +681,9 @@ mod tests {
         std::fs::write(&outside_read, "host-only sentinel")
             .expect("the host-only sentinel should be created");
 
-        let _listener = TcpListener::bind("127.0.0.1:0")
-            .expect("a live loopback listener should be available");
         let listener = TcpListener::bind("127.0.0.1:0")
-            .expect("a second loopback listener should be available");
+            .expect("a live loopback listener should be available");
         let loopback = listener.local_addr().unwrap().to_string();
-        drop(listener);
 
         std::fs::write(
             worktree.join("Cargo.toml"),
