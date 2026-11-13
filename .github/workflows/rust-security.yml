@@ -14,9 +14,12 @@ permissions:
 jobs:
   audit:
     runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: "1"
+      CARGO_TERM_COLOR: always
     steps:
       - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
@@ -25,6 +28,12 @@ jobs:
 
       - name: Resolve dependencies
         run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+
+      - name: Cache Rust build artifacts and tools
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: |
+            src-tauri -> src-tauri/target
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
