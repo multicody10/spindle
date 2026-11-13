@@ -109,6 +109,10 @@ function ChatView({
 
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
+    if (providerId === "llama-cpp" && !selected?.available) {
+      setModelId("");
+      return;
+    }
     if (!selected?.available) {
       setModelId("");
       const first = providers.find((provider) => provider.available);
