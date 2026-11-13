@@ -82,7 +82,7 @@ impl RuntimeBackend {
             Self::Vulkan => "llama-b12347-bin-win-vulkan-x64.zip",
             Self::Cuda => {
                 "llama-b12347-bin-win-cuda-12.4-x64.zip + cudart-llama-bin-win-cuda-12.4-x64.zip"
-            },
+            }
         }
     }
 
