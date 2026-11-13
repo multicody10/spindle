@@ -91,11 +91,13 @@ export interface WorkspaceFile {
   relativePath: string;
   content: string;
   sizeBytes: number;
+  revision: string;
 }
 
 export interface WorkspaceWriteResult {
   relativePath: string;
   bytesWritten: number;
+  revision: string;
 }
 
 export interface WorkspaceSearchMatch {
