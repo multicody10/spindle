@@ -124,7 +124,9 @@ async fn probe(
 ) -> LocalProviderStatus {
     let started = Instant::now();
     let endpoint = format!("{base_url}{path}");
-    let result = get_json(client, &endpoint).await.and_then(|document| parse_models(&document));
+    let result = get_json(client, &endpoint)
+        .await
+        .and_then(|document| parse_models(&document));
     let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
 
     match result {
@@ -220,10 +222,13 @@ mod tests {
             ]
         });
         let models = parse_openai_models(&document).unwrap();
-        assert_eq!(models.iter().map(|model| model.id.as_str()).collect::<Vec<_>>(), vec![
-            "local-model",
-            "another-model"
-        ]);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-model", "another-model"]
+        );
     }
 
     #[test]
