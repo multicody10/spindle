@@ -273,7 +273,15 @@ fn run_validation_windows(
         (OsString::from("GIT_TERMINAL_PROMPT"), OsString::from("0")),
     ];
     for key in ["INCLUDE", "LIB", "LIBPATH"] {
-        if let Some(value) = std::env::var_os(key) {
+        let value = if key == "LIB" {
+            match linker.as_deref() {
+                Some(linker) => Some(msvc_library_search_path(linker)?),
+                None => std::env::var_os(key),
+            }
+        } else {
+            std::env::var_os(key)
+        };
+        if let Some(value) = value {
             for directory in std::env::split_paths(&value) {
                 if directory.is_dir() {
                     let resolved = directory.canonicalize()
@@ -638,6 +646,85 @@ fn find_msvc_linker() -> Result<PathBuf, String> {
         "The Microsoft MSVC linker was not found. Install Visual Studio Build Tools with the C++ x64/x86 workload; an arbitrary link.exe on PATH is not accepted."
             .into(),
     )
+}
+
+#[cfg(windows)]
+fn msvc_library_search_path(linker: &Path) -> Result<std::ffi::OsString, String> {
+    let msvc_version = linker
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| "Could not resolve the MSVC toolchain root from link.exe.".to_string())?;
+    let msvc_libraries = msvc_version.join("lib").join("x64");
+    if !msvc_libraries.is_dir() {
+        return Err(format!(
+            "The MSVC library directory was not found: {}",
+            msvc_libraries.display()
+        ));
+    }
+
+    let mut directories = std::env::var_os("LIB")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    directories.push(msvc_libraries);
+    directories.extend(windows_sdk_library_directories());
+
+    directories.retain(|directory| directory.is_dir());
+    let mut resolved = Vec::with_capacity(directories.len());
+    for directory in directories {
+        let path = directory.canonicalize().map_err(|error| {
+            format!(
+                "Could not resolve the MSVC library directory {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !resolved.contains(&path) {
+            resolved.push(path);
+        }
+    }
+    if !resolved.iter().any(|directory| directory.join("kernel32.lib").is_file()) {
+        return Err(
+            "The Windows SDK x64 library directory containing kernel32.lib was not found; install the Windows 10/11 SDK with Visual Studio Build Tools."
+                .into(),
+        );
+    }
+    std::env::join_paths(resolved)
+        .map_err(|error| format!("Could not construct the isolated MSVC LIB path: {error}"))
+}
+
+#[cfg(windows)]
+fn windows_sdk_library_directories() -> Vec<PathBuf> {
+    let mut sdk_roots = Vec::new();
+    if let Some(root) = std::env::var_os("WindowsSdkDir").map(PathBuf::from) {
+        sdk_roots.push(root);
+    }
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+    sdk_roots.push(program_files_x86.join("Windows Kits").join("10"));
+
+    for sdk_root in sdk_roots {
+        let library_root = sdk_root.join("Lib");
+        let Ok(entries) = std::fs::read_dir(&library_root) else {
+            continue;
+        };
+        let mut versions = entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("10."))
+            .collect::<Vec<_>>();
+        versions.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        for version in versions {
+            let version_root = version.path();
+            let um = version_root.join("um").join("x64");
+            let ucrt = version_root.join("ucrt").join("x64");
+            if um.join("kernel32.lib").is_file() && ucrt.is_dir() {
+                return vec![um, ucrt];
+            }
+        }
+    }
+    Vec::new()
 }
 
 #[cfg(windows)]
