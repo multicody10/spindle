@@ -24,6 +24,7 @@ import type {
   LoadedAgentSkill,
   ProjectMemory,
   ProviderCapabilities,
+  BenchmarkRun,
   SessionPermissions,
   PermissionScope,
   GenerationSettings,
@@ -36,6 +37,12 @@ import type {
 
 export const api = {
   providerCapabilities: () => invoke<ProviderCapabilities[]>("provider_capabilities"),
+  runModelBenchmark: (
+    providerId: string, modelId: string, contextTokens: number,
+    generation: GenerationSettings, iterations: number
+  ) => invoke<BenchmarkRun>("run_model_benchmark", { providerId, modelId, contextTokens, generation, iterations }),
+  listModelBenchmarks: (limit = 20) => invoke<BenchmarkRun[]>("list_model_benchmarks", { limit }),
+
   projectPermissionStatus: (sessionId: string) => invoke<SessionPermissions>("project_permission_status", { sessionId }),
   grantProjectPermissions: (sessionId: string, requested: PermissionScope[]) => invoke<SessionPermissions>("grant_project_permissions", { sessionId, requested }),
   revokeProjectPermissions: (sessionId: string, requested: PermissionScope[]) => invoke<SessionPermissions>("revoke_project_permissions", { sessionId, requested }),
@@ -63,12 +70,6 @@ export const api = {
   ) => invoke<AgentTaskDetail>("plan_project_task", { projectId, sessionId, prompt, providerId, model, contextTokens, generation }),
   listAgentSkills: (projectId: string) => invoke<AgentSkill[]>("list_agent_skills", { projectId }),
   loadAgentSkill: (projectId: string, name: string) => invoke<LoadedAgentSkill>("load_agent_skill", { projectId, name }),
-  saveProjectMemory: (
-    projectId: string, kind: string, memoryKey: string, content: string,
-    sourcePath = "", sourceRevision = "", confidence = 0.8, importance = 0.6
-  ) => invoke<void>("save_project_memory", {
-    projectId, kind, memoryKey, content, sourcePath, sourceRevision, confidence, importance
-  }),
   searchProjectMemory: (projectId: string, query: string, limit = 8) =>
     invoke<ProjectMemory[]>("search_project_memory", { projectId, query, limit }),
   appInfo: () => invoke<AppInfo>("app_info"),

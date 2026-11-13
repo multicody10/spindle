@@ -1,4 +1,5 @@
 mod agent_planner;
+mod benchmark;
 mod capabilities;
 mod chat;
 mod domain;
@@ -256,6 +257,34 @@ async fn plan_project_task(
         context_tokens,
         generation,
     ).await
+}
+
+#[tauri::command]
+async fn run_model_benchmark(
+    app: AppHandle,
+    runtime: State<'_, chat::ChatRuntime>,
+    provider_id: String,
+    model_id: String,
+    context_tokens: usize,
+    generation: domain::GenerationSettings,
+    iterations: usize,
+) -> Result<benchmark::BenchmarkRun, String> {
+    let database = database_path(&app)?;
+    benchmark::run(
+        app,
+        database,
+        runtime.inner(),
+        provider_id,
+        model_id,
+        context_tokens,
+        generation,
+        iterations,
+    ).await
+}
+
+#[tauri::command]
+async fn list_model_benchmarks(app: AppHandle, limit: usize) -> Result<Vec<benchmark::BenchmarkRun>, String> {
+    with_project_database(&app, move |database| benchmark::list_runs(database, limit)).await
 }
 
 #[tauri::command]
@@ -699,6 +728,8 @@ pub fn run() {
             list_agent_skills,
             load_agent_skill,
             plan_project_task,
+            run_model_benchmark,
+            list_model_benchmarks,
             local_provider_statuses,
             workspace_status,
             grant_workspace_access,

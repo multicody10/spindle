@@ -27,6 +27,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Use the bundled Roboto typeface and supplied Spindle thimble/thread wordmark.
 - Validate pull requests with frontend and Rust checks; run NSIS packaging manually and CodeQL/supply-chain scans weekly or on demand.
 - Build and publish signed Windows NSIS releases with an in-app Tauri updater manifest.
+- Run user-triggered local inference benchmarks and retain metrics in SQLite without uploading prompts or generated responses.
 
 ## What is deliberately not claimed
 

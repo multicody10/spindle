@@ -5,6 +5,7 @@ import ChatView from "./components/ChatView";
 import RuntimeView from "./components/RuntimeView";
 import WorkspaceView from "./components/WorkspaceView";
 import ProjectsView from "./components/ProjectsView";
+import BenchmarkView from "./components/BenchmarkView";
 import spindleLogo from "./assets/brand/spindle-logo.webp";
 import {
   DEFAULT_CONFIGURATION,
@@ -45,7 +46,7 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects">("model-lab");
+  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("model-lab");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
@@ -283,7 +284,7 @@ function App() {
     generation: { ...current.generation, [key]: value }
   }));
 
-  const openProjectSession = (_project: Project, session: ProjectSession) => {
+  const openProjectSession = (project: Project, session: ProjectSession) => {
     setActiveSession(session);
     setActiveView("chat");
   };
@@ -302,6 +303,7 @@ function App() {
         <button className={"nav-item " + (activeView === "chat" ? "active" : "")} onClick={() => setActiveView("chat")}><span className="nav-icon">◉</span> Chat</button>
         <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
         <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
+        <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmark</button>
         <div className="sidebar-bottom">
           <div className="runtime-state"><span className="status-dot" /> Configuration core online</div>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
@@ -311,8 +313,8 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "projects" ? "PROJECT MANAGEMENT" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
-            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
+            <div className="eyebrow">{activeView === "projects" ? "PROJECT MANAGEMENT" : activeView === "benchmark" ? "MODEL PERFORMANCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
+            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Model benchmarks" : activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
           </div>
           <div className="top-actions">
             <span className="local-chip"><span /> LOCAL FIRST</span>
@@ -323,6 +325,8 @@ function App() {
         <div className="content">
           {activeView === "projects" ? (
             <ProjectsView providers={localProviders} configuration={configuration} onOpenSession={openProjectSession} />
+          ) : activeView === "benchmark" ? (
+            <BenchmarkView providers={localProviders} configuration={configuration} />
           ) : activeView === "chat" ? (
             <ChatView
               key={activeSession?.id ?? "ephemeral-chat"}

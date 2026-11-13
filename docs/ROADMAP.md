@@ -32,7 +32,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
 - [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.
-- [ ] Calibration benchmarks with user consent.
+- [x] Explicit opt-in sequential local benchmarks with persisted duration, output token, and provider-reported throughput samples.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
 
 ## Core developer workflow
