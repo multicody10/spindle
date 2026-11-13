@@ -1015,7 +1015,11 @@ pub struct SaveProjectMemoryInput {
 pub fn save_project_memory(database: PathBuf, input: SaveProjectMemoryInput) -> Result<(), String> {
     if !matches!(
         input.kind.as_str(),
-        "convention" | "user_preference" | "architecture_decision" | "task_outcome" | "failure_solution"
+        "convention"
+            | "user_preference"
+            | "architecture_decision"
+            | "task_outcome"
+            | "failure_solution"
     ) {
         return Err("Unsupported project memory category.".into());
     }
@@ -1242,16 +1246,27 @@ mod tests {
             "Example".into(),
         )
         .unwrap();
-        save_project_memory(database.clone(), SaveProjectMemoryInput {
-            project_id: project.id.clone(),
-            kind: "architecture_decision".into(),
-            memory_key: "auth-flow".into(),
-            content: "Authentication lives in src/auth.ts".into(),
-            source_path: "src/auth.ts".into(),
-            source_revision: "rev1".into(),
-            confidence: 0.9,
-            importance: 0.8,
-        }).unwrap();
+        save_project_memory(
+            database.clone(),
+            SaveProjectMemoryInput {
+                project_id: project.id.clone(),
+                kind: "architecture_decision".into(),
+                memory_key: "auth-flow".into(),
+                content: "Authentication lives in src/auth.ts".into(),
+                source_path: "src/auth.ts".into(),
+                source_revision: "rev1".into(),
+                confidence: 0.9,
+                importance: 0.8,
+            },
+        )
+        .unwrap();
+        let results = search_project_memory(
+            database,
+            project.id,
+            "authentication auth".into(),
+            5,
+        )
+        .unwrap();
         assert_eq!(results.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
