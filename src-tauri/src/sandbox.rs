@@ -291,8 +291,13 @@ fn run_validation_windows(
     let job_handle = match child.job_guard.as_ref() {
         Some(guard) => guard.as_handle().0,
         None => {
-            terminate_worker_process(child.pid);
-            return Err("The AppContainer launcher did not return its required Job Object guard; the suspended worker was terminated.".into());
+            let terminated = terminate_worker_process(child.pid);
+            let detail = if terminated {
+                "the suspended worker was terminated"
+            } else {
+                "Windows did not confirm termination of the suspended process"
+            };
+            return Err(format!("The AppContainer launcher did not return its required Job Object guard; {detail}."));
         }
     };
     configure_worker_job(job_handle)?;
@@ -469,13 +474,15 @@ fn resume_suspended_worker(process_id: u32) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn terminate_worker_process(process_id: u32) {
+fn terminate_worker_process(process_id: u32) -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-    if let Ok(process) = unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) } {
-        let _ = unsafe { TerminateProcess(process, 1) };
-        let _ = unsafe { CloseHandle(process) };
-    }
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) }) else {
+        return false;
+    };
+    let terminated = unsafe { TerminateProcess(process, 1) }.is_ok();
+    let closed = unsafe { CloseHandle(process) }.is_ok();
+    terminated && closed
 }
 
 #[cfg(windows)]
