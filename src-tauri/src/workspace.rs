@@ -378,9 +378,13 @@ impl WorkspaceManager {
                 if metadata.file_type().is_symlink() {
                     continue;
                 }
+                let canonical = match fs::canonicalize(&path) {
+                    Ok(path) if path.starts_with(&session.root) => path,
+                    _ => continue,
+                };
                 if metadata.is_dir() {
                     if !is_ignored_directory(&name) {
-                        pending.push((path, depth + 1));
+                        pending.push((canonical, depth + 1));
                     }
                     continue;
                 }
@@ -388,7 +392,7 @@ impl WorkspaceManager {
                     continue;
                 }
 
-                let relative = match relative_display(&session.root, &path) {
+                let relative = match relative_display(&session.root, &canonical) {
                     Ok(relative) => relative,
                     Err(_) => continue,
                 };
@@ -531,6 +535,7 @@ fn relative_display(root: &Path, path: &Path) -> Result<String, String> {
 fn is_sensitive_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with(".env")
+        || matches!(name.as_str(), ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg")
         || name == ".npmrc"
         || name == ".pypirc"
         || name == "id_rsa"
@@ -610,8 +615,11 @@ mod tests {
         manager
             .write_file(&grant.session_id, "src-notes.txt", "workspace text".into())
             .unwrap();
+        manager
+            .write_file(&grant.session_id, "src-notes.txt", "updated text".into())
+            .unwrap();
         let file = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
-        assert_eq!(file.content, "workspace text");
+        assert_eq!(file.content, "updated text");
         assert!(manager
             .write_file(&grant.session_id, "../escape.txt", "no".into())
             .is_err());
@@ -625,7 +633,10 @@ mod tests {
             .grant(root.to_string_lossy().into_owned(), true)
             .unwrap();
         fs::write(root.join(".env.local"), "API_KEY=secret").unwrap();
+        fs::create_dir_all(root.join(".ssh")).unwrap();
+        fs::write(root.join(".ssh").join("id_rsa"), "private key").unwrap();
         assert!(manager.read_file(&grant.session_id, ".env.local").is_err());
+        assert!(manager.read_file(&grant.session_id, ".ssh/id_rsa").is_err());
         assert!(manager
             .write_file(&grant.session_id, ".env.local", "changed".into())
             .is_err());
