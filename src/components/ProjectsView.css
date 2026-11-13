@@ -1,0 +1,62 @@
+.projects-view { display: flex; flex-direction: column; gap: 14px; }
+.projects-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:6px; }
+.projects-heading h2 { margin-top:6px; font-size:19px; }
+.projects-heading p { color:#8190a3; font-size:11px; margin:6px 0 0; }
+.projects-columns { display:grid; grid-template-columns:minmax(220px, 290px) minmax(0,1fr); gap:12px; align-items:start; }
+.projects-rail { position:sticky; top:16px; }
+.projects-section-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.projects-section-title strong { color:#dce6f2; font-size:11px; display:block; }
+.projects-section-title small { display:block; color:#75869b; font-size:9px; margin-top:4px; line-height:1.45; overflow-wrap:anywhere; }
+.projects-section-title > span { color:#8190a3; font-size:9px; }
+.projects-list,.session-list,.task-list,.skill-list { display:flex; flex-direction:column; gap:6px; }
+.project-entry,.task-list button,.skill-list button { width:100%; text-align:left; display:flex; flex-direction:column; gap:5px; border:1px solid #283645; border-radius:5px; padding:10px; background:#0d141d; color:#dce5ef; min-width:0; }
+.project-entry.selected,.session-entry.selected { border-color:#477cad; background:#142438; }
+.project-entry strong,.task-list strong,.skill-list strong { font-size:10px; }
+.project-entry small,.task-list small,.skill-list small { color:#7e8da0; font-size:9px; overflow-wrap:anywhere; }
+.project-create { display:flex; flex-direction:column; gap:10px; padding-top:15px; margin-top:14px; border-top:1px solid #293543; }
+.project-create label,.planner-controls label { display:flex; flex-direction:column; gap:6px; color:#8797aa; font-size:8px; letter-spacing:.1em; font-weight:700; }
+.project-create input,.planner-controls select,.planner-panel textarea,.memory-search input { min-width:0; width:100%; background:#0a1017; border:1px solid #2a394a; border-radius:5px; color:#dce5ef; padding:9px; font-size:10px; letter-spacing:normal; }
+.project-create small { color:#75869b; font-size:9px; line-height:1.5; }
+.projects-main { min-width:0; display:flex; flex-direction:column; gap:12px; }
+.projects-empty,.projects-empty-state p { color:#75869b; font-size:10px; line-height:1.55; }
+.projects-empty-state { min-height:180px; display:flex; flex-direction:column; justify-content:center; }
+.projects-empty-state strong { color:#dce6f2; font-size:13px; }
+.projects-sessions .projects-section-title { align-items:flex-start; }
+.session-entry { display:flex; gap:10px; align-items:center; justify-content:space-between; border:1px solid #283645; border-radius:5px; padding:8px; min-width:0; }
+.session-entry > button:first-child { flex:1; min-width:0; text-align:left; border:0; background:transparent; color:#dce5ef; display:flex; flex-direction:column; gap:5px; }
+.session-entry strong { font-size:10px; }
+.session-entry small { color:#7e8da0; font-size:9px; overflow-wrap:anywhere; }
+.planning-label { font-size:8px !important; letter-spacing:.12em; color:#89c9aa !important; border:1px solid #315342; padding:5px 7px; border-radius:4px; }
+.planner-controls { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+.planner-panel textarea { resize:vertical; line-height:1.5; }
+.planner-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px; }
+.planner-actions small,.plan-review-actions span { color:#75869b; font-size:9px; }
+.task-state { font-style:normal; color:#8ca0b5; font-size:8px; text-transform:uppercase; letter-spacing:.08em; }
+.task-state.awaiting_approval { color:#e2bd79; }
+.task-state.approved { color:#83d5ad; }
+.task-state.failed,.task-state.rejected { color:#d88c8c; }
+.plan-summary { color:#c4cfdd; font-size:11px; line-height:1.55; }
+.plan-steps { padding-left:21px; display:flex; flex-direction:column; gap:12px; }
+.plan-steps li { padding-left:4px; color:#8ca0b5; }
+.plan-steps strong { color:#dce6f2; font-size:10px; }
+.plan-steps p { color:#adb9c8; font-size:10px; line-height:1.5; margin:5px 0; }
+.plan-steps code,.plan-steps small { display:block; color:#8195aa; font-size:9px; line-height:1.5; overflow-wrap:anywhere; margin-top:4px; }
+.plan-review-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding-top:13px; border-top:1px solid #293543; }
+.plan-review-actions span { margin-right:auto; }
+.approved-note { color:#83d5ad; font-size:10px; }
+.skill-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.skill-list button span { color:#a4b1c0; font-size:9px; line-height:1.45; }
+.skill-content { max-height:300px; overflow:auto; white-space:pre-wrap; color:#aebdcd; background:#0a1017; border:1px solid #293543; padding:10px; border-radius:4px; font-size:9px; }
+.memory-search { display:flex; gap:8px; }
+.memory-panel article { border-top:1px solid #293543; padding:10px 0; }
+.memory-panel article strong,.memory-panel article small { display:block; font-size:10px; }
+.memory-panel article small { color:#75869b; font-size:8px; margin-top:4px; }
+.memory-panel article p { color:#aab7c6; font-size:10px; line-height:1.5; margin:6px 0 0; }
+.projects-notice { color:#7e8da0; font-size:9px; min-height:16px; }
+.projects-notice .error { color:#e39a9a; }
+@media (max-width: 1000px) { .projects-columns { grid-template-columns:1fr; } .projects-rail { position:static; } }
+
+.permission-scopes { display:flex; flex-wrap:wrap; gap:6px; }
+.permission-scopes span { border:1px solid #34404f; color:#8493a5; background:#0b1118; border-radius:4px; padding:6px 8px; font-size:9px; }
+.permission-scopes span.granted { border-color:#315342; color:#91d1b0; background:rgba(57,130,98,.09); }
+.session-permission-panel .projects-empty { margin:10px 0 0; }

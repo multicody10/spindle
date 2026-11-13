@@ -134,6 +134,7 @@ export interface ChatDelta {
 }
 
 export interface ChatResult {
+  content: string;
   providerId: string;
   model: string;
   durationMs: number;
@@ -243,6 +244,40 @@ export interface AppInfo {
   updaterConfigured: boolean;
   platform: string;
 }
+
+export interface Project {
+  id: string; name: string; rootPath: string; createdAt: number; updatedAt: number; lastOpenedAt: number | null;
+}
+export interface ProjectSession {
+  id: string; projectId: string; title: string; providerId: ChatProviderId | null; modelId: string | null;
+  status: string; createdAt: number; updatedAt: number;
+}
+export interface PersistedSessionMessage {
+  id: string; sessionId: string; sequence: number; role: "user" | "assistant" | "system"; content: string; createdAt: number;
+}
+export interface AgentPlanStep { title: string; description: string; targetPaths: string[]; validation: string; risk: string; }
+export interface AgentPlan { summary: string; steps: AgentPlanStep[]; }
+export interface AgentTask {
+  id: string; projectId: string; sessionId: string; title: string; prompt: string;
+  state: string; plan: AgentPlan | null; createdAt: number; updatedAt: number; approvedAt: number | null;
+}
+export interface AgentTaskStep extends AgentPlanStep { id: string; taskId: string; sequence: number; status: string; }
+export interface AgentTaskDetail { task: AgentTask; steps: AgentTaskStep[]; }
+export interface AgentTaskEvent { id: string; taskId: string; sequence: number; kind: string; payload: Record<string, unknown> | null; createdAt: number; }
+export interface ProjectMemory {
+  id: string; projectId: string; kind: string; memoryKey: string; content: string;
+  sourcePath: string; sourceRevision: string; confidence: number; importance: number; updatedAt: number;
+}
+export type CapabilitySupport = "supported" | "unsupported" | "provider_dependent" | "not_implemented";
+export interface ProviderCapabilities {
+  providerId: ChatProviderId; displayName: string; protocol: string; streaming: CapabilitySupport;
+  cancellation: CapabilitySupport; usageMetrics: CapabilitySupport; toolCalling: CapabilitySupport;
+  structuredOutput: CapabilitySupport; parallelSessions: CapabilitySupport; managedBySpindle: boolean;
+}
+export type PermissionScope = "project_read" | "project_write" | "process_execution" | "external_network" | "mcp_tools" | "parallel_agents";
+export interface SessionPermissions { sessionId: string; projectId: string; scopes: PermissionScope[]; expiresOnRestart: boolean; }
+export interface AgentSkill { name: string; description: string; source: string; manifestPath: string; }
+export interface LoadedAgentSkill { name: string; source: string; manifest: string; }
 
 export interface SavedPreset {
   name: string;

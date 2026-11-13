@@ -4,7 +4,7 @@
 
 Spindle is the successor project to Rivet, designed around a Rust/Tauri application core, model-agnostic provider architecture, hardware-aware model configuration, and security boundaries that do not rely on model compliance.
 
-> **Current status:** Foundation milestone. The desktop shell, GGUF metadata inspection, Windows hardware inventory, explainable configuration recommendations, SQLite persistence, local Ollama/LM Studio discovery, streamed local chat through Ollama, LM Studio, and the managed llama.cpp runtime, and signed Windows releases are implemented. A permission-gated workspace browser/editor is implemented. Agent orchestration, persistent sessions, and OS-level command isolation are not implemented yet.
+> **Current status:** Foundation and Project Core preview. Spindle now provides persistent projects and independent SQLite-backed sessions, saved local chat transcripts, structured read-only project planning, reviewable task plans, an append-only task event history, project memory retrieval, Agent Skill discovery, per-session permission scopes, and a provider capability registry. It still does not execute agent tools, run shell commands, host MCP servers, or provide an OS-enforced sandbox.
 
 ## What works in this foundation
 
@@ -17,6 +17,11 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Install pinned Windows x64 llama.cpp CPU, Vulkan, or NVIDIA CUDA 12.4 builds after size and SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
 - Browse GGUF models from the dedicated `Documents/Spindle/Models` library and existing LM Studio, GPT4All, and Jan model folders without copying or moving large model files.
 - Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded file browsing, text search, and editing.
+- Register projects and maintain independent sessions, saved messages, structured plans, task events, and approval state in SQLite.
+- Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp; approvals record intent but never execute the plan.
+- Discover standard Agent Skills from project and global SKILL.md directories; explicitly referenced skills are added to planner context without adding permissions.
+- Store project-scoped memory and retrieve bounded lexical matches as potentially stale planning hints.
+- Apply per-session permission scopes with read-only defaults and restart expiry.
 - Validate configuration ranges and chat requests in the Rust backend.
 - Chat locally with Ollama or LM Studio, including streamed responses, cancellation, and provider-reported token statistics.
 - Use the bundled Roboto typeface and supplied Spindle thimble/thread wordmark.
@@ -25,7 +30,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 
 ## What is deliberately not claimed
 
-This milestone manages a single llama.cpp model process and supports manually editing project files through an explicit workspace grant, but it does **not** execute agent tools, run shell commands, create coding-agent sessions, or provide a hardened sandbox. Workspace access is a narrow Rust-side IPC permission gate, not an OS-enforced sandbox. The Ollama and LM Studio processes remain externally managed. The managed llama.cpp runtime applies load-time settings to its process and reports the values exposed by /props; GPU offload and some load-time settings remain unverified. Ollama and LM Studio remain provider-managed. Chat forwards generation controls supported by the selected provider. Autonomous agent execution will not be enabled before the full permission broker and isolated worker are implemented.
+Spindle now manages project sessions and read-only planning, but it does **not** execute agent tools, run shell commands, start MCP processes, or provide a hardened OS sandbox. Workspace access is a narrow Rust-side IPC permission gate, not an OS-enforced sandbox. The Ollama and LM Studio processes remain externally managed. The managed llama.cpp runtime applies load-time settings to its process and reports the values exposed by /props; GPU offload and some load-time settings remain unverified. Ollama and LM Studio remain provider-managed. Chat forwards generation controls supported by the selected provider. Autonomous agent execution will not be enabled before the full permission broker and isolated worker are implemented.
 
 ## Development
 
