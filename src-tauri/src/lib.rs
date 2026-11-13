@@ -6,6 +6,7 @@ mod child_process;
 mod domain;
 mod gguf;
 mod hardware;
+mod inference;
 mod model_library;
 mod optimizer;
 mod permissions;
@@ -354,6 +355,7 @@ async fn load_agent_skill(
 async fn plan_project_task(
     app: AppHandle,
     runtime: State<'_, chat::ChatRuntime>,
+    managed_runtime: State<'_, runtime::ManagedRuntime>,
     permissions: State<'_, permissions::PermissionBroker>,
     input: agent_planner::PlanTaskRequest,
 ) -> Result<projects::TaskDetail, String> {
@@ -369,16 +371,31 @@ async fn plan_project_task(
     }
     permissions.register_session(session.id.clone(), session.project_id.clone())?;
     permissions.require(&session.id, permissions::PermissionScope::ProjectRead)?;
-    agent_planner::create_read_only_plan(app, database, runtime.inner(), input).await
+    agent_planner::create_read_only_plan(
+        app,
+        database,
+        runtime.inner(),
+        &managed_runtime.inference,
+        input,
+    )
+    .await
 }
 #[tauri::command]
 async fn run_model_benchmark(
     app: AppHandle,
     runtime: State<'_, chat::ChatRuntime>,
+    managed_runtime: State<'_, runtime::ManagedRuntime>,
     input: benchmark::BenchmarkRequest,
 ) -> Result<benchmark::BenchmarkRun, String> {
     let database = database_path(&app)?;
-    benchmark::run(app, database, runtime.inner(), input).await
+    benchmark::run(
+        app,
+        database,
+        runtime.inner(),
+        &managed_runtime.inference,
+        input,
+    )
+    .await
 }
 #[tauri::command]
 async fn list_model_benchmarks(
@@ -510,12 +527,13 @@ async fn stop_llama_runtime(
 async fn start_chat(
     app: AppHandle,
     runtime: State<'_, chat::ChatRuntime>,
+    managed_runtime: State<'_, runtime::ManagedRuntime>,
     request: chat::ChatRequest,
 ) -> Result<chat::ChatResult, String> {
     validate_chat_request(&request)?;
     let request_id = request.request_id.clone();
     let cancellation = runtime.begin(&request_id)?;
-    let result = chat::run(app, request, cancellation).await;
+    let result = chat::run(app, request, cancellation, &managed_runtime.inference).await;
     runtime.finish(&request_id);
     result
 }
@@ -536,6 +554,15 @@ fn is_valid_chat_request_id(request_id: &str) -> bool {
 }
 
 pub(crate) fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
+    if request.session_id.is_empty()
+        || request.session_id.len() > 128
+        || !request
+            .session_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err("The inference session identifier is invalid.".into());
+    }
     if !is_valid_chat_request_id(&request.request_id) {
         return Err("The chat request identifier is invalid.".into());
     }
@@ -871,6 +898,7 @@ mod tests {
             ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
         let request = chat::ChatRequest {
             request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "123e4567-e89b-12d3-a456-426614174001".into(),
             provider_id: chat::ChatProvider::Ollama,
             model: "qwen3.5:9b".into(),
             messages: vec![chat::ChatMessage {
@@ -889,6 +917,7 @@ mod tests {
             ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
         let request = chat::ChatRequest {
             request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "123e4567-e89b-12d3-a456-426614174001".into(),
             provider_id: chat::ChatProvider::Ollama,
             model: "qwen3.5:9b".into(),
             messages: vec![chat::ChatMessage {
@@ -909,6 +938,7 @@ mod tests {
             ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
         let request = chat::ChatRequest {
             request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "123e4567-e89b-12d3-a456-426614174001".into(),
             provider_id: chat::ChatProvider::Ollama,
             model: "qwen3.5:9b".into(),
             messages: vec![chat::ChatMessage {

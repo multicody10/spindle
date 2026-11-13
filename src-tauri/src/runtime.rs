@@ -1,4 +1,7 @@
-use crate::domain::ModelConfiguration;
+use crate::{
+    domain::ModelConfiguration,
+    inference::{InferenceRuntimeManager, InferenceRuntimeStatus},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -129,6 +132,7 @@ pub struct RuntimeStatus {
     pub installed_backends: Vec<BackendInstallStatus>,
     pub logs: Vec<String>,
     pub applied_settings: Option<AppliedSettings>,
+    pub inference: InferenceRuntimeStatus,
 }
 
 struct ProcessState {
@@ -141,6 +145,7 @@ struct ProcessState {
 pub struct ManagedRuntime {
     process: Mutex<Option<ProcessState>>,
     logs: Arc<Mutex<VecDeque<String>>>,
+    pub inference: InferenceRuntimeManager,
 }
 
 impl Drop for ManagedRuntime {
@@ -191,6 +196,7 @@ impl ManagedRuntime {
                     Ok(Some(status)) => {
                         self.push_log(format!("llama-server exited with status {status}."));
                         *state = None;
+                        self.inference.invalidate();
                     }
                     Err(error) => {
                         self.push_log(format!("Could not inspect llama-server process: {error}"))
@@ -324,6 +330,7 @@ pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<Runtime
         ],
         logs,
         applied_settings,
+        inference: runtime.inference.status(),
     })
 }
 
@@ -709,6 +716,7 @@ pub async fn start(
     if runtime.take_snapshot().0 {
         return Err("A managed llama.cpp process is already running.".into());
     }
+    runtime.inference.ensure_idle()?;
     crate::validate_configuration(&configuration)?;
     let model_metadata = crate::validate_model_constraints(&configuration)?;
     if configuration.model_path != model_path {
@@ -736,6 +744,10 @@ pub async fn start(
         model_metadata.quantization.as_deref().unwrap_or("unknown")
     ));
     runtime.push_log(format!("Starting llama.cpp {VERSION} ({})…", backend.id()));
+
+    let slot_cache_dir = runtime_root(&app)?.join("slot-cache");
+    fs::create_dir_all(&slot_cache_dir)
+        .map_err(|error| format!("Could not create the managed KV cache directory: {error}"))?;
 
     let mut command = Command::new(&executable);
     crate::child_process::hide_console_window(&mut command);
@@ -768,6 +780,8 @@ pub async fn start(
         })
         .arg("--parallel")
         .arg(configuration.runtime.parallel_slots.to_string())
+        .arg("--slot-save-path")
+        .arg(&slot_cache_dir)
         .arg("--flash-attn")
         .arg(if configuration.runtime.flash_attention {
             "on"
@@ -876,7 +890,13 @@ pub async fn start(
                         .is_some_and(|info| info.starts_with(VERSION))
             })
         {
-            runtime.push_log("Model loaded. The pinned llama.cpp process is ready for local chat.");
+            runtime.inference.configure(
+                &expected_model_path,
+                backend,
+                &configuration.runtime,
+                VERSION,
+            )?;
+            runtime.push_log("Model loaded. The shared inference runtime is ready for local chat.");
             return status(&app, runtime).await;
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
@@ -887,7 +907,12 @@ pub async fn start(
 }
 
 pub fn stop(runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
-    runtime.stop_process()?;
+    runtime.inference.begin_shutdown()?;
+    if let Err(error) = runtime.stop_process() {
+        runtime.inference.resume();
+        return Err(error);
+    }
+    runtime.inference.clear()?;
     Ok(RuntimeStatus {
         version: VERSION,
         running: false,
@@ -897,6 +922,7 @@ pub fn stop(runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
         installed_backends: Vec::new(),
         logs: runtime.take_snapshot().4,
         applied_settings: None,
+        inference: runtime.inference.status(),
     })
 }
 

@@ -1,5 +1,5 @@
 use crate::chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime};
-use crate::domain::GenerationSettings;
+use crate::{domain::GenerationSettings, inference::InferenceRuntimeManager};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -295,6 +295,7 @@ pub async fn run(
     app: AppHandle,
     database: PathBuf,
     runtime: &ChatRuntime,
+    inference: &InferenceRuntimeManager,
     input: BenchmarkRequest,
 ) -> Result<BenchmarkRun, String> {
     let BenchmarkRequest {
@@ -339,6 +340,7 @@ pub async fn run(
         let id = request_id();
         let request = ChatRequest {
             request_id: id.clone(),
+            session_id: format!("benchmark-{run_id}"),
             provider_id: provider,
             model: model_id.clone(),
             messages: vec![
@@ -350,7 +352,7 @@ pub async fn run(
         };
         crate::validate_chat_request(&request)?;
         let cancellation = runtime.begin(&id)?;
-        let result = chat::run(app.clone(), request, cancellation).await;
+        let result = chat::run(app.clone(), request, cancellation, inference).await;
         runtime.finish(&id);
         let sample = match result {
             Ok(result) => BenchmarkSample {

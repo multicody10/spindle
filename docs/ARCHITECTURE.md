@@ -6,7 +6,7 @@ Spindle uses a native Rust/Tauri 2 core and a React/TypeScript/Vite interface. R
 
 Current request path:
 
-React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, verified llama.cpp runtime installer/process manager, temporary workspace permission manager and bounded project file service, and SQLite persistence.
+React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, verified llama.cpp runtime installer/process manager with a shared inference scheduler, temporary workspace permission manager and bounded project file service, and SQLite persistence.
 
 ## Trust boundaries
 
@@ -18,6 +18,7 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - Ollama and LM Studio discovery/chat use fixed IPv4 loopback endpoints and never launch or control those external provider processes.
 - The managed llama.cpp installer uses fixed official release URLs, pinned SHA-256 digests, bounded downloads, safe ZIP path checks, and per-user application-data storage.
 - The process manager launches only the installed, verified llama-server.exe with typed settings and fixed 127.0.0.1 binding; it does not invoke a shell or accept arbitrary executable paths.
+- The shared inference manager admits at most one active generation per application session and bounds total concurrency to the configured llama.cpp parallel slots. Each session retains an assigned server slot while it remains in the in-memory LRU set; chat requests pin `id_slot` and enable `cache_prompt` for KV-prefix reuse. Slot eviction erases the old server cache before reuse. Excess requests wait in a bounded, cancellable queue; stopping or replacing the model is rejected while requests are active or queued.
 - Chat streams provider tokens back to the UI through scoped Tauri events; each request can be cancelled independently.
 - Chat history exists only in the active window and is not persisted.
 - Workspace access is granted explicitly for one project root and one application session. Read access is automatic within that grant; writes require a separate user-selected permission.
@@ -30,7 +31,7 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 The next architecture layers are:
 
 1. Provider capability registry and managed runtime adapters, extending the existing Ollama and LM Studio streaming chat boundary.
-2. Central inference runtime manager, with explicit weight sharing and per-session context ownership.
+2. [x] Central inference runtime manager for one shared loaded weight set, per-session request leases, a bounded queue, and configured parallel-slot admission. Persistent KV-cache reuse across turns remains future work.
 3. Session coordinator and project-scoped persistence.
 4. General permission broker with policy evaluation independent of model output; the current workspace grant manager is the initial file-access slice.
 5. Restricted execution worker with Windows AppContainer/LPAC where compatible, plus resource and process-tree controls.
@@ -44,4 +45,4 @@ The target precedence is session override, model-specific override, automatic re
 
 ## Inference runtime
 
-llama.cpp is the initial managed local runtime target, not a custom inference engine. Future adapters must distinguish loaded model weights, runtime configuration, session context, KV cache, and active request scheduling. Compatible sessions may share loaded weights only when their load-time configuration is compatible. Session state and KV allocations remain independently accounted for.
+llama.cpp is the initial managed local runtime target, not a custom inference engine. Spindle loads one model process and shares that loaded weight set across concurrent sessions. The manager fingerprints the model path, runtime build, backend, and load-time settings, then admits requests through a semaphore sized to the configured `--parallel` slots. A session may have only one generation in flight; excess sessions wait in a bounded queue and can cancel while waiting. Spindle maps each retained session to one explicit llama.cpp slot and sets `cache_prompt: true`, allowing llama.cpp to reuse the common prompt prefix and its KV state across turns. When the bounded session-to-slot map is full, the least recently used inactive session is evicted and its server slot is erased before reassignment. Slot state is RAM-only and is lost when the managed server exits; it is not serialized across application restarts. Each request still sends its conversation history so the server can identify the reusable prefix. Future adapters must distinguish loaded model weights, runtime configuration, session context, KV cache, and active request scheduling.

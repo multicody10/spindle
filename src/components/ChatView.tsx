@@ -95,6 +95,7 @@ function ChatView({
   session = null
 }: ChatViewProps) {
   const [providerId, setProviderId] = useState<ChatProviderId>(managedModelPath ? "llama-cpp" : "ollama");
+  const [ephemeralSessionId] = useState(() => crypto.randomUUID());
   const [modelId, setModelId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -253,6 +254,7 @@ function ChatView({
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
       const result = await api.startChat({
         requestId: id,
+        sessionId: session?.id ?? ephemeralSessionId,
         providerId,
         model: modelId,
         messages: history,

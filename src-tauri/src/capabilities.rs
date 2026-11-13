@@ -58,7 +58,7 @@ pub fn registry() -> Vec<ProviderCapabilities> {
             usage_metrics: CapabilitySupport::ProviderDependent,
             tool_calling: CapabilitySupport::NotImplemented,
             structured_output: CapabilitySupport::NotImplemented,
-            parallel_sessions: CapabilitySupport::ProviderDependent,
+            parallel_sessions: CapabilitySupport::Supported,
             managed_by_spindle: true,
         },
     ]

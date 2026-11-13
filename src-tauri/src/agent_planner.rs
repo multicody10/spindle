@@ -1,5 +1,6 @@
 use crate::chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime};
 use crate::domain::GenerationSettings;
+use crate::inference::InferenceRuntimeManager;
 use crate::{projects, workspace::WorkspaceManager};
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -295,6 +296,7 @@ pub async fn create_read_only_plan(
     app: AppHandle,
     database: std::path::PathBuf,
     runtime: &ChatRuntime,
+    inference: &InferenceRuntimeManager,
     input: PlanTaskRequest,
 ) -> Result<projects::TaskDetail, String> {
     let PlanTaskRequest {
@@ -425,6 +427,7 @@ Make the plan specific to the observed repository. Do not invent files, dependen
     let user = truncate_utf8(&user, 44 * 1024);
     let request = ChatRequest {
         request_id: request_id(),
+        session_id: session_id.clone(),
         provider_id: provider,
         model,
         messages: vec![
@@ -449,7 +452,7 @@ Make the plan specific to the observed repository. Do not invent files, dependen
     )?;
     let key = request.request_id.clone();
     let cancellation = runtime.begin(&key)?;
-    let result = chat::run(app, request, cancellation).await;
+    let result = chat::run(app, request, cancellation, inference).await;
     runtime.finish(&key);
     let result = match result {
         Ok(result) => result,
