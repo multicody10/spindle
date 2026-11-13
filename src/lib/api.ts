@@ -32,7 +32,16 @@ import type {
   WorkspaceListing,
   WorkspaceFile,
   WorkspaceWriteResult,
-  WorkspaceSearchResult
+  WorkspaceChangeProposal,
+  PermissionAuditEvent,
+  WorkspaceSearchResult,
+  GitRepositoryStatus,
+  GitCommitSummary,
+  TaskWorktree,
+  TaskWorktreeDiff,
+  SandboxStatus,
+  SandboxExecutionResult,
+  ValidationCommand
 } from "./types";
 
 export const api = {
@@ -66,6 +75,14 @@ export const api = {
   approveAgentTaskPlan: (taskId: string) => invoke<AgentTask>("approve_agent_task_plan", { taskId }),
   rejectAgentTaskPlan: (taskId: string) => invoke<AgentTask>("reject_agent_task_plan", { taskId }),
   listAgentTaskEvents: (taskId: string) => invoke<AgentTaskEvent[]>("list_agent_task_events", { taskId }),
+  gitRepositoryStatus: (projectId: string) => invoke<GitRepositoryStatus>("git_repository_status", { projectId }),
+  gitRepositoryHistory: (projectId: string, limit = 20) => invoke<GitCommitSummary[]>("git_repository_history", { projectId, limit }),
+  createAgentTaskWorktree: (projectId: string, taskId: string) => invoke<TaskWorktree>("create_agent_task_worktree", { projectId, taskId }),
+  agentTaskWorktreeDiff: (taskId: string) => invoke<TaskWorktreeDiff>("agent_task_worktree_diff", { taskId }),
+  removeAgentTaskWorktree: (projectId: string, taskId: string) => invoke<void>("remove_agent_task_worktree", { projectId, taskId }),
+  agentSandboxStatus: () => invoke<SandboxStatus>("agent_sandbox_status"),
+  runAgentTaskValidation: (taskId: string, command: ValidationCommand) =>
+    invoke<SandboxExecutionResult>("run_agent_task_validation", { taskId, command }),
   planProjectTask: (
     projectId: string, sessionId: string, prompt: string, providerId: string,
     model: string, contextTokens: number, generation: GenerationSettings
@@ -102,8 +119,16 @@ export const api = {
     invoke<WorkspaceListing>("list_workspace_directory", { sessionId, relativePath }),
   readWorkspaceFile: (sessionId: string, relativePath: string) =>
     invoke<WorkspaceFile>("read_workspace_file", { sessionId, relativePath }),
-  writeWorkspaceFile: (sessionId: string, relativePath: string, content: string, expectedRevision: string) =>
-    invoke<WorkspaceWriteResult>("write_workspace_file", { sessionId, relativePath, content, expectedRevision }),
+  stageWorkspaceFileChange: (sessionId: string, relativePath: string, content: string, expectedRevision: string) =>
+    invoke<WorkspaceChangeProposal>("stage_workspace_file_change", { sessionId, relativePath, content, expectedRevision }),
+  applyWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<WorkspaceWriteResult>("apply_workspace_file_change", { sessionId, proposalId }),
+  undoWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<WorkspaceWriteResult>("undo_workspace_file_change", { sessionId, proposalId }),
+  cancelWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<void>("cancel_workspace_file_change", { sessionId, proposalId }),
+  permissionAuditLog: (sessionId: string) =>
+    invoke<PermissionAuditEvent[]>("permission_audit_log", { sessionId }),
   searchWorkspace: (sessionId: string, query: string) =>
     invoke<WorkspaceSearchResult>("search_workspace", { sessionId, query }),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),

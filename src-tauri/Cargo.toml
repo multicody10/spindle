@@ -26,6 +26,7 @@ zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56.0"
+rappct = "0.13.3"
 
 # Fast incremental builds for local development and CI validation.
 [profile.dev]

@@ -5,15 +5,20 @@ mod chat;
 mod child_process;
 mod domain;
 mod gguf;
+#[rustfmt::skip]
+mod git;
 mod hardware;
 mod inference;
 mod model_library;
 mod optimizer;
+#[rustfmt::skip]
 mod permissions;
 mod persistence;
 mod projects;
 mod providers;
 mod runtime;
+#[rustfmt::skip]
+mod sandbox;
 mod skills;
 mod workspace;
 
@@ -31,6 +36,142 @@ where
     tokio::task::spawn_blocking(move || operation(database))
         .await
         .map_err(|error| format!("Project database task failed: {error}"))?
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn git_repository_status(app: AppHandle, project_id: String) -> Result<git::GitRepositoryStatus, String> {
+    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
+    tokio::task::spawn_blocking(move || git::status(&project.root_path))
+        .await.map_err(|error| format!("Git status task failed: {error}"))?
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn git_repository_history(app: AppHandle, project_id: String, limit: usize) -> Result<Vec<git::GitCommitSummary>, String> {
+    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
+    tokio::task::spawn_blocking(move || git::history(&project.root_path, limit))
+        .await.map_err(|error| format!("Git history task failed: {error}"))?
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn create_agent_task_worktree(
+    app: AppHandle,
+    project_id: String,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<git::TaskWorktree, String> {
+    let task_lookup = task_id.clone();
+    let task = with_project_database(&app, move |database| projects::get_task(database, task_lookup)).await?;
+    if task.project_id != project_id || task.state != "approved" {
+        return Err("The approved task does not belong to this project.".into());
+    }
+    permissions.authorize(&task.session_id, permissions::PermissionOperation::FileChangePropose, "task_worktree:create")?;
+    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
+    let database = database_path(&app)?;
+    let storage_root = app.path().app_data_dir().map_err(|error| format!("Could not resolve Spindle data directory: {error}"))?;
+    let task_for_event = task_id.clone();
+    let project_for_event = project.id.clone();
+    let worktree = tokio::task::spawn_blocking(move || git::create_task_worktree(
+        &database, &project.id, &project.root_path, &task_id, &storage_root,
+    )).await.map_err(|error| format!("Task worktree creation failed: {error}"))??;
+    let event_path = worktree.path.clone();
+    let event_commit = worktree.base_commit.clone();
+    with_project_database(&app, move |database| projects::append_task_event(
+        database, task_for_event, "worktree_created".into(),
+        serde_json::json!({"path": event_path, "baseCommit": event_commit, "projectId": project_for_event}),
+    )).await?;
+    Ok(worktree)
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn agent_task_worktree_diff(
+    app: AppHandle,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<git::TaskWorktreeDiff, String> {
+    let task_lookup = task_id.clone();
+    let task = with_project_database(&app, move |database| projects::get_task(database, task_lookup)).await?;
+    permissions.authorize(&task.session_id, permissions::PermissionOperation::WorkspaceRead, "task_worktree:diff")?;
+    let database = database_path(&app)?;
+    tokio::task::spawn_blocking(move || git::worktree_diff(&database, &task_id))
+        .await.map_err(|error| format!("Task worktree diff failed: {error}"))?
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn remove_agent_task_worktree(
+    app: AppHandle,
+    project_id: String,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<(), String> {
+    let task_lookup = task_id.clone();
+    let task = with_project_database(&app, move |database| projects::get_task(database, task_lookup)).await?;
+    if task.project_id != project_id {
+        return Err("The selected task does not belong to this project.".into());
+    }
+    permissions.authorize(&task.session_id, permissions::PermissionOperation::FileChangeUndo, "task_worktree:remove")?;
+    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
+    let database = database_path(&app)?;
+    tokio::task::spawn_blocking(move || git::remove_worktree(&database, &project.root_path, &task_id))
+        .await.map_err(|error| format!("Task worktree removal failed: {error}"))?
+}
+
+#[rustfmt::skip]
+#[tauri::command]
+fn agent_sandbox_status() -> sandbox::SandboxStatus { sandbox::status() }
+
+#[rustfmt::skip]
+#[tauri::command]
+async fn run_agent_task_validation(
+    app: AppHandle,
+    task_id: String,
+    command: sandbox::ValidationCommand,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<sandbox::SandboxExecutionResult, String> {
+    let task_lookup = task_id.clone();
+    let task = with_project_database(&app, move |database| projects::get_task(database, task_lookup)).await?;
+    if task.state != "approved" {
+        return Err("Only a task with an explicitly approved plan can be validated.".into());
+    }
+    permissions.authorize(&task.session_id, permissions::PermissionOperation::ProcessExecution, "task_validation")?;
+    let database = database_path(&app)?;
+    let worktree = git::get_worktree(&database, &task_id)?;
+    let task_event_id = task_id.clone();
+    let command_label = command.label().to_owned();
+    let worktree_path = worktree.path;
+    let event_path = worktree_path.clone();
+    with_project_database(&app, move |database| projects::append_task_event(
+        database, task_event_id, "validation_started".into(),
+        serde_json::json!({"command": command_label, "worktree": event_path}),
+    )).await?;
+    let result = tokio::task::spawn_blocking(move || sandbox::run_validation(&worktree_path, command))
+        .await.map_err(|error| format!("Restricted validation task failed: {error}"))?;
+    match result {
+        Ok(output) => {
+            let task_event_id = task_id.clone();
+            let payload = serde_json::json!({
+                "command": output.command.clone(), "exitCode": output.exit_code,
+                "success": output.success, "durationMs": output.duration_ms,
+                "outputTruncated": output.output_truncated, "isolation": output.isolation.clone()
+            });
+            with_project_database(&app, move |database| projects::append_task_event(
+                database, task_event_id, "validation_finished".into(), payload,
+            )).await?;
+            Ok(output)
+        }
+        Err(error) => {
+            let task_event_id = task_id;
+            let reason = error.chars().take(800).collect::<String>();
+            let _ = with_project_database(&app, move |database| projects::append_task_event(
+                database, task_event_id, "validation_failed".into(), serde_json::json!({"reason": reason}),
+            )).await;
+            Err(error)
+        }
+    }
 }
 
 const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
@@ -422,16 +563,50 @@ fn grant_workspace_access(
     path: String,
     allow_write: bool,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceGrant, String> {
-    workspace.grant(path, allow_write)
+    let previous = workspace.status()?.map(|grant| grant.session_id);
+    let grant = workspace.grant(path, allow_write)?;
+    if let Some(previous_id) = previous {
+        if previous_id != grant.session_id {
+            let _ = permissions.revoke_all(&previous_id);
+        }
+    }
+    let registration = permissions
+        .register_session(grant.session_id.clone(), grant.root_path.clone())
+        .and_then(|_| {
+            if allow_write {
+                permissions.grant(
+                    &grant.session_id,
+                    &[permissions::PermissionScope::ProjectWrite],
+                )?;
+            }
+            Ok(())
+        });
+    if let Err(error) = registration {
+        let _ = workspace.revoke(&grant.session_id);
+        let _ = permissions.revoke_all(&grant.session_id);
+        return Err(error);
+    }
+    Ok(grant)
 }
 
 #[tauri::command]
 fn revoke_workspace_access(
     session_id: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
-    workspace.revoke(&session_id)
+    workspace.revoke(&session_id)?;
+    permissions.revoke_all(&session_id)
+}
+
+#[tauri::command]
+fn permission_audit_log(
+    session_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<Vec<permissions::PermissionAuditEvent>, String> {
+    permissions.audit_log(&session_id)
 }
 
 #[tauri::command]
@@ -439,7 +614,13 @@ async fn list_workspace_directory(
     session_id: String,
     relative_path: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceListing, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.list_directory(&session_id, &relative_path))
         .await
@@ -451,7 +632,13 @@ async fn read_workspace_file(
     session_id: String,
     relative_path: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceFile, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.read_file(&session_id, &relative_path))
         .await
@@ -459,19 +646,79 @@ async fn read_workspace_file(
 }
 
 #[tauri::command]
-async fn write_workspace_file(
+async fn stage_workspace_file_change(
     session_id: String,
     relative_path: String,
     content: String,
     expected_revision: String,
     workspace: State<'_, workspace::WorkspaceManager>,
-) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceChangeProposal, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangePropose,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || {
-        manager.write_file(&session_id, &relative_path, content, &expected_revision)
+        manager.stage_file_change(&session_id, &relative_path, content, &expected_revision)
     })
     .await
-    .map_err(|error| format!("Workspace write task failed: {error}"))?
+    .map_err(|error| format!("Workspace change staging task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn apply_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangeApply,
+        &proposal_id,
+    )?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.apply_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change apply task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn undo_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangeUndo,
+        &proposal_id,
+    )?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.undo_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change undo task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn cancel_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<(), String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangePropose,
+        &proposal_id,
+    )?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.cancel_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change discard task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -479,7 +726,13 @@ async fn search_workspace(
     session_id: String,
     query: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceSearchResult, String> {
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        "",
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.search(&session_id, &query))
         .await
@@ -828,6 +1081,17 @@ pub fn run() {
         .manage(runtime::ManagedRuntime::default())
         .manage(workspace::WorkspaceManager::default())
         .manage(permissions::PermissionBroker::default())
+        .setup(|app| {
+            let database = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?
+                .join("spindle.sqlite3");
+            app.state::<permissions::PermissionBroker>()
+                .set_audit_database(database)
+                .map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -866,7 +1130,18 @@ pub fn run() {
             revoke_workspace_access,
             list_workspace_directory,
             read_workspace_file,
-            write_workspace_file,
+            stage_workspace_file_change,
+            apply_workspace_file_change,
+            undo_workspace_file_change,
+            cancel_workspace_file_change,
+            permission_audit_log,
+            git_repository_status,
+            git_repository_history,
+            create_agent_task_worktree,
+            agent_task_worktree_diff,
+            remove_agent_task_worktree,
+            agent_sandbox_status,
+            run_agent_task_validation,
             search_workspace,
             managed_runtime_status,
             install_llama_runtime,

@@ -113,6 +113,27 @@ export interface WorkspaceWriteResult {
   bytesWritten: number;
   revision: string;
 }
+export interface WorkspaceChangeProposal {
+  id: string;
+  relativePath: string;
+  baseRevision: string;
+  proposedRevision: string;
+  diff: string;
+  addedLines: number;
+  removedLines: number;
+  status: "pending" | "applied" | "undone" | "cancelled";
+  createdAtUnixMs: number;
+}
+export interface PermissionAuditEvent {
+  sessionId: string;
+  projectId: string;
+  operation: string;
+  scope: PermissionScope | null;
+  resource: string;
+  allowed: boolean;
+  reason: string | null;
+  timestampUnixMs: number;
+}
 
 export interface WorkspaceSearchMatch {
   relativePath: string;
@@ -357,3 +378,25 @@ export const DEFAULT_CONFIGURATION: ModelConfiguration = {
   optimizationNotes: [],
   optimizerRevision: 1
 };
+
+export interface GitRepositoryStatus {
+  rootPath: string; head: string; branch: string; clean: boolean;
+  changedFiles: number; stagedFiles: number; untrackedFiles: number;
+}
+export interface GitCommitSummary {
+  commit: string; shortCommit: string; author: string; committedAt: number; subject: string;
+}
+export interface TaskWorktree {
+  taskId: string; projectId: string; path: string; baseCommit: string; createdAt: number;
+}
+export interface TaskWorktreeDiff {
+  worktree: TaskWorktree; status: GitRepositoryStatus; diff: string; diffTruncated: boolean;
+}
+export interface SandboxStatus {
+  supported: boolean; platform: string; isolation: string; network: string; reason: string | null;
+}
+export interface SandboxExecutionResult {
+  command: string; exitCode: number; success: boolean; durationMs: number;
+  stdout: string; stderr: string; outputTruncated: boolean; isolation: string;
+}
+export type ValidationCommand = "format" | "check" | "test";

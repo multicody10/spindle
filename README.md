@@ -4,7 +4,7 @@
 
 Spindle is the successor project to Rivet, designed around a Rust/Tauri application core, model-agnostic provider architecture, hardware-aware model configuration, and security boundaries that do not rely on model compliance.
 
-> **Current status:** Foundation and Project Core preview. Spindle now provides persistent projects and independent SQLite-backed sessions, saved local chat transcripts, structured read-only project planning, reviewable task plans, an append-only task event history, project memory retrieval, Agent Skill discovery, per-session permission scopes, and a provider capability registry. It still does not execute agent tools, run shell commands, host MCP servers, or provide an OS-enforced sandbox.
+> **Current status:** Foundation and Project Core preview. Spindle now provides persistent projects and independent SQLite-backed sessions, read-only model planning, reviewed workspace changes, durable permission auditing, Git status/history, detached task worktrees, and user-triggered restricted Cargo validation on supported Windows systems. General model-driven tool execution remains disabled.
 
 ## What works in this foundation
 
@@ -16,9 +16,12 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Discover Ollama, LM Studio, and Spindle-managed llama.cpp endpoints, list available models, and stream local chat responses.
 - Install pinned Windows x64 llama.cpp CPU, Vulkan, or NVIDIA CUDA 12.4 builds after size and SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
 - Browse GGUF models from `Documents/Spindle/Models`, LM Studio's active download folder (including legacy `.cache/lm-studio/models` installs), GPT4All Desktop/Python folders, Jan's `data/llamacpp/models` folder, and the Hugging Face Hub cache. File symlinks in Hugging Face snapshots are supported without following linked directories.
-- Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded file browsing, text search, and editing.
+- Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded browsing/search plus diff preview, explicit apply/discard, and revision-guarded undo.
+- Route workspace operations through the shared permission broker, which records bounded resource-tagged decisions and expires grants on application restart.
 - Register projects and maintain independent sessions, saved messages, structured plans, task events, and approval state in SQLite.
-- Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp; approvals record intent but never execute the plan.
+- Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp. Approval is separate from execution permissions.
+- Inspect Git status/history and create detached task worktrees only for approved plans from a clean repository state.
+- Run explicit Cargo format/check/test validation inside a Windows AppContainer/LPAC worker with no network capabilities, Job Object limits, offline dependencies, and a fixed command allowlist.
 - Discover standard Agent Skills from project and global SKILL.md directories; explicitly referenced skills are added to planner context without adding permissions.
 - Store project-scoped memory and retrieve bounded lexical matches as potentially stale planning hints.
 - Apply per-session permission scopes with read-only defaults and restart expiry.
@@ -31,7 +34,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 
 ## What is deliberately not claimed
 
-Spindle now manages project sessions and read-only planning, but it does **not** execute agent tools, run shell commands, start MCP processes, or provide a hardened OS sandbox. Workspace access is a narrow Rust-side IPC permission gate, not an OS-enforced sandbox. The Ollama and LM Studio processes remain externally managed. The managed llama.cpp runtime applies load-time settings to its process and reports the values exposed by /props; GPU offload and some load-time settings remain unverified. Ollama and LM Studio remain provider-managed. Chat forwards generation controls supported by the selected provider. Autonomous agent execution will not be enabled before the full permission broker and isolated worker are implemented.
+Spindle does **not** execute model-supplied agent tools, run arbitrary shell commands, start MCP processes, or autonomously apply model-authored changes. A constrained Windows AppContainer/LPAC worker is available only for explicit user-triggered Cargo format/check/test validation. It has no network capabilities, a fixed command allowlist, bounded execution, and Job Object limits; it is not yet a general-purpose agent sandbox and has not passed the planned Windows adversarial acceptance suite. The permission broker enforces session scopes and persists bounded resource-tagged audit decisions, but it is not a path-level ACL. Manual workspace edits use diff preview, explicit apply/discard, and revision-guarded undo. The workspace filesystem service is not yet handle-relative or fully race-resistant against Windows reparse-point/TOCTOU conditions. Autonomous model tool execution remains disabled pending resource-specific policy, model-authored task-worktree edits, safe diff application, process mitigations, and Windows security validation. The Ollama and LM Studio processes remain externally managed. The managed llama.cpp runtime applies load-time settings to its process and reports the values exposed by /props; GPU offload and some load-time settings remain unverified. Chat forwards generation controls supported by the selected provider.
 
 ## Development
 
@@ -90,7 +93,7 @@ The release workflow stops before packaging if the public key placeholder or sig
 
 ## Data and privacy
 
-Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. Provider discovery and chat make bounded requests only to fixed loopback endpoints; chat history is kept in memory for the current window and is not saved to disk. The managed llama.cpp executable is downloaded from a fixed official release URL, checked against a pinned SHA-256 digest, safely extracted, and launched with a fixed argument allowlist. Workspace grants live only in memory; file tools use relative paths under a canonicalized root, block common credential files, and cap reads, writes, listings, and search. The workspace file layer is not yet handle-relative or race-resistant against every Windows reparse-point/TOCTOU condition. There is no telemetry implementation and the hardware profile is not uploaded.
+Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. Provider discovery and chat make bounded requests only to fixed loopback endpoints; chat history is kept in memory for the current window and is not saved to disk. The managed llama.cpp executable is downloaded from a fixed official release URL, checked against a pinned SHA-256 digest, safely extracted, and launched with a fixed argument allowlist. Workspace grants and staged file-change checkpoints live only in bounded process memory. Permission audit events persist in SQLite with a global 10,000-event retention cap. File tools use relative paths under a canonicalized root, block common credential files, and cap reads, proposed writes, listings, and search. Changes are previewed and revision-checked before explicit apply; undo refuses to overwrite newer edits. The workspace file layer is not yet handle-relative or race-resistant against every Windows reparse-point/TOCTOU condition. Restricted validation uses a separate AppContainer profile and an offline Cargo cache; it does not inherit the parent application environment. There is no telemetry implementation and the hardware profile is not uploaded.
 
 ## Project documentation
 

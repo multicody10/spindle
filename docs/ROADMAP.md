@@ -39,27 +39,32 @@ This roadmap records implementation status rather than implying the full product
 
 - [x] Persistent projects and independent sessions in SQLite.
 - [x] Temporary project workspace grants with read-only defaults and separately granted write access.
-- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and file writes.
+- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and reviewed staged file changes.
 - [x] Versioned SQLite schema for projects, sessions, messages, tasks, task steps, events, and memory.
-- [x] Read-only agent planner with persisted task lifecycle and approval states; no execution worker is enabled.
+- [x] Read-only model planner with persisted task lifecycle and approval states, paired with a separate user-triggered restricted validation worker; general model tool execution remains disabled.
 - [x] Read-only project snapshot planning with bounded source inventory and structured plan validation.
 - [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
-- [ ] Diff-aware file tools, undo, and conflict detection.
-- [ ] Git status/history and isolated worktrees.
+- [x] Manual workspace diff previews, explicit apply/discard, revision conflict checks, and guarded undo (bounded in-memory proposal history).
+- [x] Supervised approved-task workflow for detached Git worktree creation, bounded diff/status review, fixed sandboxed validation, and persisted task events.
+- [ ] Agent-authored changes in task worktrees, per-file transactional review/apply back to the primary tree, and rollback/recovery across restarts.
+- [x] Bounded Git status/history inspection and detached per-task worktrees created only for approved tasks from a clean repository state; worktree metadata and task events are persisted.
 - [x] Project-scoped memory records with bounded lexical retrieval; embedding and source-revision freshness ranking remain future work.
 - [x] Standard SKILL.md discovery and bounded manifest loading; MCP extension host remains deferred.
 
 ## Security and reliability
 
 - [x] Revocable in-memory workspace read/write grants.
-- [x] Per-session permission broker with read-only defaults, explicit scope grants, revocation, and process-restart expiry.
-- [ ] General permission broker for agent tools, execution, network, and extensions.
-- [ ] Windows AppContainer/LPAC execution worker feasibility validation.
-- [ ] Restricted token, Job Object and process mitigation policies.
+- [x] Project and workspace sessions registered with the shared permission broker; read-only defaults, explicit scope grants, revocation, and process-restart expiry.
+- [x] General operation-aware scope broker with bounded resource-tagged audit decisions; path-specific policy remains enforced by owning services.
+- [x] Durable, bounded SQLite permission audit history with fail-closed authorization when audit persistence fails.
+- [ ] Resource-specific permission constraints beyond the owning services’ canonical path and revision checks.
+- [x] Windows AppContainer/LPAC worker for a fixed Cargo validation allowlist; no shell or model-supplied arguments.
+- [x] Job Object memory/CPU limits, bounded execution time, and kill-on-job-close.
+- [ ] Separate restricted-token/process-mitigation policy review and validation.
 - [ ] Handle-relative, reparse-point-safe file service and race-resistant operations.
-- [ ] Network restrictions and controlled egress.
-- [ ] Environment/secret redaction.
-- [ ] Threat-driven integration tests on Windows.
+- [x] LPAC worker receives no network capabilities; arbitrary external egress remains unavailable.
+- [x] Worker environment is rebuilt from an allowlist and bounded stdout/stderr is scrubbed for common credential formats.
+- [ ] Threat-driven integration tests on Windows, including effective-token, filesystem-boundary, network-denial, and timeout/kill verification.
 
 ## Distribution
 
