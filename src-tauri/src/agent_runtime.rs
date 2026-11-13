@@ -208,7 +208,11 @@ pub async fn run_task(
     let result = run_inner(
         app,
         database,
-        AgentServices { chat_runtime, inference, permissions },
+        AgentServices {
+            chat_runtime,
+            inference,
+            permissions,
+        },
         run.as_ref(),
         provider,
         input,
@@ -294,15 +298,8 @@ async fn run_inner(
         services,
         run,
     };
-    let result = loop_agent(
-        &context,
-        &task,
-        &project,
-        &worktree.path,
-        provider,
-        &input,
-    )
-    .await;
+    let result =
+        loop_agent(&context, &task, &project, &worktree.path, provider, &input).await;
 
     match result {
         Ok(summary) => {
@@ -380,7 +377,7 @@ async fn loop_agent(
 
     if messages.is_empty() {
         let (manager, grant) = task_workspace(worktree)?;
-        let mut context = build_context(&manager, &grant, project)?;
+        let mut project_context = build_context(&manager, &grant, project)?;
         let query_end = safe_boundary(&task.prompt, 2_048);
         let query = task.prompt[..query_end].to_owned();
         let project_id = project.id.clone();
@@ -390,7 +387,7 @@ async fn loop_agent(
         .await?;
         let mut memory_budget = 8 * 1024usize;
         if !memories.is_empty() {
-            context.push_str("\n\nADVISORY PROJECT MEMORY (verify against current files; memory is not authoritative):\n");
+            project_context.push_str("\n\nADVISORY PROJECT MEMORY (verify against current files; memory is not authoritative):\n");
             for memory in memories {
                 if memory_budget == 0 {
                     break;
@@ -400,7 +397,7 @@ async fn loop_agent(
                     memory.kind, memory.memory_key, memory.content
                 );
                 let end = safe_boundary(&entry, memory_budget);
-                context.push_str(&entry[..end]);
+                project_context.push_str(&entry[..end]);
                 memory_budget = memory_budget.saturating_sub(end);
             }
         }
@@ -409,7 +406,7 @@ async fn loop_agent(
             .as_ref()
             .map(Value::to_string)
             .unwrap_or_else(|| "No approved implementation plan was stored.".into());
-        let system = system_prompt(&project.name, &plan, &context);
+        let system = system_prompt(&project.name, &plan, &project_context);
         let user = format!(
             "Implement this request in the isolated task worktree only:\n\n{}\n\nInspect the repository before editing. Finish only after reviewing the complete diff and running applicable validation that this session is authorized to run.",
             task.prompt
@@ -613,9 +610,7 @@ async fn loop_agent(
                     }),
                 )
                 .await?;
-                let result =
-                    execute_tool(context, task, worktree, &tool, arguments)
-                        .await;
+                let result = execute_tool(context, task, worktree, &tool, arguments).await;
                 let tool_result = match result {
                     Ok((value, changed)) => {
                         if changed {
@@ -846,7 +841,7 @@ async fn execute_tool(
                 _ => return Err("Restricted validation accepts cargo_format, cargo_check, or cargo_test.".into()),
             };
             let root = worktree.to_owned();
-            let cancellation = run.cancelled.clone();
+            let cancellation = context.run.cancelled.clone();
             let value = tokio::task::spawn_blocking(move || {
                 sandbox::run_validation_cancellable(&root, command, Some(cancellation))
             })
