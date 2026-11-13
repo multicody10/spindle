@@ -3,6 +3,7 @@ mod gguf;
 mod hardware;
 mod optimizer;
 mod persistence;
+mod providers;
 
 use crate::domain::{
     AppInfo, ModelConfiguration, OptimizationProfile, OptimizationResult, SavedPreset,
@@ -26,6 +27,11 @@ fn app_info() -> AppInfo {
         updater_configured: !TAURI_CONFIG.contains("REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY"),
         platform: std::env::consts::OS.into(),
     }
+}
+
+#[tauri::command]
+async fn local_provider_statuses() -> Result<Vec<providers::LocalProviderStatus>, String> {
+    providers::discover().await
 }
 
 #[tauri::command]
@@ -211,6 +217,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
+            local_provider_statuses,
             hardware_profile,
             inspect_model,
             optimize_model,

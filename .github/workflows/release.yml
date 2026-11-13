@@ -65,6 +65,12 @@ jobs:
           if (-not $cargoMatch.Success) { throw "Cannot read Cargo package version." }
           $versions = @($package.version, $tauri.version, $cargoMatch.Groups[1].Value)
           if (($versions | Select-Object -Unique).Count -ne 1) { throw "Application versions do not match: $($versions -join ', ')" }
+          if ($tauri.bundle.windows.nsis.installMode -ne "perMachine") {
+            throw "NSIS installMode must be perMachine so installs and updates target Program Files."
+          }
+          if ($tauri.plugins.updater.windows.installMode -ne "passive") {
+            throw "Updater installMode must be passive so machine-wide updates can request elevation."
+          }
 
           $releaseTag = $env:RELEASE_TAG
           if ([string]::IsNullOrWhiteSpace($releaseTag) -or $releaseTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {

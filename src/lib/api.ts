@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   HardwareProfile,
+  LocalProviderStatus,
   ModelConfiguration,
   ModelMetadata,
   OptimizationProfile,
@@ -12,6 +13,7 @@ import type {
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   hardware: () => invoke<HardwareProfile>("hardware_profile"),
+  localProviders: () => invoke<LocalProviderStatus[]>("local_provider_statuses"),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),
   optimizeModel: (path: string, profile: OptimizationProfile) =>
     invoke<OptimizationResult>("optimize_model", { path, profile }),

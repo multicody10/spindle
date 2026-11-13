@@ -25,6 +25,22 @@ export interface HardwareProfile {
   detectionNotes: string[];
 }
 
+export interface LocalProviderModel {
+  id: string;
+  parameterSize: string | null;
+  quantization: string | null;
+}
+
+export interface LocalProviderStatus {
+  id: string;
+  name: string;
+  endpoint: string;
+  available: boolean;
+  latencyMs: number | null;
+  models: LocalProviderModel[];
+  message: string;
+}
+
 export interface ModelMetadata {
   path: string;
   fileSizeBytes: number;

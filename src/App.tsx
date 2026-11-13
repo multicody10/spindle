@@ -5,6 +5,7 @@ import {
   DEFAULT_CONFIGURATION,
   type AppInfo,
   type HardwareProfile,
+  type LocalProviderStatus,
   type ModelConfiguration,
   type ModelMetadata,
   type OptimizationProfile,
@@ -38,6 +39,9 @@ const formatNumber = (value: number | null | undefined) =>
 function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
+  const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
+  const [providersBusy, setProvidersBusy] = useState(false);
+  const [providersError, setProvidersError] = useState<string | null>(null);
   const [modelPath, setModelPath] = useState("");
   const [model, setModel] = useState<ModelMetadata | null>(null);
   const [configuration, setConfiguration] = useState<ModelConfiguration>(DEFAULT_CONFIGURATION);
@@ -52,7 +56,20 @@ function App() {
   const [updateState, setUpdateState] = useState("Update check has not run.");
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
 
+  const refreshLocalProviders = useCallback(async () => {
+    setProvidersBusy(true);
+    setProvidersError(null);
+    try {
+      setLocalProviders(await api.localProviders());
+    } catch (reason) {
+      setProvidersError(String(reason));
+    } finally {
+      setProvidersBusy(false);
+    }
+  }, []);
+
   useEffect(() => {
+    void refreshLocalProviders();
     void Promise.all([api.appInfo(), api.hardware(), api.listPresets()])
       .then(([info, detected, savedPresets]) => {
         setAppInfo(info);
@@ -69,7 +86,7 @@ function App() {
         setError(String(reason));
         setMessage("Initialization failed.");
       });
-  }, []);
+  }, [refreshLocalProviders]);
 
   const runUpdateCheck = useCallback(async (info = appInfo) => {
     if (!info?.updaterConfigured) {
@@ -268,7 +285,7 @@ function App() {
         <div className="content">
           <section className="notice warning">
             <strong>Foundation build</strong>
-            <span>GGUF inspection, hardware profiling, optimization recommendations, and local configuration storage are implemented. Live inference and agent execution are not connected yet. Saved values are recommendations, not active llama.cpp runtime settings.</span>
+            <span>GGUF inspection, hardware profiling, local Ollama and LM Studio discovery, optimization recommendations, and local configuration storage are implemented. Live inference and agent execution are not connected yet. Saved values are recommendations, not active runtime settings.</span>
           </section>
 
           <section className="section-heading">
@@ -294,8 +311,50 @@ function App() {
             </article>
           </div>
 
+          <section className="section-heading">
+            <div><span className="eyebrow">02 / LOCAL PROVIDERS</span><h2>Discover model servers</h2></div>
+            <button className="button subtle" onClick={() => void refreshLocalProviders()} disabled={providersBusy}>
+              {providersBusy ? "Scanning…" : "Refresh providers"}
+            </button>
+          </section>
+          <div className="provider-grid">
+            {localProviders.map((provider) => (
+              <article className="provider-card" key={provider.id}>
+                <div className="provider-card-header">
+                  <div>
+                    <strong>{provider.name}</strong>
+                    <small>{provider.endpoint}</small>
+                  </div>
+                  <span className={"provider-badge " + (provider.available ? "connected" : "offline")}>
+                    {provider.available ? "CONNECTED" : "OFFLINE"}
+                  </span>
+                </div>
+                <p>{provider.message}{provider.latencyMs !== null ? ` · ${provider.latencyMs} ms` : ""}</p>
+                {provider.models.length > 0 && (
+                  <ul className="provider-model-list">
+                    {provider.models.slice(0, 5).map((entry) => (
+                      <li key={entry.id}>
+                        <span>{entry.id}</span>
+                        <small>{[entry.parameterSize, entry.quantization].filter(Boolean).join(" · ")}</small>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {provider.models.length > 5 && (
+                  <small className="provider-more">and {provider.models.length - 5} more model(s)</small>
+                )}
+              </article>
+            ))}
+            {localProviders.length === 0 && (
+              <article className="provider-card provider-empty">
+                {providersBusy ? "Checking local inference services…" : "No local provider results yet."}
+              </article>
+            )}
+          </div>
+          {providersError && <p className="provider-error">Provider discovery failed: {providersError}</p>}
+
           <section className="section-heading model-heading">
-            <div><span className="eyebrow">02 / MODEL INSPECTION</span><h2>Inspect a GGUF model</h2></div>
+            <div><span className="eyebrow">03 / MODEL INSPECTION</span><h2>Inspect a GGUF model</h2></div>
             <span className="section-meta">Read-only metadata access</span>
           </section>
 
@@ -321,7 +380,7 @@ function App() {
           </section>
 
           <section className="section-heading">
-            <div><span className="eyebrow">03 / OPTIMIZATION ENGINE</span><h2>Choose the tradeoff</h2></div>
+            <div><span className="eyebrow">04 / OPTIMIZATION ENGINE</span><h2>Choose the tradeoff</h2></div>
             <button className="button subtle" onClick={() => void optimize()} disabled={!model || busy || configuration.profile === "custom"}>Recalculate</button>
           </section>
 
@@ -351,7 +410,7 @@ function App() {
           </section>
 
           <section className="section-heading">
-            <div><span className="eyebrow">04 / INFERENCE CONFIGURATION</span><h2>Model settings</h2></div>
+            <div><span className="eyebrow">05 / INFERENCE CONFIGURATION</span><h2>Model settings</h2></div>
             <div className="view-toggle"><button className={!advanced ? "chosen" : ""} onClick={() => setAdvanced(false)}>Basic</button><button className={advanced ? "chosen" : ""} onClick={() => setAdvanced(true)}>Advanced</button></div>
           </section>
 
@@ -427,7 +486,7 @@ function App() {
           </section>
 
           <section className="section-heading">
-            <div><span className="eyebrow">05 / APPLICATION UPDATES</span><h2>Updates</h2></div>
+            <div><span className="eyebrow">06 / APPLICATION UPDATES</span><h2>Updates</h2></div>
             <span className="section-meta">Stable channel</span>
           </section>
           <section className="panel update-panel">

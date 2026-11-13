@@ -13,14 +13,17 @@ This roadmap records implementation status rather than implying the full product
 - [x] Separate runtime and generation configuration schemas.
 - [x] Per-model configuration and named preset persistence in SQLite.
 - [x] Configuration range validation in the Rust command boundary.
-- [x] Windows NSIS per-user installer target.
-- [x] Dedicated CI and signed release workflow skeleton.
-- [ ] Successful Windows CI and desktop build verification.
-- [ ] Generate repository-owned updater key and provision GitHub Actions secrets.
-- [ ] Generate npm and Cargo lockfiles from a verified Windows toolchain.
+- [x] Windows NSIS per-machine installer target.
+- [x] Dedicated CI and signed release workflow.
+- [x] Successful Windows CI and desktop build verification.
+- [x] Repository-owned updater key and GitHub Actions signing secrets.
+- [x] npm and Cargo lockfiles committed and used in CI.
+- [x] First signed Windows release published and installed.
+- [ ] Validate the one-time per-user to per-machine installation transition and in-app update path.
 
 ## Model runtime
 
+- [x] Read-only discovery of local Ollama and LM Studio endpoints and model inventories.
 - [ ] Provider capability registry.
 - [ ] Managed llama.cpp installation and version pinning.
 - [ ] Shared inference runtime manager.
@@ -54,11 +57,11 @@ This roadmap records implementation status rather than implying the full product
 
 ## Distribution
 
-- [x] NSIS per-user installer target.
+- [x] NSIS per-machine installer target.
 - [x] Tauri updater plugin and public endpoint configuration.
 - [x] Release workflow fails closed without signing material.
-- [ ] Publish first signed installer and latest.json.
-- [ ] Validate upgrades and data preservation on Windows.
+- [x] Publish first signed installer and latest.json.
+- [ ] Validate the initial per-user to per-machine migration, subsequent updates, and data preservation on Windows.
 - [ ] Windows Authenticode signing when a certificate is available.
 - [ ] Stable and opt-in beta update channels.
 - [ ] SBOM and release provenance.

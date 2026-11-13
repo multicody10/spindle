@@ -21,6 +21,7 @@
 
 - The UI has a narrow Tauri command surface; no shell or arbitrary filesystem APIs are exposed.
 - Production CSP restricts scripts and network destinations.
+- Local provider discovery is restricted to fixed loopback HTTP endpoints, disables proxies and redirects, applies short timeouts, and caps parsed model metadata.
 - Model inspection is read-only and uses bounded GGUF metadata parsing.
 - Database inputs are parameterized SQL statements.
 - Settings are validated in Rust before being saved.
