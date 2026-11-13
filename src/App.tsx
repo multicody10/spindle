@@ -191,13 +191,20 @@ function App() {
     if (!update) return;
     setUpdateProgress(0);
     setUpdateState("Downloading and verifying update…");
+    let downloadedBytes = 0;
     try {
       await update.downloadAndInstall((event) => {
-        if (event.event === "Started") setUpdateProgress(0);
+        if (event.event === "Started") {
+          downloadedBytes = 0;
+          setUpdateProgress(0);
+        }
         if (event.event === "Progress") {
           const data = event.data as { chunkLength?: number; contentLength?: number };
-          if (data.contentLength && data.contentLength > 0) {
-            setUpdateProgress((value) => Math.min(99, (value ?? 0) + ((data.chunkLength ?? 0) / data.contentLength) * 100));
+          const chunkLength = typeof data.chunkLength === "number" ? data.chunkLength : 0;
+          const contentLength = typeof data.contentLength === "number" ? data.contentLength : 0;
+          downloadedBytes += chunkLength;
+          if (contentLength > 0) {
+            setUpdateProgress(Math.min(99, (downloadedBytes / contentLength) * 100));
           }
         }
         if (event.event === "Finished") setUpdateProgress(100);
