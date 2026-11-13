@@ -138,7 +138,10 @@ impl WorkspaceManager {
         let selected_metadata = fs::symlink_metadata(&selected)
             .map_err(|error| format!("Could not inspect the workspace directory: {error}"))?;
         if is_unsafe_link(&selected_metadata) || !selected_metadata.is_dir() {
-            return Err("The selected workspace must be a regular directory, not a link or reparse point.".into());
+            return Err(
+                "The selected workspace must be a regular directory, not a link or reparse point."
+                    .into(),
+            );
         }
         let root = fs::canonicalize(&selected)
             .map_err(|error| format!("Could not resolve the workspace directory: {error}"))?;
@@ -524,17 +527,24 @@ impl WorkspaceManager {
             current.push(part);
             match fs::symlink_metadata(&current) {
                 Ok(metadata) if is_unsafe_link(&metadata) || !metadata.is_dir() => {
-                    return Err("Workspace directories cannot traverse links or non-directory entries.".into());
+                    return Err(
+                        "Workspace directories cannot traverse links or non-directory entries."
+                            .into(),
+                    );
                 }
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    fs::create_dir(&current)
-                        .map_err(|error| format!("Could not create workspace directory: {error}"))?;
+                    fs::create_dir(&current).map_err(|error| {
+                        format!("Could not create workspace directory: {error}")
+                    })?;
                 }
-                Err(error) => return Err(format!("Could not inspect workspace directory: {error}")),
+                Err(error) => {
+                    return Err(format!("Could not inspect workspace directory: {error}"))
+                }
             }
-            let canonical = fs::canonicalize(&current)
-                .map_err(|error| format!("Could not resolve created workspace directory: {error}"))?;
+            let canonical = fs::canonicalize(&current).map_err(|error| {
+                format!("Could not resolve created workspace directory: {error}")
+            })?;
             ensure_inside_root(&session.root, &canonical)?;
             current = canonical;
         }
@@ -549,7 +559,9 @@ impl WorkspaceManager {
     ) -> Result<WorkspaceWriteResult, String> {
         let session = self.session(session_id, true)?;
         if content.len() > MAX_FILE_BYTES || content.contains('\0') {
-            return Err("New workspace files must be valid UTF-8 text no larger than 1 MiB.".into());
+            return Err(
+                "New workspace files must be valid UTF-8 text no larger than 1 MiB.".into(),
+            );
         }
         if is_sensitive_path(Path::new(relative_path)) {
             return Err("Secret material cannot be created through agent workspace tools.".into());
@@ -577,7 +589,10 @@ impl WorkspaceManager {
         let path = resolve_file(&session, relative_path)?;
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| format!("Could not inspect file before deletion: {error}"))?;
-        if is_unsafe_link(&metadata) || !metadata.is_file() || metadata.len() > MAX_FILE_BYTES as u64 {
+        if is_unsafe_link(&metadata)
+            || !metadata.is_file()
+            || metadata.len() > MAX_FILE_BYTES as u64
+        {
             return Err("Deletion is limited to regular text files no larger than 1 MiB.".into());
         }
         let bytes = read_bounded(&path, MAX_FILE_BYTES)
@@ -593,7 +608,9 @@ impl WorkspaceManager {
         let latest = read_bounded(&path, MAX_FILE_BYTES)
             .map_err(|error| format!("Could not recheck the file before deletion: {error}"))?;
         if format!("{:x}", Sha256::digest(&latest)) != expected_revision {
-            return Err("The file changed immediately before deletion. The operation was aborted.".into());
+            return Err(
+                "The file changed immediately before deletion. The operation was aborted.".into(),
+            );
         }
         fs::remove_file(&path)
             .map_err(|error| format!("Could not delete the selected task file: {error}"))
@@ -926,12 +943,18 @@ fn resolve_new_file(
     if is_sensitive_path(&clean) {
         return Err("Sensitive file paths are not accessible through workspace tools.".into());
     }
-    let file_name = clean.file_name().ok_or_else(|| "A file name is required.".to_string())?;
+    let file_name = clean
+        .file_name()
+        .ok_or_else(|| "A file name is required.".to_string())?;
     let parent_relative = clean.parent().unwrap_or_else(|| Path::new(""));
     let parent = resolve_directory(session, &parent_relative.to_string_lossy())?;
     let target = parent.join(file_name);
     match fs::symlink_metadata(&target) {
-        Ok(_) => return Err("The file already exists. Read it and use write_file or edit_file instead.".into()),
+        Ok(_) => {
+            return Err(
+                "The file already exists. Read it and use write_file or edit_file instead.".into(),
+            )
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("Could not inspect the new file path: {error}")),
     }
@@ -962,15 +985,22 @@ fn atomic_create(root: &Path, parent: &Path, target: &Path, content: &[u8]) -> R
             .map_err(|error| format!("Could not revalidate the new file parent: {error}"))?;
         ensure_inside_root(root, &parent_now)?;
         if fs::symlink_metadata(target).is_ok() {
-            return Err("A file appeared at the selected path before creation. No file was replaced.".into());
+            return Err(
+                "A file appeared at the selected path before creation. No file was replaced."
+                    .into(),
+            );
         }
-        fs::hard_link(&temporary, target)
-            .map_err(|error| format!("Could not atomically create the new workspace file: {error}"))?;
-        fs::remove_file(&temporary)
-            .map_err(|error| format!("The file was created but its temporary link could not be removed: {error}"))?;
+        fs::hard_link(&temporary, target).map_err(|error| {
+            format!("Could not atomically create the new workspace file: {error}")
+        })?;
+        fs::remove_file(&temporary).map_err(|error| {
+            format!("The file was created but its temporary link could not be removed: {error}")
+        })?;
         Ok(())
     })();
-    if result.is_err() { let _ = fs::remove_file(&temporary); }
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
     result
 }
 
@@ -1322,31 +1352,43 @@ mod tests {
     #[test]
     fn task_workspace_can_create_edit_and_delete_new_files_safely() {
         let (manager, root, _) = test_workspace();
-        let grant = manager.grant(root.to_string_lossy().into_owned(), true).unwrap();
-        manager.create_directory(&grant.session_id, "src/components").unwrap();
-        let created = manager.create_file(
-            &grant.session_id,
-            "src/components/Counter.tsx",
-            "export function Counter() { return null; }\n".into(),
-        ).unwrap();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        manager
+            .create_directory(&grant.session_id, "src/components")
+            .unwrap();
+        let created = manager
+            .create_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                "export function Counter() { return null; }\n".into(),
+            )
+            .unwrap();
         assert_eq!(created.bytes_written, 43);
         assert!(root.join("src/components/Counter.tsx").is_file());
-        assert!(manager.create_file(
-            &grant.session_id,
-            "src/components/Counter.tsx",
-            "overwrite".into(),
-        ).is_err());
-        assert!(manager.delete_file(
-            &grant.session_id,
-            "src/components/Counter.tsx",
-            &"0".repeat(64),
-        ).is_err());
+        assert!(manager
+            .create_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                "overwrite".into(),
+            )
+            .is_err());
+        assert!(manager
+            .delete_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                &"0".repeat(64),
+            )
+            .is_err());
         assert!(root.join("src/components/Counter.tsx").is_file());
-        manager.delete_file(
-            &grant.session_id,
-            "src/components/Counter.tsx",
-            &created.revision,
-        ).unwrap();
+        manager
+            .delete_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                &created.revision,
+            )
+            .unwrap();
         assert!(!root.join("src/components/Counter.tsx").exists());
         let _ = fs::remove_dir_all(root);
     }
@@ -1354,14 +1396,18 @@ mod tests {
     #[test]
     fn task_workspace_file_creation_rejects_traversal_and_secrets() {
         let (manager, root, _) = test_workspace();
-        let grant = manager.grant(root.to_string_lossy().into_owned(), true).unwrap();
-        assert!(manager.create_file(
-            &grant.session_id, "../outside.txt", "blocked".into(),
-        ).is_err());
-        assert!(manager.create_file(
-            &grant.session_id, ".env.local", "TOKEN=x".into(),
-        ).is_err());
-        assert!(manager.create_directory(&grant.session_id, "../outside").is_err());
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        assert!(manager
+            .create_file(&grant.session_id, "../outside.txt", "blocked".into(),)
+            .is_err());
+        assert!(manager
+            .create_file(&grant.session_id, ".env.local", "TOKEN=x".into(),)
+            .is_err());
+        assert!(manager
+            .create_directory(&grant.session_id, "../outside")
+            .is_err());
         let _ = fs::remove_dir_all(root);
     }
 

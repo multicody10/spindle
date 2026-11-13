@@ -285,7 +285,7 @@ fn run_validation_windows(
     drop(child.stdin.take());
     let stdout = child.stdout.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
     let stderr = child.stderr.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
-    let job_handle = child.job_guard.as_ref().map(|guard| guard.as_handle() as isize);
+    let job_handle = child.job_guard.as_ref().map(|guard| guard.as_handle().0);
     let wait_thread = thread::spawn(move || child.wait(Some(EXECUTION_TIMEOUT)));
     let wait_started = Instant::now();
     let exit_code = loop {
@@ -296,7 +296,7 @@ fn run_validation_windows(
         }
         if cancellation.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
             if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle as *mut std::ffi::c_void, 1223) };
+                let terminated = unsafe { terminate_job_object(handle, 1223) };
                 if terminated {
                     let _ = wait_thread.join();
                     return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
@@ -307,7 +307,7 @@ fn run_validation_windows(
         }
         if wait_started.elapsed() >= EXECUTION_TIMEOUT + Duration::from_secs(2) {
             if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle as *mut std::ffi::c_void, 1460) };
+                let terminated = unsafe { terminate_job_object(handle, 1460) };
                 if terminated {
                     let _ = wait_thread.join();
                     return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());

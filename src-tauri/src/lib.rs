@@ -175,7 +175,6 @@ async fn run_agent_task_validation(
     }
 }
 
-
 #[tauri::command]
 async fn run_agent_task(
     app: AppHandle,
@@ -194,7 +193,8 @@ async fn run_agent_task(
         permissions.inner(),
         runtime.inner(),
         input,
-    ).await
+    )
+    .await
 }
 
 #[tauri::command]
@@ -204,12 +204,19 @@ async fn cancel_agent_task(
     runtime: State<'_, agent_runtime::AgentRuntime>,
 ) -> Result<bool, String> {
     let lookup = task_id.clone();
-    let _task = with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    let _task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
     let cancelled = runtime.cancel(&task_id);
     if cancelled {
-        with_project_database(&app, move |database| projects::append_task_event(
-            database, task_id, "cancellation_requested".into(), serde_json::json!({}),
-        )).await?;
+        with_project_database(&app, move |database| {
+            projects::append_task_event(
+                database,
+                task_id,
+                "cancellation_requested".into(),
+                serde_json::json!({}),
+            )
+        })
+        .await?;
     }
     Ok(cancelled)
 }
@@ -221,7 +228,8 @@ async fn apply_agent_task_changes(
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<git::TaskApplicationResult, String> {
     let lookup = task_id.clone();
-    let task = with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
     if task.state != "completed" {
         return Err("Only a completed agent task can be applied.".into());
     }
@@ -230,16 +238,22 @@ async fn apply_agent_task_changes(
         permissions::PermissionOperation::FileChangeApply,
         "agent_task:apply_changes",
     )?;
-    let project = with_project_database(&app, move |database| projects::get_project(database, task.project_id)).await?;
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, task.project_id)
+    })
+    .await?;
     let database = database_path(&app)?;
     let result = tokio::task::spawn_blocking(move || {
         git::apply_worktree_changes(&database, &project.root_path, &task_id)
-    }).await.map_err(|error| format!("Task change application failed: {error}"))??;
+    })
+    .await
+    .map_err(|error| format!("Task change application failed: {error}"))??;
     let task_event_id = result.task_id.clone();
     let payload = serde_json::to_value(&result).map_err(|error| error.to_string())?;
-    with_project_database(&app, move |database| projects::append_task_event(
-        database, task_event_id, "changes_applied".into(), payload,
-    )).await?;
+    with_project_database(&app, move |database| {
+        projects::append_task_event(database, task_event_id, "changes_applied".into(), payload)
+    })
+    .await?;
     Ok(result)
 }
 
@@ -250,21 +264,24 @@ async fn undo_agent_task_application(
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<git::TaskApplicationResult, String> {
     let lookup = task_id.clone();
-    let task = with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
     permissions.authorize(
         &task.session_id,
         permissions::PermissionOperation::FileChangeUndo,
         "agent_task:undo_application",
     )?;
     let database = database_path(&app)?;
-    let result = tokio::task::spawn_blocking(move || {
-        git::undo_worktree_application(&database, &task_id)
-    }).await.map_err(|error| format!("Task application undo failed: {error}"))??;
+    let result =
+        tokio::task::spawn_blocking(move || git::undo_worktree_application(&database, &task_id))
+            .await
+            .map_err(|error| format!("Task application undo failed: {error}"))??;
     let task_event_id = result.task_id.clone();
     let payload = serde_json::to_value(&result).map_err(|error| error.to_string())?;
-    with_project_database(&app, move |database| projects::append_task_event(
-        database, task_event_id, "changes_undone".into(), payload,
-    )).await?;
+    with_project_database(&app, move |database| {
+        projects::append_task_event(database, task_event_id, "changes_undone".into(), payload)
+    })
+    .await?;
     Ok(result)
 }
 
@@ -275,7 +292,8 @@ async fn agent_task_application_status(
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<Option<git::TaskApplicationResult>, String> {
     let lookup = task_id.clone();
-    let task = with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
     permissions.authorize(
         &task.session_id,
         permissions::PermissionOperation::WorkspaceRead,
@@ -283,7 +301,8 @@ async fn agent_task_application_status(
     )?;
     let database = database_path(&app)?;
     tokio::task::spawn_blocking(move || git::worktree_application_status(&database, &task_id))
-        .await.map_err(|error| format!("Task application status failed: {error}"))?
+        .await
+        .map_err(|error| format!("Task application status failed: {error}"))?
 }
 
 const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
