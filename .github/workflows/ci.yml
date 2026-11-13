@@ -55,6 +55,7 @@ jobs:
         with:
           workspaces: |
             src-tauri -> src-tauri/target
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm install --prefer-offline --no-audit --no-fund
