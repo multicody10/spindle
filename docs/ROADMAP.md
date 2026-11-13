@@ -23,6 +23,7 @@ This roadmap records implementation status rather than implying the full product
 
 ## Model runtime
 
+- [x] Read-only discovery of local Ollama and LM Studio endpoints and model inventories.
 - [ ] Provider capability registry.
 - [ ] Managed llama.cpp installation and version pinning.
 - [ ] Shared inference runtime manager.
