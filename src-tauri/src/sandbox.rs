@@ -235,11 +235,14 @@ fn run_validation_windows(
     }
     path_entries.sort();
     path_entries.dedup();
+    let executable_tool_access = AccessMask(
+        AccessMask::FILE_GENERIC_READ.0 | windows::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE.0,
+    );
     for path in &path_entries {
         if path != &system32 {
             grant_to_package(
-                ResourcePath::Directory(path.clone()), &profile.sid, AccessMask::FILE_GENERIC_READ,
-            ).map_err(|error| format!("Could not grant read-only access to a toolchain directory: {error}"))?;
+                ResourcePath::Directory(path.clone()), &profile.sid, executable_tool_access,
+            ).map_err(|error| format!("Could not grant read and execute access to an approved toolchain directory: {error}"))?;
         }
     }
     let path_value = std::env::join_paths(path_entries)
