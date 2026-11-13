@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api } from "./lib/api";
+import ChatView from "./components/ChatView";
+import spindleLogo from "./assets/brand/spindle-logo.webp";
 import {
   DEFAULT_CONFIGURATION,
   type AppInfo,
@@ -37,6 +39,7 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
+  const [activeView, setActiveView] = useState<"model-lab" | "chat">("model-lab");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
@@ -256,14 +259,14 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><span /></div>
-          <div><strong>spindle</strong><small>DEVELOPMENT ENVIRONMENT</small></div>
+          <img className="brand-logo" src={spindleLogo} alt="Spindle" />
         </div>
         <div className="nav-caption">WORKSPACE</div>
         <button className="nav-item muted" disabled><span className="nav-icon">⌘</span> Projects <em>planned</em></button>
         <button className="nav-item muted" disabled><span className="nav-icon">◫</span> Sessions <em>planned</em></button>
         <div className="nav-caption section-gap">TOOLS</div>
-        <button className="nav-item active"><span className="nav-icon">◈</span> Model Lab</button>
+        <button className={"nav-item " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}><span className="nav-icon">◈</span> Model Lab</button>
+        <button className={"nav-item " + (activeView === "chat" ? "active" : "")} onClick={() => setActiveView("chat")}><span className="nav-icon">◉</span> Chat</button>
         <div className="sidebar-bottom">
           <div className="runtime-state"><span className="status-dot" /> Configuration core online</div>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
@@ -273,8 +276,8 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">MODEL MANAGEMENT</div>
-            <h1>Model Lab</h1>
+            <div className="eyebrow">{activeView === "chat" ? "LOCAL INFERENCE" : "MODEL MANAGEMENT"}</div>
+            <h1>{activeView === "chat" ? "Chat with a model" : "Model Lab"}</h1>
           </div>
           <div className="top-actions">
             <span className="local-chip"><span /> LOCAL FIRST</span>
@@ -283,9 +286,20 @@ function App() {
         </header>
 
         <div className="content">
+          {activeView === "chat" ? (
+            <ChatView
+              providers={localProviders}
+              providersBusy={providersBusy}
+              providersError={providersError}
+              onRefreshProviders={() => void refreshLocalProviders()}
+              contextTokens={configuration.runtime.contextTokens}
+              generation={configuration.generation}
+            />
+          ) : (
+            <>
           <section className="notice warning">
             <strong>Foundation build</strong>
-            <span>GGUF inspection, hardware profiling, local Ollama and LM Studio discovery, optimization recommendations, and local configuration storage are implemented. Live inference and agent execution are not connected yet. Saved values are recommendations, not active runtime settings.</span>
+            <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, and local configuration storage are implemented. Agent execution and persistent project sessions are still in development. Saved runtime values remain recommendations until a provider can apply and report them.</span>
           </section>
 
           <section className="section-heading">
@@ -498,6 +512,8 @@ function App() {
             <p className="footnote">The updater remains disabled until a project-specific Tauri updater key is generated and its private half is installed as a protected GitHub Actions secret. Signature verification is never bypassed.</p>
           )}
           <footer>SPINDLE · LOCAL-FIRST DEVELOPMENT ENVIRONMENT <span>{hardware?.os ?? "DESKTOP"}</span></footer>
+            </>
+          )}
         </div>
       </main>
     </div>
