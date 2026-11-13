@@ -33,7 +33,6 @@ This roadmap records implementation status rather than implying the full product
 - [ ] Real applied-settings readback.
 - [ ] Runtime logs and memory telemetry.
 - [ ] Calibration benchmarks with user consent.
-- [ ] Provider capability registry and applied-settings readback.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
 
 ## Core developer workflow
