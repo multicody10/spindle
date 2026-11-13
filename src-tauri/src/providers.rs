@@ -66,8 +66,7 @@ async fn get_json(client: &reqwest::Client, endpoint: &str) -> Result<Value, Str
         body.extend_from_slice(&chunk);
     }
 
-    serde_json::from_slice(&body)
-        .map_err(|_| "Local provider returned invalid JSON.".to_string())
+    serde_json::from_slice(&body).map_err(|_| "Local provider returned invalid JSON.".to_string())
 }
 
 fn bounded_string(value: Option<&Value>, max_length: usize) -> Option<String> {
