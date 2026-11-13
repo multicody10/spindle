@@ -1,4 +1,5 @@
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -55,6 +56,7 @@ pub struct WorkspaceFile {
     pub relative_path: String,
     pub content: String,
     pub size_bytes: usize,
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +64,7 @@ pub struct WorkspaceFile {
 pub struct WorkspaceWriteResult {
     pub relative_path: String,
     pub bytes_written: usize,
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -254,6 +257,7 @@ impl WorkspaceManager {
         if bytes.len() > MAX_FILE_BYTES {
             return Err("The selected file exceeds the 1 MiB workspace read limit.".into());
         }
+        let revision = format!("{:x}", Sha256::digest(&bytes));
         let content = String::from_utf8(bytes)
             .map_err(|_| "The selected file is not valid UTF-8 text and cannot be opened in the editor.".to_string())?;
         let size_bytes = content.len();
@@ -261,6 +265,7 @@ impl WorkspaceManager {
             relative_path: relative_path.replace('\\', "/"),
             content,
             size_bytes,
+            revision,
         })
     }
 
@@ -269,6 +274,7 @@ impl WorkspaceManager {
         session_id: &str,
         relative_path: &str,
         content: String,
+        expected_revision: &str,
     ) -> Result<WorkspaceWriteResult, String> {
         let session = self.session(session_id, true)?;
         if content.len() > MAX_FILE_BYTES {
@@ -289,16 +295,32 @@ impl WorkspaceManager {
             .ok_or_else(|| "A file name is required.".to_string())?;
         let target = parent.join(file_name);
 
+        if expected_revision.len() != 64
+            || !expected_revision.chars().all(|character| character.is_ascii_hexdigit())
+        {
+            return Err("The file revision token is invalid. Reopen the file before saving.".into());
+        }
         match fs::symlink_metadata(&target) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() || !metadata.is_file() {
                     return Err("Workspace writes are limited to regular files, not links or special files.".into());
                 }
+                if metadata.len() > MAX_FILE_BYTES as u64 {
+                    return Err("The selected file exceeds the 1 MiB workspace write limit.".into());
+                }
                 let canonical = fs::canonicalize(&target)
                     .map_err(|error| format!("Could not resolve the target file: {error}"))?;
                 ensure_inside_root(&session.root, &canonical)?;
+                let current = fs::read(&canonical)
+                    .map_err(|error| format!("Could not verify the current file revision: {error}"))?;
+                let current_revision = format!("{:x}", Sha256::digest(&current));
+                if current_revision != expected_revision {
+                    return Err("This file changed outside Spindle after it was opened. Reopen it and reapply your edits to avoid overwriting newer work.".into());
+                }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err("The selected file no longer exists. Refresh the workspace before saving.".into());
+            }
             Err(error) => return Err(format!("Could not inspect the target file: {error}")),
         }
 
@@ -332,6 +354,7 @@ impl WorkspaceManager {
         Ok(WorkspaceWriteResult {
             relative_path: relative_path.replace('\\', "/"),
             bytes_written: content.len(),
+            revision: format!("{:x}", Sha256::digest(content.as_bytes())),
         })
     }
 
@@ -615,17 +638,44 @@ mod tests {
         let grant = manager
             .grant(root.to_string_lossy().into_owned(), true)
             .unwrap();
-        manager
-            .write_file(&grant.session_id, "src-notes.txt", "workspace text".into())
-            .unwrap();
-        manager
-            .write_file(&grant.session_id, "src-notes.txt", "updated text".into())
-            .unwrap();
+        fs::write(root.join("src-notes.txt"), "workspace text").unwrap();
         let file = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
-        assert_eq!(file.content, "updated text");
+        let saved = manager
+            .write_file(
+                &grant.session_id,
+                "src-notes.txt",
+                "updated text".into(),
+                &file.revision,
+            )
+            .unwrap();
+        assert_eq!(saved.revision.len(), 64);
+        let updated = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
+        assert_eq!(updated.content, "updated text");
         assert!(manager
             .write_file(&grant.session_id, "../escape.txt", "no".into())
             .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_writes_when_the_file_changed_after_open() {
+        let (manager, root, _) = test_workspace();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        fs::write(root.join("conflict.txt"), "original").unwrap();
+        let opened = manager.read_file(&grant.session_id, "conflict.txt").unwrap();
+        fs::write(root.join("conflict.txt"), "external change").unwrap();
+        let error = manager
+            .write_file(
+                &grant.session_id,
+                "conflict.txt",
+                "my stale edit".into(),
+                &opened.revision,
+            )
+            .unwrap_err();
+        assert!(error.contains("changed outside Spindle"));
+        assert_eq!(fs::read_to_string(root.join("conflict.txt")).unwrap(), "external change");
         let _ = fs::remove_dir_all(root);
     }
 
