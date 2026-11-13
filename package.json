@@ -9,7 +9,7 @@
     "build": "vite build",
     "check": "npm run typecheck && npm run build",
     "tauri": "tauri",
-    "desktop": "npm run typecheck && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "package:windows": "npm run typecheck && tauri build --bundles nsis"
   },
   "dependencies": {
