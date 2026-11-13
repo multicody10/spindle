@@ -1,5 +1,5 @@
-use serde::Serialize;
 use crate::hash::sha256_hex;
+use serde::Serialize;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
