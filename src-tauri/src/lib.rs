@@ -97,8 +97,8 @@ async fn write_workspace_file(
     tokio::task::spawn_blocking(move || {
         manager.write_file(&session_id, &relative_path, content, &expected_revision)
     })
-        .await
-        .map_err(|error| format!("Workspace write task failed: {error}"))?
+    .await
+    .map_err(|error| format!("Workspace write task failed: {error}"))?
 }
 
 #[tauri::command]
