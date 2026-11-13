@@ -260,6 +260,9 @@ fn run_validation_windows(
             env.push((OsString::from(key), value));
         }
     }
+    // CreateProcessW requires custom Unicode environment blocks to be sorted
+    // alphabetically by variable name, without regard to case.
+    sort_windows_environment(&mut env);
 
     let command_args = command.args(&manifest);
     let command_line = std::iter::once(cargo.as_os_str())
@@ -614,6 +617,16 @@ fn join_output(
     }
 }
 
+fn sort_windows_environment(
+    environment: &mut [(std::ffi::OsString, std::ffi::OsString)],
+) {
+    environment.sort_by(|(left, _), (right, _)| {
+        left.to_string_lossy()
+            .to_ascii_lowercase()
+            .cmp(&right.to_string_lossy().to_ascii_lowercase())
+    });
+}
+
 fn redact_output(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let bytes = input.as_bytes();
@@ -848,6 +861,22 @@ fn process_hold_probe() {
         let result = configure_worker_job(job);
         unsafe { CloseHandle(job) }.expect("the test Job Object should close");
         result.expect("the full process and memory policy must be retained by Windows");
+    }
+
+    #[test]
+    fn windows_environment_entries_are_sorted_case_insensitively() {
+        let mut environment = vec![
+            (std::ffi::OsString::from("SystemRoot"), std::ffi::OsString::from("C:\\\\Windows")),
+            (std::ffi::OsString::from("cargo_home"), std::ffi::OsString::from("C:\\\\Cargo")),
+            (std::ffi::OsString::from("ComSpec"), std::ffi::OsString::from("C:\\\\Windows\\\\System32\\\\cmd.exe")),
+            (std::ffi::OsString::from("PATH"), std::ffi::OsString::from("C:\\\\Windows")),
+        ];
+        sort_windows_environment(&mut environment);
+        let keys: Vec<_> = environment
+            .iter()
+            .map(|(key, _)| key.to_string_lossy().to_ascii_lowercase())
+            .collect();
+        assert_eq!(keys, ["cargo_home", "comspec", "path", "systemroot"]);
     }
 
     #[test]
