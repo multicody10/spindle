@@ -6,6 +6,7 @@ mod optimizer;
 mod persistence;
 mod providers;
 mod runtime;
+mod workspace;
 
 use crate::domain::{
     AppInfo, ModelConfiguration, OptimizationProfile, OptimizationResult, SavedPreset,
@@ -34,6 +35,79 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 async fn local_provider_statuses() -> Result<Vec<providers::LocalProviderStatus>, String> {
     providers::discover().await
+}
+
+#[tauri::command]
+fn workspace_status(
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<Option<workspace::WorkspaceGrant>, String> {
+    workspace.status()
+}
+
+#[tauri::command]
+fn grant_workspace_access(
+    path: String,
+    allow_write: bool,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<workspace::WorkspaceGrant, String> {
+    workspace.grant(path, allow_write)
+}
+
+#[tauri::command]
+fn revoke_workspace_access(
+    session_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<(), String> {
+    workspace.revoke(&session_id)
+}
+
+#[tauri::command]
+async fn list_workspace_directory(
+    session_id: String,
+    relative_path: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<workspace::WorkspaceListing, String> {
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.list_directory(&session_id, &relative_path))
+        .await
+        .map_err(|error| format!("Workspace listing task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn read_workspace_file(
+    session_id: String,
+    relative_path: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<workspace::WorkspaceFile, String> {
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.read_file(&session_id, &relative_path))
+        .await
+        .map_err(|error| format!("Workspace read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn write_workspace_file(
+    session_id: String,
+    relative_path: String,
+    content: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<workspace::WorkspaceWriteResult, String> {
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.write_file(&session_id, &relative_path, content))
+        .await
+        .map_err(|error| format!("Workspace write task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn search_workspace(
+    session_id: String,
+    query: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+) -> Result<workspace::WorkspaceSearchResult, String> {
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.search(&session_id, &query))
+        .await
+        .map_err(|error| format!("Workspace search task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -353,10 +427,18 @@ pub fn run() {
     tauri::Builder::default()
         .manage(chat::ChatRuntime::default())
         .manage(runtime::ManagedRuntime::default())
+        .manage(workspace::WorkspaceManager::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
             local_provider_statuses,
+            workspace_status,
+            grant_workspace_access,
+            revoke_workspace_access,
+            list_workspace_directory,
+            read_workspace_file,
+            write_workspace_file,
+            search_workspace,
             managed_runtime_status,
             install_llama_runtime,
             start_llama_runtime,
