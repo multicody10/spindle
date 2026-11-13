@@ -65,6 +65,51 @@ export interface RuntimeStatus {
   appliedSettings: AppliedRuntimeSettings | null;
 }
 
+export interface WorkspaceGrant {
+  sessionId: string;
+  rootPath: string;
+  canRead: boolean;
+  canWrite: boolean;
+  temporary: boolean;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  relativePath: string;
+  kind: "directory" | "file";
+  sizeBytes: number | null;
+  modifiedUnixMs: number | null;
+}
+
+export interface WorkspaceListing {
+  relativePath: string;
+  entries: WorkspaceEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspaceFile {
+  relativePath: string;
+  content: string;
+  sizeBytes: number;
+}
+
+export interface WorkspaceWriteResult {
+  relativePath: string;
+  bytesWritten: number;
+}
+
+export interface WorkspaceSearchMatch {
+  relativePath: string;
+  lineNumber: number;
+  preview: string;
+}
+
+export interface WorkspaceSearchResult {
+  matches: WorkspaceSearchMatch[];
+  filesScanned: number;
+  bytesScanned: number;
+  truncated: boolean;
+}
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export interface ChatMessage {
