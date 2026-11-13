@@ -452,7 +452,7 @@ pub async fn start(
         .arg("--flash-attn").arg(if configuration.runtime.flash_attention { "on" } else { "off" })
         .arg("--cache-type-k").arg(&configuration.runtime.kv_cache_k_type)
         .arg("--cache-type-v").arg(&configuration.runtime.kv_cache_v_type)
-        .arg(if configuration.runtime.kv_cache_on_gpu { "--kv-offload" } else { "--no-kv-offload" })
+        .arg(if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu { "--kv-offload" } else { "--no-kv-offload" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -549,12 +549,23 @@ pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize the runtime settings client.".to_string())?;
-    let response = client.get(format!("{BASE_URL}/props")).send().await
+    let mut response = client.get(format!("{BASE_URL}/props")).send().await
         .map_err(|_| "The managed llama.cpp server is not responding.".to_string())?;
     if !response.status().is_success() {
         return Err(format!("llama.cpp returned HTTP {} while reading settings.", response.status().as_u16()));
     }
-    let document: Value = response.json().await.map_err(|_| "llama.cpp returned invalid runtime settings.".to_string())?;
+    if response.content_length().is_some_and(|length| length > 1024 * 1024) {
+        return Err("llama.cpp runtime settings exceeded the response size limit.".into());
+    }
+    let mut body = Vec::with_capacity(32 * 1024);
+    while let Some(chunk) = response.chunk().await.map_err(|_| "Could not read llama.cpp runtime settings.".to_string())? {
+        if body.len().saturating_add(chunk.len()) > 1024 * 1024 {
+            return Err("llama.cpp runtime settings exceeded the response size limit.".into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let document: Value = serde_json::from_slice(&body)
+        .map_err(|_| "llama.cpp returned invalid runtime settings.".to_string())?;
     let defaults = document.get("default_generation_settings");
     let params = defaults.and_then(|value| value.get("params"));
     Ok(AppliedSettings {
