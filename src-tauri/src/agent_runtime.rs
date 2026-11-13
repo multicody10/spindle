@@ -298,8 +298,7 @@ async fn run_inner(
         services,
         run,
     };
-    let result =
-        loop_agent(&context, &task, &project, &worktree.path, provider, &input).await;
+    let result = loop_agent(&context, &task, &project, &worktree.path, provider, &input).await;
 
     match result {
         Ok(summary) => {
