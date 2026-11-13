@@ -173,7 +173,7 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
             {busy ? "Working…" : selectedInstall?.installed ? "Installed" : "Install " + backendLabel(backend)}
           </button>
         </div>
-        <p className="footnote">Downloads come only from the official ggml-org/llama.cpp GitHub release. Spindle follows only GitHub’s release asset redirect, then verifies each archive’s exact size and SHA-256 before extraction. CUDA installs its matching 12.4 runtime DLL bundle too.</p>
+        <p className="footnote">Downloads come only from the official ggml-org/llama.cpp GitHub release. Spindle follows only GitHub’s release asset redirect, then verifies each archive’s exact size and SHA-256 before extraction. CUDA installs its matching 12.4 runtime DLL bundle too and needs about 678 MiB of downloads plus unpacked disk space.</p>
         <div className="runtime-installed-list">
           {(status?.installedBackends ?? []).map((item) => (
             <div key={item.backend}>

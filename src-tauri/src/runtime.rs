@@ -23,6 +23,7 @@ const MAX_TOTAL_DOWNLOAD_BYTES: u64 = 800 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 2_048;
 const MAX_LOG_LINES: usize = 400;
+const CUDA_RUNTIME_DLLS: [&str; 3] = ["cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll"];
 const MAX_LOG_LINE_BYTES: usize = 8 * 1024;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -268,8 +269,13 @@ fn install_dir(app: &AppHandle, backend: RuntimeBackend) -> Result<PathBuf, Stri
 
 fn executable_path(app: &AppHandle, backend: RuntimeBackend) -> Result<PathBuf, String> {
     let directory = install_dir(app, backend)?;
-    find_server(&directory)
-        .ok_or_else(|| "The installed llama.cpp executable is missing.".to_string())
+    find_backend_server(&directory, backend).ok_or_else(|| {
+        if backend == RuntimeBackend::Cuda {
+            "The CUDA runtime installation is incomplete. Reinstall the CUDA backend and verify its runtime DLL bundle.".to_string()
+        } else {
+            "The installed llama.cpp executable is missing.".to_string()
+        }
+    })
 }
 
 fn backend_status(
@@ -279,7 +285,7 @@ fn backend_status(
     let path = install_dir(app, backend)?;
     Ok(BackendInstallStatus {
         backend,
-        installed: find_server(&path).is_some(),
+        installed: find_backend_server(&path, backend).is_some(),
         version: VERSION,
         asset: backend.asset(),
     })
@@ -370,9 +376,13 @@ pub async fn install(
         }
     };
 
-    let server = find_server(&staging).ok_or_else(|| {
+    let server = find_backend_server(&staging, backend).ok_or_else(|| {
         let _ = fs::remove_dir_all(&staging);
-        "The verified archive did not contain llama-server.exe.".to_string()
+        if backend == RuntimeBackend::Cuda {
+            "The verified CUDA archives did not contain llama-server.exe and all three required CUDA runtime DLLs.".to_string()
+        } else {
+            "The verified archive did not contain llama-server.exe.".to_string()
+        }
     })?;
     let marker = staging.join("spindle-runtime.json");
     let metadata = serde_json::json!({
@@ -606,6 +616,17 @@ fn extract_archive<R: Read + Seek>(
             .map_err(|error| format!("Could not flush a runtime file: {error}"))?;
     }
     Ok(())
+}
+
+fn find_backend_server(root: &Path, backend: RuntimeBackend) -> Option<PathBuf> {
+    let server = find_server(root)?;
+    if backend == RuntimeBackend::Cuda {
+        let directory = server.parent()?;
+        if !CUDA_RUNTIME_DLLS.iter().all(|name| directory.join(name).is_file()) {
+            return None;
+        }
+    }
+    Some(server)
 }
 
 fn find_server(root: &Path) -> Option<PathBuf> {
@@ -939,6 +960,24 @@ mod tests {
         assert!(RuntimeBackend::Cuda.asset().contains(VERSION));
         assert_eq!(RuntimeBackend::Cuda.assets().len(), 2);
         assert_eq!(RuntimeBackend::Cuda.id(), "cuda");
+    }
+
+    #[test]
+    fn cuda_runtime_requires_all_companion_dlls_beside_the_server() {
+        let root = std::env::temp_dir().join(format!(
+            "spindle-cuda-runtime-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("llama-server.exe"), b"test").unwrap();
+        assert!(find_backend_server(&root, RuntimeBackend::Cuda).is_none());
+        assert!(find_backend_server(&root, RuntimeBackend::Cpu).is_some());
+        for name in CUDA_RUNTIME_DLLS {
+            fs::write(root.join(name), b"dll").unwrap();
+        }
+        assert!(find_backend_server(&root, RuntimeBackend::Cuda).is_some());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

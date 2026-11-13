@@ -40,7 +40,7 @@ The runtime binds only to `127.0.0.1:12345`. Chat discovers it as llama.cpp (Spi
 
 GitHub's release download URL responds with an HTTP 302 redirect to its release asset CDN. The installer now permits only a single HTTPS redirect from the fixed GitHub release URL to `release-assets.githubusercontent.com`; it rejects other redirect hosts and additional redirect hops.
 
-Each archive is downloaded to disk with a per-file size cap and pinned expected byte count, then SHA-256 verified before the ZIP is opened. CUDA downloads both archives (about 678 MiB total). Extraction is bounded to 2 GiB and 2,048 entries per archive. Temporary downloads are removed after extraction, and the staged runtime is moved into place only after all assets verify and `llama-server.exe` is present.
+Each archive is downloaded to disk with a per-file size cap and pinned expected byte count, then SHA-256 verified before the ZIP is opened. CUDA downloads both archives (about 678 MiB total) and therefore needs additional free disk space for the extracted runtime and staging files. Extraction is bounded to 2 GiB and 2,048 entries per archive. The installer verifies that `llama-server.exe`, `cudart64_12.dll`, `cublas64_12.dll`, and `cublasLt64_12.dll` are present together before marking CUDA installed. Temporary downloads are removed after extraction, and the staged runtime is moved into place only after all assets verify.
 
 ## Compatibility and limitations
 
