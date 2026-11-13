@@ -4,7 +4,7 @@
 
 Spindle is the successor project to Rivet, designed around a Rust/Tauri application core, model-agnostic provider architecture, hardware-aware model configuration, and security boundaries that do not rely on model compliance.
 
-> **Current status:** Foundation milestone. The desktop shell, GGUF metadata inspection, Windows hardware inventory, explainable configuration recommendations, SQLite persistence, local Ollama/LM Studio discovery, and signed Windows releases are implemented. Live inference, agent execution, session orchestration, and OS-level command isolation are not implemented yet.
+> **Current status:** Foundation milestone. The desktop shell, GGUF metadata inspection, Windows hardware inventory, explainable configuration recommendations, SQLite persistence, local Ollama/LM Studio discovery, streamed local chat through both providers, and signed Windows releases are implemented. Agent execution, persistent sessions, and OS-level command isolation are not implemented yet.
 
 ## What works in this foundation
 
@@ -13,14 +13,16 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Calculate conservative llama.cpp-oriented settings using model metadata, available memory, context/KV-cache estimates, and an explicit optimization profile.
 - Keep load-time runtime settings separate from generation sampling settings.
 - Save per-model configurations and reusable named presets in a local SQLite database.
-- Discover local Ollama and LM Studio endpoints and list available models without launching provider processes.
-- Validate configuration ranges in the Rust backend.
+- Discover local Ollama and LM Studio endpoints, list available models, and stream chat responses from an already-running local provider.
+- Validate configuration ranges and chat requests in the Rust backend.
+- Chat locally with Ollama or LM Studio, including streamed responses, cancellation, and provider-reported token statistics.
+- Use the bundled Roboto typeface and supplied Spindle thimble/thread wordmark.
 - Validate pull requests with frontend and Rust checks; run NSIS packaging manually and CodeQL/supply-chain scans weekly or on demand.
 - Build and publish signed Windows NSIS releases with an in-app Tauri updater manifest.
 
 ## What is deliberately not claimed
 
-This milestone does **not** load or run a model, generate tokens, execute shell commands, edit project files, create coding-agent sessions, or provide a hardened sandbox. The Model Lab clearly labels settings as stored recommendations until a runtime adapter applies and verifies them. Agent execution will not be enabled before the permission broker and isolated worker are implemented.
+This milestone does **not** manage provider processes, launch a model itself, execute shell commands, edit project files, create coding-agent sessions, or provide a hardened sandbox. The Model Lab clearly labels settings as stored recommendations until a runtime adapter applies and verifies them. Agent execution will not be enabled before the permission broker and isolated worker are implemented.
 
 ## Development
 
@@ -59,12 +61,12 @@ The release workflow stops before packaging if the public key placeholder or sig
 
 ## Data and privacy
 
-Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. Local provider discovery makes bounded GET requests only to fixed loopback endpoints; there is no telemetry implementation and the hardware profile is not uploaded. Live inference will retain an explicit provider boundary.
+Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. Provider discovery and chat make bounded requests only to fixed loopback endpoints; chat history is kept in memory for the current window and is not saved to disk. There is no telemetry implementation and the hardware profile is not uploaded.
 
 ## Project documentation
 
 - Architecture: docs/ARCHITECTURE.md
-- Local provider discovery: docs/LOCAL_PROVIDERS.md
+- Local providers and chat: docs/LOCAL_PROVIDERS.md
 - Windows installation and update scope: docs/DISTRIBUTION.md
 - Threat model: docs/THREAT_MODEL.md
 - Model configuration: docs/MODEL_CONFIGURATION.md
