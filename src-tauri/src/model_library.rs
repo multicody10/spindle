@@ -519,7 +519,10 @@ mod tests {
             .unwrap();
         assert!(jan.path.contains("llamacpp"));
         let managed = Path::new(&result.managed_directory);
-        assert_eq!(managed.file_name().and_then(|name| name.to_str()), Some("Models"));
+        assert_eq!(
+            managed.file_name().and_then(|name| name.to_str()),
+            Some("Models")
+        );
         assert_eq!(
             managed
                 .parent()
