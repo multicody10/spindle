@@ -36,7 +36,9 @@ pub struct ModelLibrary {
 }
 
 fn path_key(path: &Path) -> String {
-    path.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 fn ignored_directory(name: &str) -> bool {
@@ -160,7 +162,12 @@ fn default_model_roots(
         .or_else(|| home_directory.map(|home| home.join(".lmstudio").join("models")));
     if let Some(path) = lm_studio {
         roots.push((
-            if lm_studio_override.is_some() { "LM Studio (configured)" } else { "LM Studio" }.into(),
+            if lm_studio_override.is_some() {
+                "LM Studio (configured)"
+            } else {
+                "LM Studio"
+            }
+            .into(),
             path,
         ));
     }
@@ -170,17 +177,27 @@ fn default_model_roots(
         .or_else(|| local_app_data_directory.map(|base| base.join("nomic.ai").join("GPT4All")));
     if let Some(path) = gpt4all {
         roots.push((
-            if gpt4all_override.is_some() { "GPT4All (configured)" } else { "GPT4All" }.into(),
+            if gpt4all_override.is_some() {
+                "GPT4All (configured)"
+            } else {
+                "GPT4All"
+            }
+            .into(),
             path,
         ));
     }
 
-    let jan = jan_override
-        .clone()
-        .or_else(|| roaming_app_data_directory.map(|base| base.join("Jan").join("data").join("models")));
+    let jan = jan_override.clone().or_else(|| {
+        roaming_app_data_directory.map(|base| base.join("Jan").join("data").join("models"))
+    });
     if let Some(path) = jan {
         roots.push((
-            if jan_override.is_some() { "Jan (configured)" } else { "Jan" }.into(),
+            if jan_override.is_some() {
+                "Jan (configured)"
+            } else {
+                "Jan"
+            }
+            .into(),
             path,
         ));
     }
@@ -238,7 +255,11 @@ fn discover_from_roots(
         left.file_name
             .to_ascii_lowercase()
             .cmp(&right.file_name.to_ascii_lowercase())
-            .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+            .then_with(|| {
+                left.path
+                    .to_ascii_lowercase()
+                    .cmp(&right.path.to_ascii_lowercase())
+            })
     });
 
     Ok(ModelLibrary {
@@ -274,21 +295,28 @@ mod tests {
 
     #[test]
     fn creates_spindle_library_and_discovers_common_gguf_locations() {
-        let temporary = env::temp_dir().join(format!(
-            "spindle-model-library-{}",
-            std::process::id()
-        ));
+        let temporary =
+            env::temp_dir().join(format!("spindle-model-library-{}", std::process::id()));
         let documents = temporary.join("Documents");
         let home = temporary.join("Home");
         let local_app_data = temporary.join("Local");
         let roaming_app_data = temporary.join("Roaming");
 
         let spindle_models = documents.join("Spindle").join("Models");
-        let lmstudio_models = home.join(".lmstudio").join("models").join("publisher").join("model");
+        let lmstudio_models = home
+            .join(".lmstudio")
+            .join("models")
+            .join("publisher")
+            .join("model");
         let gpt4all_models = local_app_data.join("nomic.ai").join("GPT4All");
         let jan_models = roaming_app_data.join("Jan").join("data").join("models");
 
-        for directory in [&spindle_models, &lmstudio_models, &gpt4all_models, &jan_models] {
+        for directory in [
+            &spindle_models,
+            &lmstudio_models,
+            &gpt4all_models,
+            &jan_models,
+        ] {
             fs::create_dir_all(directory).unwrap();
         }
         fs::write(spindle_models.join("spindle-model.gguf"), b"test").unwrap();
@@ -310,9 +338,15 @@ mod tests {
 
         assert_eq!(result.models.len(), 4);
         let managed = Path::new(&result.managed_directory);
-        assert_eq!(managed.file_name().and_then(|name| name.to_str()), Some("Models"));
         assert_eq!(
-            managed.parent().and_then(Path::file_name).and_then(|name| name.to_str()),
+            managed.file_name().and_then(|name| name.to_str()),
+            Some("Models")
+        );
+        assert_eq!(
+            managed
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str()),
             Some("Spindle")
         );
         for (file_name, source) in [
@@ -321,9 +355,10 @@ mod tests {
             ("jan-model.gguf", "Jan"),
             ("spindle-model.gguf", "Spindle library"),
         ] {
-            assert!(result.models.iter().any(|model| {
-                model.file_name == file_name && model.source == source
-            }));
+            assert!(result
+                .models
+                .iter()
+                .any(|model| { model.file_name == file_name && model.source == source }));
         }
 
         let _ = fs::remove_dir_all(temporary);
