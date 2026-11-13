@@ -397,7 +397,10 @@ mod tests {
             }
         }).await.unwrap();
         waiting_cancel.notify_one();
-        let error = waiting.await.unwrap().unwrap_err();
+        let error = match waiting.await.unwrap() {
+            Ok(_) => panic!("A cancelled waiting session must not acquire a slot."),
+            Err(error) => error,
+        };
         assert!(error.contains("cancelled"));
         assert_eq!(manager.status().queued_requests, 0);
         assert_eq!(manager.status().active_requests, 1);
