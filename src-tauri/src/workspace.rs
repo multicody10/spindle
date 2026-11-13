@@ -166,7 +166,10 @@ impl WorkspaceManager {
         let session = active
             .as_ref()
             .filter(|session| session.grant.session_id == session_id)
-            .ok_or_else(|| "Workspace access has expired or was revoked. Grant the directory again.".to_string())?;
+            .ok_or_else(|| {
+                "Workspace access has expired or was revoked. Grant the directory again."
+                    .to_string()
+            })?;
 
         if !session.grant.can_read {
             return Err("This workspace session does not have read permission.".into());
@@ -190,7 +193,8 @@ impl WorkspaceManager {
         let iterator = fs::read_dir(&directory)
             .map_err(|error| format!("Could not list this workspace directory: {error}"))?;
         for entry in iterator {
-            let entry = entry.map_err(|error| format!("Could not read a directory entry: {error}"))?;
+            let entry =
+                entry.map_err(|error| format!("Could not read a directory entry: {error}"))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)
@@ -240,11 +244,18 @@ impl WorkspaceManager {
         })
     }
 
-    pub fn read_file(&self, session_id: &str, relative_path: &str) -> Result<WorkspaceFile, String> {
+    pub fn read_file(
+        &self,
+        session_id: &str,
+        relative_path: &str,
+    ) -> Result<WorkspaceFile, String> {
         let session = self.session(session_id, false)?;
         let path = resolve_file(&session, relative_path)?;
         if is_sensitive_path(Path::new(relative_path)) {
-            return Err("This file is classified as secret material and cannot be read by workspace tools.".into());
+            return Err(
+                "This file is classified as secret material and cannot be read by workspace tools."
+                    .into(),
+            );
         }
 
         let metadata = fs::metadata(&path)
@@ -255,8 +266,10 @@ impl WorkspaceManager {
         let bytes = read_bounded(&path, MAX_FILE_BYTES)
             .map_err(|error| format!("Could not read the selected workspace file: {error}"))?;
         let revision = format!("{:x}", Sha256::digest(&bytes));
-        let content = String::from_utf8(bytes)
-            .map_err(|_| "The selected file is not valid UTF-8 text and cannot be opened in the editor.".to_string())?;
+        let content = String::from_utf8(bytes).map_err(|_| {
+            "The selected file is not valid UTF-8 text and cannot be opened in the editor."
+                .to_string()
+        })?;
         let size_bytes = content.len();
         Ok(WorkspaceFile {
             relative_path: relative_path.replace('\\', "/"),
@@ -293,9 +306,13 @@ impl WorkspaceManager {
         let target = parent.join(file_name);
 
         if expected_revision.len() != 64
-            || !expected_revision.chars().all(|character| character.is_ascii_hexdigit())
+            || !expected_revision
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
         {
-            return Err("The file revision token is invalid. Reopen the file before saving.".into());
+            return Err(
+                "The file revision token is invalid. Reopen the file before saving.".into(),
+            );
         }
         match fs::symlink_metadata(&target) {
             Ok(metadata) => {
@@ -308,15 +325,19 @@ impl WorkspaceManager {
                 let canonical = fs::canonicalize(&target)
                     .map_err(|error| format!("Could not resolve the target file: {error}"))?;
                 ensure_inside_root(&session.root, &canonical)?;
-                let current = read_bounded(&canonical, MAX_FILE_BYTES)
-                    .map_err(|error| format!("Could not verify the current file revision: {error}"))?;
+                let current = read_bounded(&canonical, MAX_FILE_BYTES).map_err(|error| {
+                    format!("Could not verify the current file revision: {error}")
+                })?;
                 let current_revision = format!("{:x}", Sha256::digest(&current));
                 if current_revision != expected_revision {
                     return Err("This file changed outside Spindle after it was opened. Reopen it and reapply your edits to avoid overwriting newer work.".into());
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err("The selected file no longer exists. Refresh the workspace before saving.".into());
+                return Err(
+                    "The selected file no longer exists. Refresh the workspace before saving."
+                        .into(),
+                );
             }
             Err(error) => return Err(format!("Could not inspect the target file: {error}")),
         }
@@ -327,7 +348,7 @@ impl WorkspaceManager {
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let temporary = parent.join(temporary_name);
-        let write_result = (|| {
+        let write_result: Result<(), String> = (|| {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -338,8 +359,9 @@ impl WorkspaceManager {
             file.sync_all()
                 .map_err(|error| format!("Could not flush the workspace file: {error}"))?;
             drop(file);
-            fs::rename(&temporary, &target)
-                .map_err(|error| format!("Could not atomically replace the workspace file: {error}"))?;
+            fs::rename(&temporary, &target).map_err(|error| {
+                format!("Could not atomically replace the workspace file: {error}")
+            })?;
             Ok(())
         })();
 
@@ -355,11 +377,7 @@ impl WorkspaceManager {
         })
     }
 
-    pub fn search(
-        &self,
-        session_id: &str,
-        query: &str,
-    ) -> Result<WorkspaceSearchResult, String> {
+    pub fn search(&self, session_id: &str, query: &str) -> Result<WorkspaceSearchResult, String> {
         let session = self.session(session_id, false)?;
         let query = query.trim();
         if query.is_empty() || query.len() > 256 {
@@ -373,7 +391,11 @@ impl WorkspaceManager {
         let mut truncated = false;
 
         while let Some((directory, depth)) = pending.pop() {
-            if depth > MAX_SEARCH_DEPTH || files_scanned >= MAX_SEARCH_FILES || matches.len() >= MAX_SEARCH_RESULTS || bytes_scanned >= MAX_SEARCH_BYTES {
+            if depth > MAX_SEARCH_DEPTH
+                || files_scanned >= MAX_SEARCH_FILES
+                || matches.len() >= MAX_SEARCH_RESULTS
+                || bytes_scanned >= MAX_SEARCH_BYTES
+            {
                 truncated = true;
                 break;
             }
@@ -382,7 +404,10 @@ impl WorkspaceManager {
                 Err(_) => continue,
             };
             for entry in entries.flatten() {
-                if files_scanned >= MAX_SEARCH_FILES || matches.len() >= MAX_SEARCH_RESULTS || bytes_scanned >= MAX_SEARCH_BYTES {
+                if files_scanned >= MAX_SEARCH_FILES
+                    || matches.len() >= MAX_SEARCH_RESULTS
+                    || bytes_scanned >= MAX_SEARCH_BYTES
+                {
                     truncated = true;
                     break;
                 }
@@ -426,13 +451,14 @@ impl WorkspaceManager {
                     break;
                 }
                 files_scanned += 1;
-                let bytes = match read_bounded(&canonical, remaining_bytes.min(MAX_SEARCH_FILE_BYTES)) {
-                    Ok(bytes) => bytes,
-                    Err(_) => {
-                        truncated = true;
-                        break;
-                    }
-                };
+                let bytes =
+                    match read_bounded(&canonical, remaining_bytes.min(MAX_SEARCH_FILE_BYTES)) {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            truncated = true;
+                            break;
+                        }
+                    };
                 bytes_scanned = bytes_scanned.saturating_add(bytes.len());
                 let text = match std::str::from_utf8(&bytes) {
                     Ok(text) if !text.contains('\0') => text,
@@ -582,7 +608,10 @@ fn relative_display(root: &Path, path: &Path) -> Result<String, String> {
 fn is_sensitive_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with(".env")
-        || matches!(name.as_str(), ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg")
+        || matches!(
+            name.as_str(),
+            ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg"
+        )
         || name == ".npmrc"
         || name == ".pypirc"
         || name == "id_rsa"
@@ -601,15 +630,25 @@ fn is_sensitive_name(name: &str) -> bool {
 fn is_sensitive_path(path: &Path) -> bool {
     path.components().any(|component| {
         let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(name.as_str(), ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg")
-            || is_sensitive_name(&name)
+        matches!(
+            name.as_str(),
+            ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg"
+        ) || is_sensitive_name(&name)
     })
 }
 
 fn is_ignored_directory(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        ".git" | "node_modules" | "target" | "dist" | "build" | "coverage" | ".next" | ".venv" | "vendor"
+        ".git"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | "coverage"
+            | ".next"
+            | ".venv"
+            | "vendor"
     )
 }
 
@@ -647,7 +686,12 @@ mod tests {
     fn read_only_grants_reject_writes() {
         let (manager, root, grant) = test_workspace();
         let error = manager
-            .write_file(&grant.session_id, "notes.txt", "hello".into(), &"0".repeat(64))
+            .write_file(
+                &grant.session_id,
+                "notes.txt",
+                "hello".into(),
+                &"0".repeat(64),
+            )
             .unwrap_err();
         assert!(error.contains("not permitted"));
         let _ = fs::remove_dir_all(root);
@@ -660,7 +704,9 @@ mod tests {
             .grant(root.to_string_lossy().into_owned(), true)
             .unwrap();
         fs::write(root.join("src-notes.txt"), "workspace text").unwrap();
-        let file = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
+        let file = manager
+            .read_file(&grant.session_id, "src-notes.txt")
+            .unwrap();
         let saved = manager
             .write_file(
                 &grant.session_id,
@@ -670,7 +716,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(saved.revision.len(), 64);
-        let updated = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
+        let updated = manager
+            .read_file(&grant.session_id, "src-notes.txt")
+            .unwrap();
         assert_eq!(updated.content, "updated text");
         assert!(manager
             .write_file(
@@ -690,7 +738,9 @@ mod tests {
             .grant(root.to_string_lossy().into_owned(), true)
             .unwrap();
         fs::write(root.join("conflict.txt"), "original").unwrap();
-        let opened = manager.read_file(&grant.session_id, "conflict.txt").unwrap();
+        let opened = manager
+            .read_file(&grant.session_id, "conflict.txt")
+            .unwrap();
         fs::write(root.join("conflict.txt"), "external change").unwrap();
         let error = manager
             .write_file(
