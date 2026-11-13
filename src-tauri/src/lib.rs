@@ -153,13 +153,13 @@ async fn run_agent_task_validation(
     match result {
         Ok(output) => {
             let task_event_id = task_id.clone();
+            let payload = serde_json::json!({
+                "command": output.command.clone(), "exitCode": output.exit_code,
+                "success": output.success, "durationMs": output.duration_ms,
+                "outputTruncated": output.output_truncated, "isolation": output.isolation.clone()
+            });
             with_project_database(&app, move |database| projects::append_task_event(
-                database, task_event_id, "validation_finished".into(),
-                serde_json::json!({
-                    "command": output.command.clone(), "exitCode": output.exit_code,
-                    "success": output.success, "durationMs": output.duration_ms,
-                    "outputTruncated": output.output_truncated, "isolation": output.isolation.clone()
-                }),
+                database, task_event_id, "validation_finished".into(), payload,
             )).await?;
             Ok(output)
         }
