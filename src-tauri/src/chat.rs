@@ -12,6 +12,7 @@ use tokio::sync::Notify;
 
 const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
 const LM_STUDIO_BASE: &str = "http://127.0.0.1:1234";
+const LLAMA_CPP_BASE: &str = "http://127.0.0.1:12345";
 const MAX_MODEL_RESPONSE_BYTES: u64 = 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
@@ -23,6 +24,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub enum ChatProvider {
     Ollama,
     LmStudio,
+    LlamaCpp,
 }
 
 impl ChatProvider {
@@ -30,6 +32,7 @@ impl ChatProvider {
         match self {
             Self::Ollama => "ollama",
             Self::LmStudio => "lm-studio",
+            Self::LlamaCpp => "llama-cpp",
         }
     }
 }
@@ -192,6 +195,7 @@ async fn verify_model(
     let (endpoint, list_path, list_key, id_key) = match provider {
         ChatProvider::Ollama => (OLLAMA_BASE, "/api/tags", "models", "name"),
         ChatProvider::LmStudio => (LM_STUDIO_BASE, "/v1/models", "data", "id"),
+        ChatProvider::LlamaCpp => (LLAMA_CPP_BASE, "/v1/models", "data", "id"),
     };
     let response = tokio::select! {
         _ = cancellation.notified() => return Err("Generation cancelled.".into()),
@@ -409,7 +413,7 @@ async fn stream_chat(
 
             let frame = match provider {
                 ChatProvider::Ollama => parse_ollama_line(&line)?,
-                ChatProvider::LmStudio => parse_lm_studio_line(&line)?,
+                ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&line)?,
             };
             if let Some(frame) = frame {
                 if let Some(delta) = frame.delta {
@@ -448,7 +452,7 @@ async fn stream_chat(
     if !buffer.is_empty() && !finished {
         let frame = match provider {
             ChatProvider::Ollama => parse_ollama_line(&buffer)?,
-            ChatProvider::LmStudio => parse_lm_studio_line(&buffer)?,
+            ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&buffer)?,
         };
         if let Some(frame) = frame {
             if let Some(delta) = frame.delta {
@@ -510,6 +514,10 @@ pub async fn run(
         ChatProvider::Ollama => (format!("{OLLAMA_BASE}/api/chat"), ollama_body(&request)),
         ChatProvider::LmStudio => (
             format!("{LM_STUDIO_BASE}/v1/chat/completions"),
+            lm_studio_body(&request),
+        ),
+        ChatProvider::LlamaCpp => (
+            format!("{LLAMA_CPP_BASE}/v1/chat/completions"),
             lm_studio_body(&request),
         ),
     };
@@ -628,5 +636,6 @@ mod tests {
     fn provider_identifiers_match_the_frontend_contract() {
         assert_eq!(ChatProvider::Ollama.id(), "ollama");
         assert_eq!(ChatProvider::LmStudio.id(), "lm-studio");
+        assert_eq!(ChatProvider::LlamaCpp.id(), "llama-cpp");
     }
 }
