@@ -80,18 +80,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --prefer-offline --no-audit --no-fund
 
-      - name: Type-check and validate Rust
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          npm run typecheck
-          if ($LASTEXITCODE -ne 0) { throw "Frontend type-check failed." }
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-          if ($LASTEXITCODE -ne 0) { throw "Rust formatting failed." }
-          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-          if ($LASTEXITCODE -ne 0) { throw "Clippy failed." }
-          cargo test --manifest-path src-tauri/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "Rust tests failed." }
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Check Rust formatting
+        if: ${{ !cancelled() }}
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Run Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        if: ${{ !cancelled() }}
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Build and publish signed release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
