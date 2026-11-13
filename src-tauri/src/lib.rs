@@ -1,3 +1,4 @@
+mod chat;
 mod domain;
 mod gguf;
 mod hardware;
@@ -8,7 +9,7 @@ mod providers;
 use crate::domain::{
     AppInfo, ModelConfiguration, OptimizationProfile, OptimizationResult, SavedPreset,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
 
@@ -32,6 +33,98 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 async fn local_provider_statuses() -> Result<Vec<providers::LocalProviderStatus>, String> {
     providers::discover().await
+}
+
+#[tauri::command]
+async fn start_chat(
+    app: AppHandle,
+    runtime: State<'_, chat::ChatRuntime>,
+    request: chat::ChatRequest,
+) -> Result<chat::ChatResult, String> {
+    validate_chat_request(&request)?;
+    let request_id = request.request_id.clone();
+    let cancellation = runtime.begin(&request_id)?;
+    let result = chat::run(app, request, cancellation).await;
+    runtime.finish(&request_id);
+    result
+}
+
+#[tauri::command]
+fn cancel_chat(
+    request_id: String,
+    runtime: State<'_, chat::ChatRuntime>,
+) -> bool {
+    runtime.cancel(&request_id)
+}
+
+fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
+    if request.request_id.len() != 36
+        || !request
+            .request_id
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
+    {
+        return Err("The chat request identifier is invalid.".into());
+    }
+    if request.model.trim().is_empty() || request.model.len() > 256 {
+        return Err("Select a model with a valid identifier.".into());
+    }
+    if request.messages.is_empty() || request.messages.len() > 64 {
+        return Err("A chat must contain between 1 and 64 messages.".into());
+    }
+    let mut total_bytes = 0usize;
+    for message in &request.messages {
+        if !matches!(message.role.as_str(), "system" | "user" | "assistant") {
+            return Err("Chat messages may only use system, user, or assistant roles.".into());
+        }
+        if message.content.trim().is_empty() || message.content.len() > 64 * 1024 {
+            return Err("Each chat message must contain 1 to 65,536 bytes.".into());
+        }
+        total_bytes = total_bytes.saturating_add(message.content.len());
+    }
+    if total_bytes > 256 * 1024 {
+        return Err("The combined chat history exceeds the 256 KiB request limit.".into());
+    }
+    if request.messages.last().is_none_or(|message| message.role != "user") {
+        return Err("The final chat message must come from the user.".into());
+    }
+
+    let generation = &request.generation;
+    if request.context_tokens == 0
+        || request.context_tokens > 131_072
+        || generation.max_output_tokens == 0
+        || generation.max_output_tokens > 32_768
+        || generation.max_output_tokens > request.context_tokens
+    {
+        return Err("Context and output limits are outside the supported range.".into());
+    }
+    if !generation.temperature.is_finite()
+        || !(0.0..=5.0).contains(&generation.temperature)
+        || !generation.top_p.is_finite()
+        || !(0.0..=1.0).contains(&generation.top_p)
+        || !generation.min_p.is_finite()
+        || !(0.0..=1.0).contains(&generation.min_p)
+        || !generation.typical_p.is_finite()
+        || !(0.0..=1.0).contains(&generation.typical_p)
+        || !generation.repeat_penalty.is_finite()
+        || !(0.1..=3.0).contains(&generation.repeat_penalty)
+        || !generation.presence_penalty.is_finite()
+        || !(-2.0..=2.0).contains(&generation.presence_penalty)
+        || !generation.frequency_penalty.is_finite()
+        || !(-2.0..=2.0).contains(&generation.frequency_penalty)
+        || generation.top_k > 1_000
+        || generation.repeat_last_n < -1
+        || generation.repeat_last_n > 8_192
+        || generation.stop_sequences.len() > 32
+        || generation
+            .stop_sequences
+            .iter()
+            .any(|sequence| sequence.len() > 512)
+    {
+        return Err("One or more generation settings are outside the supported range.".into());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -214,10 +307,13 @@ fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), Stri
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(chat::ChatRuntime::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
             local_provider_statuses,
+            start_chat,
+            cancel_chat,
             hardware_profile,
             inspect_model,
             optimize_model,
@@ -234,6 +330,62 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_bounded_local_chat_requests() {
+        let configuration =
+            ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
+        let request = chat::ChatRequest {
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            provider_id: chat::ChatProvider::Ollama,
+            model: "qwen3.5:9b".into(),
+            messages: vec![chat::ChatMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+        };
+        assert!(validate_chat_request(&request).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_user_final_chat_message() {
+        let configuration =
+            ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
+        let request = chat::ChatRequest {
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            provider_id: chat::ChatProvider::Ollama,
+            model: "qwen3.5:9b".into(),
+            messages: vec![chat::ChatMessage {
+                role: "assistant".into(),
+                content: "Not a user turn".into(),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+        };
+        assert!(validate_chat_request(&request)
+            .unwrap_err()
+            .contains("final chat message"));
+    }
+
+    #[test]
+    fn rejects_oversized_chat_history() {
+        let configuration =
+            ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
+        let request = chat::ChatRequest {
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            provider_id: chat::ChatProvider::Ollama,
+            model: "qwen3.5:9b".into(),
+            messages: vec![chat::ChatMessage {
+                role: "user".into(),
+                content: "x".repeat(65_537),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+        };
+        assert!(validate_chat_request(&request).is_err());
+    }
 
     #[test]
     fn accepts_the_default_model_configuration() {
