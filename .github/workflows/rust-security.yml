@@ -39,14 +39,13 @@ jobs:
           shared-key: windows-x64-security
           cache-on-failure: true
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - name: Install prebuilt Rust security tools
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        with:
+          tool: cargo-audit,cargo-deny
 
       - name: Check Rust advisories
         run: cargo audit --file src-tauri/Cargo.lock
-
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
 
       - name: Check licenses, bans, and sources
         run: cargo deny --manifest-path src-tauri/Cargo.toml check licenses bans sources
