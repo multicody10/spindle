@@ -703,7 +703,9 @@ async fn delete_preset(app: AppHandle, name: String) -> Result<(), String> {
         .map_err(|error| format!("Preset delete task failed: {error}"))?
 }
 
-fn validate_model_constraints(configuration: &ModelConfiguration) -> Result<(), String> {
+fn validate_model_constraints(
+    configuration: &ModelConfiguration,
+) -> Result<domain::ModelMetadata, String> {
     let metadata = gguf::inspect(&configuration.model_path)?;
     if let Some(limit) = metadata.context_length {
         if configuration.runtime.context_tokens > limit {
@@ -719,7 +721,7 @@ fn validate_model_constraints(configuration: &ModelConfiguration) -> Result<(), 
             ));
         }
     }
-    Ok(())
+    Ok(metadata)
 }
 
 fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), String> {

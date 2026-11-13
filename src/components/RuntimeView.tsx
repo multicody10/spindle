@@ -37,6 +37,8 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
   const backend = backendSelection ?? (
     hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ? "cuda" : "vulkan"
   );
+  const selectedModelMatchesConfiguration =
+    Boolean(modelPath.trim()) && configuration.modelPath === modelPath;
 
   const refresh = useCallback(async () => {
     try {
@@ -80,8 +82,8 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
       setError("Inspect a GGUF model in Model Lab before starting llama.cpp.");
       return;
     }
-    if (configuration.modelPath !== modelPath) {
-      setError("The selected model and its saved configuration do not match. Reinspect the model in Model Lab.");
+    if (!selectedModelMatchesConfiguration) {
+      setError("The selected model and its saved configuration do not match. Inspect the selected GGUF in Model Lab before loading it.");
       return;
     }
     setBusy(true);
@@ -203,9 +205,9 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
           {status?.running ? (
             <button className="button stop-button" onClick={() => void stop()} disabled={busy}>Stop runtime</button>
           ) : (
-            <button className="button primary" onClick={() => void start()} disabled={busy || !selectedInstall?.installed || !modelPath}>Load model and start</button>
+            <button className="button primary" onClick={() => void start()} disabled={busy || !selectedInstall?.installed || !selectedModelMatchesConfiguration}>Load model and start</button>
           )}
-          <span>{status?.running ? "Chat can now connect to llama.cpp." : "The model remains on its existing disk path. Spindle does not copy or modify it."}</span>
+          <span>{status?.running ? "Chat can now connect to llama.cpp." : selectedModelMatchesConfiguration ? "The inspected GGUF remains at its original path. Spindle passes it to llama.cpp without copying or modifying it." : "Select and inspect a GGUF model in Model Lab before loading it."}</span>
         </div>
       </section>
 

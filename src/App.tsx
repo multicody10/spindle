@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api } from "./lib/api";
 import ChatView from "./components/ChatView";
@@ -70,6 +72,15 @@ function App() {
   const [updateState, setUpdateState] = useState("Update check has not run.");
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
 
+  const selectModelPath = useCallback((path: string) => {
+    if (path === modelPath) return;
+    setModelPath(path);
+    setModel(null);
+    setOptimizationWarnings([]);
+    setError(null);
+    setMessage("New GGUF selected. Inspect it before configuring or loading the model.");
+  }, [modelPath]);
+
   const refreshModelLibrary = useCallback(async () => {
     setModelLibraryBusy(true);
     setModelLibraryError(null);
@@ -99,6 +110,35 @@ function App() {
   useEffect(() => {
     void refreshModelLibrary();
   }, [refreshModelLibrary]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const candidates = event.payload.paths.filter((path) => /\.gguf$/i.test(path));
+      if (candidates.length === 0) return;
+      if (candidates.length !== 1) {
+        setError("Drop one GGUF model at a time.");
+        setMessage("Model selection was not changed.");
+        return;
+      }
+      const candidate = candidates[0];
+      if (!candidate) return;
+      setActiveView("model-lab");
+      selectModelPath(candidate);
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    }).catch((reason: unknown) => {
+      if (!disposed) setError("Could not enable GGUF file drop: " + String(reason));
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [selectModelPath]);
 
   useEffect(() => {
     void refreshLocalProviders();
@@ -159,6 +199,7 @@ function App() {
     setModel(null);
     try {
       const inspected = await api.inspectModel(candidatePath);
+      setModelPath(inspected.path);
       setModel(inspected);
       const saved = await api.loadConfiguration(inspected.path, configuration.profile);
       if (saved) {
@@ -316,10 +357,7 @@ function App() {
             <div className="eyebrow">{activeView === "projects" ? "PROJECT MANAGEMENT" : activeView === "benchmark" ? "MODEL PERFORMANCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
             <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Model benchmarks" : activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
           </div>
-          <div className="top-actions">
-            <span className="local-chip"><span /> LOCAL FIRST</span>
-            <button className="button subtle" onClick={() => void runUpdateCheck()} disabled={!appInfo?.updaterConfigured}>Check updates</button>
-          </div>
+          
         </header>
 
         <div className="content">
@@ -340,7 +378,7 @@ function App() {
             />
           ) : activeView === "runtime" ? (
             <RuntimeView
-              modelPath={model?.path ?? configuration.modelPath}
+              modelPath={modelPath}
               configuration={configuration}
               hardware={hardware}
               onRuntimeChange={() => void refreshLocalProviders()}
@@ -421,14 +459,14 @@ function App() {
 
           <section className="section-heading model-heading">
             <div><span className="eyebrow">03 / MODEL INSPECTION</span><h2>Inspect a GGUF model</h2></div>
-            <span className="section-meta">Read-only metadata access</span>
+            <span className="section-meta">GGUF inspection and validation</span>
           </section>
 
           <section className="panel model-panel">
             <div className="model-library-heading">
               <div>
                 <strong>Model library</strong>
-                <span>Spindle scans its own library and existing LM Studio, GPT4All, and Jan GGUF folders. Files stay where they are.</span>
+                <span>Spindle scans its library and common LM Studio, GPT4All, and Jan folders. You can also drop any GGUF file from File Explorer. Files stay where they are.</span>
               </div>
               <button className="button subtle" onClick={() => void refreshModelLibrary()} disabled={modelLibraryBusy}>
                 {modelLibraryBusy ? "Scanning…" : "Refresh library"}
@@ -454,7 +492,7 @@ function App() {
                   type="button"
                   key={entry.path}
                   className={"model-library-entry " + (modelPath === entry.path ? "selected" : "")}
-                  onClick={() => setModelPath(entry.path)}
+                  onClick={() => selectModelPath(entry.path)}
                   title={entry.path}
                 >
                   <span>
@@ -472,9 +510,10 @@ function App() {
             {modelLibraryError && <p className="provider-error">Model library scan failed: {modelLibraryError}</p>}
             <label className="field-label" htmlFor="model-path">MODEL FILE</label>
             <div className="path-row">
-              <input id="model-path" value={modelPath} onChange={(event) => setModelPath(event.target.value)} placeholder="Select a model above or enter a GGUF path" spellCheck={false} />
+              <input id="model-path" value={modelPath} onChange={(event) => selectModelPath(event.target.value)} placeholder="Select a model above or enter a GGUF path" spellCheck={false} />
               <button className="button primary" onClick={() => void inspect()} disabled={busy}>{busy ? "Working…" : "Inspect model"}</button>
             </div>
+            <p className="footnote">Drag one .gguf file from File Explorer into Spindle, or enter its full path. Spindle inspects the GGUF metadata, then llama.cpp loads the original model file for inference without copying it.</p>
             <div className="status-line"><span className={error ? "status-dot red" : "status-dot"} />{error ?? message}</div>
             {model && (
               <div className="model-facts">

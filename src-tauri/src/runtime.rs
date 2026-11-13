@@ -710,7 +710,7 @@ pub async fn start(
         return Err("A managed llama.cpp process is already running.".into());
     }
     crate::validate_configuration(&configuration)?;
-    crate::validate_model_constraints(&configuration)?;
+    let model_metadata = crate::validate_model_constraints(&configuration)?;
     if configuration.model_path != model_path {
         return Err("The selected model path does not match the saved configuration.".into());
     }
@@ -726,6 +726,14 @@ pub async fn start(
     let executable = executable_path(&app, backend)?;
 
     runtime.clear_logs();
+    runtime.push_log(format!(
+        "Validated GGUF v{}: {} tensor(s), {} bytes, architecture {}, quantization {}.",
+        model_metadata.gguf_version,
+        model_metadata.tensor_count,
+        model_metadata.file_size_bytes,
+        model_metadata.architecture.as_deref().unwrap_or("unknown"),
+        model_metadata.quantization.as_deref().unwrap_or("unknown")
+    ));
     runtime.push_log(format!("Starting llama.cpp {VERSION} ({})…", backend.id()));
 
     let mut command = Command::new(&executable);
