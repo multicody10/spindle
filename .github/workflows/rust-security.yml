@@ -1,17 +1,13 @@
 name: Rust supply-chain checks
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "41 5 * * 3"
 
 concurrency:
-  group: rust-security-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: rust-security-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

@@ -15,7 +15,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Save per-model configurations and reusable named presets in a local SQLite database.
 - Discover local Ollama and LM Studio endpoints and list available models without launching provider processes.
 - Validate configuration ranges in the Rust backend.
-- Run frontend, Rust, CodeQL, supply-chain, and Windows NSIS package validation on Windows.
+- Validate pull requests with frontend and Rust checks; run NSIS packaging manually and CodeQL/supply-chain scans weekly or on demand.
 - Build and publish signed Windows NSIS releases with an in-app Tauri updater manifest.
 
 ## What is deliberately not claimed
@@ -71,4 +71,5 @@ Model paths and configuration profiles are stored in the OS application data dir
 - Research and competitive analysis: docs/RESEARCH.md
 - Roadmap: docs/ROADMAP.md
 - Security policy: SECURITY.md
+- CI and validation strategy: docs/CI.md
 - Contributing: CONTRIBUTING.md

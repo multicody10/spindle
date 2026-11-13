@@ -1,8 +1,6 @@
 name: Continuous integration
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -72,6 +70,7 @@ jobs:
 
   windows-package:
     name: Windows x64 NSIS package validation
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: windows-latest
     needs: [frontend, rust]
     timeout-minutes: 60
