@@ -92,10 +92,12 @@ fn git_executable() -> Result<PathBuf, String> {
 }
 
 fn run_git(root: &Path, args: &[&str]) -> Result<Output, String> {
+    let hooks_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let hooks_config = format!("core.hooksPath={hooks_path}");
     let mut command = Command::new(git_executable()?);
     command.current_dir(root)
         .args([
-            "-c", "core.hooksPath=", "-c", "core.pager=cat",
+            "-c", hooks_config.as_str(), "-c", "core.pager=cat",
             "-c", "credential.helper=", "-c", "core.fsmonitor=false",
             "--no-optional-locks",
         ])
@@ -141,6 +143,7 @@ fn repository_root(path: &Path) -> Result<PathBuf, String> {
 
 pub fn status(project_root: &str) -> Result<GitRepositoryStatus, String> {
     let root = repository_root(Path::new(project_root))?;
+    reject_configured_filters(&root)?;
     let head = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_owned();
     let branch = git_text(&root, &["branch", "--show-current"])?.trim().to_owned();
     let raw = git_text(&root, &["status", "--porcelain=v1", "--branch", "--untracked-files=normal"])?;
@@ -198,6 +201,25 @@ pub fn history(project_root: &str, limit: usize) -> Result<Vec<GitCommitSummary>
         });
     }
     Ok(commits)
+}
+
+fn reject_configured_filters(root: &Path) -> Result<(), String> {
+    let mut command = Command::new(git_executable()?);
+    command.current_dir(root)
+        .args(["config", "--local", "--get-regexp", "^filter\\..*\\.(clean|smudge|process)$"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env("GIT_TERMINAL_PROMPT", "0");
+    crate::child_process::hide_console_window(&mut command);
+    let output = command.output()
+        .map_err(|error| format!("Could not inspect Git filter configuration: {error}"))?;
+    if output.status.success() && !output.stdout.is_empty() {
+        return Err("This repository configures external Git filters. Spindle refuses to check out a task worktree because filters can execute arbitrary programs in the application process. Disable the repository's filter drivers first.".into());
+    }
+    if output.status.code() != Some(1) && !output.status.success() {
+        return Err("Could not safely inspect repository Git filter configuration.".into());
+    }
+    Ok(())
 }
 
 pub fn create_task_worktree(
@@ -307,6 +329,10 @@ pub fn remove_worktree(
     let parent = path.parent().ok_or_else(|| "Task worktree path is invalid.".to_string())?;
     if !parent.ends_with("task-worktrees") || !path.ends_with(task_id) {
         return Err("The stored task worktree path failed its ownership check.".into());
+    }
+    let current_head = git_text(&path, &["rev-parse", "HEAD"])?;
+    if current_head.trim() != worktree.base_commit {
+        return Err("The task worktree contains commits beyond its recorded base. Preserve or integrate those commits before removing it.".into());
     }
     if !status(&worktree.path)?.clean {
         return Err("The task worktree contains changed or untracked files. Review or preserve them before removing it.".into());

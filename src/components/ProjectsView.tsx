@@ -442,7 +442,7 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                       <p className="projects-empty">{worktreeDiff.status.branch} · base {worktreeDiff.worktree.baseCommit.slice(0, 8)} · {worktreeDiff.status.changedFiles} changed · {worktreeDiff.status.untrackedFiles} untracked</p>
                       <p className="projects-empty">Worktree: {worktreeDiff.worktree.path}</p>
                       <div className="planner-actions"><button className="button subtle" onClick={() => void refreshTaskWorktree()}>Refresh diff</button>
-                        <button className="button subtle" onClick={() => void removeTaskWorktree()} disabled={busy || !worktreeDiff.status.clean}>Remove clean worktree</button></div>
+                        <button className="button subtle" onClick={() => void removeTaskWorktree()} disabled={busy || !worktreeDiff.status.clean || worktreeDiff.status.head !== worktreeDiff.worktree.baseCommit}>Remove unchanged worktree</button></div>
                       {worktreeDiff.diff ? <pre className="skill-content">{worktreeDiff.diff}{worktreeDiff.diffTruncated ? "\n[Diff truncated at 2 MiB]" : ""}</pre> : <p className="projects-empty">No tracked changes. Untracked files are counted separately and are not included in this preview.</p>}
                       <div className="planner-actions">
                         <button className="button subtle" onClick={() => void runValidation("cargo_fmt")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run rustfmt check</button>
