@@ -170,6 +170,26 @@ export interface ModelMetadata {
   kvBytesPerToken: number | null;
 }
 
+export interface ModelLibraryLocation {
+  name: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface ModelLibraryEntry {
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  source: string;
+}
+
+export interface ModelLibrary {
+  managedDirectory: string;
+  locations: ModelLibraryLocation[];
+  models: ModelLibraryEntry[];
+  truncated: boolean;
+}
+
 export interface RuntimeSettings {
   contextTokens: number;
   gpuLayers: number;

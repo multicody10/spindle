@@ -10,6 +10,7 @@ import type {
   BackendInstallStatus,
   ModelConfiguration,
   ModelMetadata,
+  ModelLibrary,
   OptimizationProfile,
   OptimizationResult,
   SavedPreset,
@@ -46,6 +47,7 @@ export const api = {
   searchWorkspace: (sessionId: string, query: string) =>
     invoke<WorkspaceSearchResult>("search_workspace", { sessionId, query }),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),
+  modelLibrary: () => invoke<ModelLibrary>("list_model_library"),
   optimizeModel: (path: string, profile: OptimizationProfile) =>
     invoke<OptimizationResult>("optimize_model", { path, profile }),
   loadConfiguration: (modelPath: string, profile: OptimizationProfile) =>
