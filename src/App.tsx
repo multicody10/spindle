@@ -124,8 +124,10 @@ function App() {
         setMessage("Model selection was not changed.");
         return;
       }
+      const candidate = candidates[0];
+      if (!candidate) return;
       setActiveView("model-lab");
-      selectModelPath(candidates[0]);
+      selectModelPath(candidate);
     }).then((cleanup) => {
       if (disposed) cleanup();
       else unlisten = cleanup;
