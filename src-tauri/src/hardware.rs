@@ -150,7 +150,8 @@ fn nvidia_smi_candidates() -> Vec<PathBuf> {
 fn query_nvidia_smi(executable: &Path) -> Vec<GpuDevice> {
     let mut command = Command::new(executable);
     crate::child_process::hide_console_window(&mut command);
-    let output = command.args([
+    let output = command
+        .args([
             "--query-gpu=name,memory.total,memory.free",
             "--format=csv,noheader,nounits",
         ])
