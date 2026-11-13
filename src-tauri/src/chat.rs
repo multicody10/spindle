@@ -279,6 +279,37 @@ fn lm_studio_body(request: &ChatRequest) -> Value {
     body
 }
 
+fn llama_cpp_body(request: &ChatRequest, slot_id: usize) -> Value {
+    let mut body = lm_studio_body(request);
+    body["id_slot"] = json!(slot_id);
+    body["cache_prompt"] = json!(true);
+    body
+}
+
+async fn erase_llama_slot(
+    client: &Client,
+    slot_id: usize,
+    cancellation: &Notify,
+) -> Result<(), String> {
+    let response = tokio::select! {
+        _ = cancellation.notified() => return Err("Generation cancelled.".into()),
+        result = client
+            .post(format!("{LLAMA_CPP_BASE}/slots/{slot_id}?action=erase"))
+            .send() => result
+                .map_err(|_| "Could not clear an evicted llama.cpp session cache slot.".to_string())?,
+    };
+    let result = tokio::select! {
+        _ = cancellation.notified() => return Err("Generation cancelled.".into()),
+        result = read_bounded_json(response, MAX_MODEL_RESPONSE_BYTES) => result?,
+    };
+    if result.get("id_slot").and_then(Value::as_u64) != Some(slot_id as u64)
+        || result.get("n_erased").and_then(Value::as_u64).is_none()
+    {
+        return Err("llama.cpp returned an unexpected KV cache erase response.".into());
+    }
+    Ok(())
+}
+
 fn bounded_provider_error(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -512,7 +543,7 @@ pub async fn run(
     cancellation: Arc<Notify>,
     inference: &InferenceRuntimeManager,
 ) -> Result<ChatResult, String> {
-    let _session_lease = if request.provider_id == ChatProvider::LlamaCpp {
+    let session_lease = if request.provider_id == ChatProvider::LlamaCpp {
         Some(
             inference
                 .acquire_session(&request.session_id, &request.request_id, &cancellation)
@@ -531,10 +562,19 @@ pub async fn run(
             format!("{LM_STUDIO_BASE}/v1/chat/completions"),
             lm_studio_body(&request),
         ),
-        ChatProvider::LlamaCpp => (
-            format!("{LLAMA_CPP_BASE}/v1/chat/completions"),
-            lm_studio_body(&request),
-        ),
+        ChatProvider::LlamaCpp => {
+            let lease = session_lease
+                .as_ref()
+                .ok_or_else(|| "The managed inference session did not receive a KV cache slot.".to_string())?;
+            if lease.needs_clear() {
+                erase_llama_slot(&client, lease.slot_id(), &cancellation).await?;
+                inference.mark_slot_cleared(&request.session_id, lease.slot_id())?;
+            }
+            (
+                format!("{LLAMA_CPP_BASE}/v1/chat/completions"),
+                llama_cpp_body(&request, lease.slot_id()),
+            )
+        },
     };
 
     let response = tokio::select! {
@@ -646,6 +686,30 @@ mod tests {
         assert!(parse_lm_studio_line(b"data: {").is_err());
         assert!(parse_ollama_line(br#"{"error":"model not loaded"}"#).is_err());
         assert!(parse_lm_studio_line(br#"data: {"error":"server failed"}"#).is_err());
+    }
+
+    #[test]
+    fn llama_cpp_body_pins_the_session_slot_and_enables_prompt_cache_reuse() {
+        let configuration = crate::domain::ModelConfiguration::new(
+            "sample.gguf".into(),
+            crate::domain::OptimizationProfile::Automatic,
+        );
+        let request = ChatRequest {
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "session-one".into(),
+            provider_id: ChatProvider::LlamaCpp,
+            model: "sample.gguf".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hello".into(),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+        };
+        let body = llama_cpp_body(&request, 3);
+        assert_eq!(body["id_slot"], 3);
+        assert_eq!(body["cache_prompt"], true);
+        assert_eq!(body["stream"], true);
     }
 
     #[test]

@@ -22,6 +22,8 @@ pub struct InferenceRuntimeStatus {
     pub queued_requests: usize,
     pub available_slots: usize,
     pub configuration_fingerprint: Option<String>,
+    pub assigned_sessions: usize,
+    pub slot_evictions: u64,
 }
 
 struct LoadedModel {
@@ -29,6 +31,12 @@ struct LoadedModel {
     backend: RuntimeBackend,
     parallel_slots: usize,
     configuration_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionSlot {
+    id: usize,
+    last_used: u64,
 }
 
 #[derive(Default)]
@@ -39,6 +47,11 @@ struct SchedulerState {
     reserved_sessions: HashSet<String>,
     active_sessions: HashMap<String, String>,
     queued_requests: usize,
+    session_slots: HashMap<String, SessionSlot>,
+    slot_owners: Vec<Option<String>>,
+    dirty_slots: Vec<bool>,
+    use_clock: u64,
+    slot_evictions: u64,
 }
 
 struct SchedulerInner {
@@ -65,7 +78,19 @@ impl Default for InferenceRuntimeManager {
 pub struct InferenceSessionLease {
     inner: Arc<SchedulerInner>,
     session_id: String,
+    slot_id: usize,
+    needs_clear: bool,
     _permit: OwnedSemaphorePermit,
+}
+
+impl InferenceSessionLease {
+    pub fn slot_id(&self) -> usize {
+        self.slot_id
+    }
+
+    pub fn needs_clear(&self) -> bool {
+        self.needs_clear
+    }
 }
 
 impl Drop for InferenceSessionLease {
@@ -73,6 +98,11 @@ impl Drop for InferenceSessionLease {
         if let Ok(mut state) = self.inner.state.lock() {
             state.active_sessions.remove(&self.session_id);
             state.reserved_sessions.remove(&self.session_id);
+            state.use_clock = state.use_clock.wrapping_add(1);
+            let last_used = state.use_clock;
+            if let Some(slot) = state.session_slots.get_mut(&self.session_id) {
+                slot.last_used = last_used;
+            }
         }
     }
 }
@@ -121,6 +151,11 @@ impl InferenceRuntimeManager {
             parallel_slots: settings.parallel_slots,
             configuration_fingerprint: fingerprint,
         });
+        state.session_slots.clear();
+        state.slot_owners = vec![None; settings.parallel_slots];
+        state.dirty_slots = vec![false; settings.parallel_slots];
+        state.use_clock = 0;
+        state.slot_evictions = 0;
         state.accepting_requests = true;
         Ok(())
     }
@@ -192,14 +227,24 @@ impl InferenceRuntimeManager {
             Arc::new(Semaphore::new(1));
         state.model = None;
         state.accepting_requests = false;
+        state.session_slots.clear();
+        state.slot_owners.clear();
+        state.dirty_slots.clear();
+        state.use_clock = 0;
+        state.slot_evictions = 0;
         state.generation = state.generation.wrapping_add(1);
-        Ok(())
+        Ok(());
     }
 
     pub fn invalidate(&self) {
         if let Ok(mut state) = self.inner.state.lock() {
             state.model = None;
             state.accepting_requests = false;
+            state.session_slots.clear();
+            state.slot_owners.clear();
+            state.dirty_slots.clear();
+            state.use_clock = 0;
+            state.slot_evictions = 0;
             state.generation = state.generation.wrapping_add(1);
             if let Ok(semaphore) = self.inner.semaphore.lock() {
                 semaphore.close();
@@ -223,7 +268,30 @@ impl InferenceRuntimeManager {
             queued_requests: state.queued_requests,
             available_slots: parallel_slots.saturating_sub(active_requests),
             configuration_fingerprint: model.map(|loaded| loaded.configuration_fingerprint.clone()),
+            assigned_sessions: state.session_slots.len(),
+            slot_evictions: state.slot_evictions,
         }
+    }
+
+    pub fn mark_slot_cleared(&self, session_id: &str, slot_id: usize) -> Result<(), String> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "The inference scheduler state is unavailable.".to_string())?;
+        let assignment = state
+            .session_slots
+            .get(session_id)
+            .ok_or_else(|| "The session no longer owns an inference cache slot.".to_string())?;
+        if assignment.id != slot_id || !state.active_sessions.contains_key(session_id) {
+            return Err("The inference cache slot assignment changed before it could be cleared.".into());
+        }
+        let dirty = state
+            .dirty_slots
+            .get_mut(slot_id)
+            .ok_or_else(|| "The assigned inference cache slot is invalid.".to_string())?;
+        *dirty = false;
+        Ok(())
     }
 
     pub async fn acquire_session(
@@ -306,6 +374,55 @@ impl InferenceRuntimeManager {
                 "The managed inference runtime changed before this request received a slot.".into(),
             );
         }
+
+        state.use_clock = state.use_clock.wrapping_add(1);
+        let last_used = state.use_clock;
+        let slot_id = if let Some(existing) = state.session_slots.get_mut(session_id) {
+            existing.last_used = last_used;
+            existing.id
+        } else {
+            let free_slot = state.slot_owners.iter().position(Option::is_none);
+            let (slot_id, evicted_owner) = if let Some(slot_id) = free_slot {
+                (slot_id, None)
+            } else {
+                let candidate = state
+                    .session_slots
+                    .iter()
+                    .filter(|(owner, _)| !state.active_sessions.contains_key(*owner))
+                    .min_by_key(|(_, assignment)| assignment.last_used)
+                    .map(|(owner, assignment)| (owner.clone(), assignment.id));
+                let Some((owner, slot_id)) = candidate else {
+                    state.reserved_sessions.remove(session_id);
+                    return Err("No idle llama.cpp KV cache slot is available for this session.".into());
+                };
+                (slot_id, Some(owner))
+            };
+
+            if let Some(owner) = evicted_owner {
+                state.session_slots.remove(&owner);
+                state.slot_evictions = state.slot_evictions.saturating_add(1);
+                if let Some(dirty) = state.dirty_slots.get_mut(slot_id) {
+                    *dirty = true;
+                }
+            }
+            let Some(owner) = state.slot_owners.get_mut(slot_id) else {
+                state.reserved_sessions.remove(session_id);
+                return Err("The selected llama.cpp KV cache slot is invalid.".into());
+            };
+            *owner = Some(session_id.to_owned());
+            state.session_slots.insert(
+                session_id.to_owned(),
+                SessionSlot {
+                    id: slot_id,
+                    last_used,
+                },
+            );
+            slot_id
+        };
+        let Some(needs_clear) = state.dirty_slots.get(slot_id).copied() else {
+            state.reserved_sessions.remove(session_id);
+            return Err("The assigned llama.cpp KV cache slot is invalid.".into());
+        };
         state
             .active_sessions
             .insert(session_id.to_owned(), request_id.to_owned());
@@ -314,6 +431,8 @@ impl InferenceRuntimeManager {
         Ok(InferenceSessionLease {
             inner: self.inner.clone(),
             session_id: session_id.to_owned(),
+            slot_id,
+            needs_clear,
             _permit: permit,
         })
     }
@@ -386,6 +505,40 @@ mod tests {
         assert_eq!(manager.status().queued_requests, 0);
         drop((second, third));
         assert_eq!(manager.status().active_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn session_slots_survive_turns_and_lru_eviction_marks_slots_dirty() {
+        let manager = manager_with_slots(2);
+        let cancelled = Notify::new();
+
+        let first = manager.acquire_session("session-one", "request-one", &cancelled).await.unwrap();
+        assert_eq!(first.slot_id(), 0);
+        assert!(!first.needs_clear());
+        drop(first);
+
+        let second = manager.acquire_session("session-two", "request-two", &cancelled).await.unwrap();
+        assert_eq!(second.slot_id(), 1);
+        assert!(!second.needs_clear());
+        drop(second);
+
+        let first_again = manager.acquire_session("session-one", "request-three", &cancelled).await.unwrap();
+        assert_eq!(first_again.slot_id(), 0);
+        assert!(!first_again.needs_clear());
+        drop(first_again);
+
+        let third = manager.acquire_session("session-three", "request-four", &cancelled).await.unwrap();
+        assert_eq!(third.slot_id(), 1);
+        assert!(third.needs_clear());
+        assert_eq!(manager.status().assigned_sessions, 2);
+        assert_eq!(manager.status().slot_evictions, 1);
+        manager.mark_slot_cleared("session-three", 1).unwrap();
+        drop(third);
+
+        let third_again = manager.acquire_session("session-three", "request-five", &cancelled).await.unwrap();
+        assert_eq!(third_again.slot_id(), 1);
+        assert!(!third_again.needs_clear());
+        drop(third_again);
     }
 
     #[tokio::test]

@@ -63,6 +63,8 @@ export interface InferenceRuntimeStatus {
   queuedRequests: number;
   availableSlots: number;
   configurationFingerprint: string | null;
+  assignedSessions: number;
+  slotEvictions: number;
 }
 
 export interface RuntimeStatus {

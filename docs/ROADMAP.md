@@ -28,7 +28,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
 - [x] Provider capability registry for features implemented by the current adapters; tool calling and structured output remain unavailable.
 - [x] Pinned Windows x64 llama.cpp CPU, Vulkan, and CUDA 12.4 runtime installation with size and SHA-256 verification.
-- [x] Shared inference runtime manager with one shared model process, per-session request leases, bounded cancellable queueing, and configured parallel-slot admission; persistent per-session KV-cache reuse remains future work.
+- [x] Shared inference runtime manager with one shared model process, per-session request leases, bounded cancellable queueing, configured parallel-slot admission, and in-memory per-session KV-prefix reuse with LRU slot eviction; disk-backed KV restoration across runtime restarts remains future work.
 - [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
 - [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.

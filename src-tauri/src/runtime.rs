@@ -745,6 +745,10 @@ pub async fn start(
     ));
     runtime.push_log(format!("Starting llama.cpp {VERSION} ({})…", backend.id()));
 
+    let slot_cache_dir = runtime_root(&app)?.join("slot-cache");
+    fs::create_dir_all(&slot_cache_dir)
+        .map_err(|error| format!("Could not create the managed KV cache directory: {error}"))?;
+
     let mut command = Command::new(&executable);
     crate::child_process::hide_console_window(&mut command);
     command
@@ -776,6 +780,8 @@ pub async fn start(
         })
         .arg("--parallel")
         .arg(configuration.runtime.parallel_slots.to_string())
+        .arg("--slot-save-path")
+        .arg(&slot_cache_dir)
         .arg("--flash-attn")
         .arg(if configuration.runtime.flash_attention {
             "on"

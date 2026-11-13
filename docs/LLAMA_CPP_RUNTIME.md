@@ -32,7 +32,8 @@ The runtime binds only to `127.0.0.1:12345`. Chat discovers it as llama.cpp (Spi
 - The GGUF file remains at its original path and is opened by llama.cpp. Spindle does not copy or modify the model.
 - stdout/stderr are captured into a bounded in-memory ring buffer. They are not persisted.
 - Stop terminates the managed server process. One loaded model process is shared across sessions; Spindle's inference manager admits one active generation per session and limits simultaneous generations to the configured parallel-slot count. Additional sessions wait in a bounded, cancellable queue, and stopping the model is blocked until active and queued requests finish or are cancelled.
-- Conversation history is still sent with each request. The manager does not yet preserve or pin a reusable KV cache between turns.
+- Chat requests pin each session to a llama.cpp slot using `id_slot` and explicitly enable `cache_prompt`. llama.cpp reuses the common prompt prefix and KV state across turns. If all slots are assigned, the least recently used inactive session is evicted; Spindle calls the pinned server's slot erase endpoint before assigning that slot to another session.
+- Spindle enables the slot action endpoint through a managed `--slot-save-path` directory, but does not save slot snapshots. KV state remains in server memory and is lost when the runtime exits or restarts. Saved project sessions rebuild their cache from persisted conversation history on the next request.
 - The API is loopback-only and does not require an API key because it is not exposed to the LAN.
 - Applied settings are read from llama.cpp's `/props` endpoint. Only values actually exposed by that endpoint are displayed; hardware offload and some load-time options are not currently reported there.
 - Ollama and LM Studio remain separate, user-managed processes.
@@ -47,4 +48,4 @@ Each archive is downloaded to disk with a per-file size cap and pinned expected 
 
 The runtime build is deliberately pinned for reproducibility. Updating it requires changing the version, asset names, exact sizes, and SHA-256 digests together. CPU is the compatibility fallback. Vulkan requires a working Vulkan-capable graphics driver. CUDA requires a compatible NVIDIA GPU and display driver. The managed runtime currently targets Windows x64 only.
 
-The shared inference manager supports one loaded model and one server process across multiple sessions. It enforces per-session request exclusivity, bounded queueing, configured parallel-slot admission, and safe stop behavior. It does not yet support simultaneous model weight sets or persistent per-session KV-cache reuse, and it does not provide agent execution or workspace access.
+The shared inference manager supports one loaded model and one server process across multiple sessions. It enforces per-session request exclusivity, bounded queueing, configured parallel-slot admission, in-memory per-session KV-prefix reuse, least-recently-used slot eviction, and safe stop behavior. It does not yet support disk-backed KV restoration across runtime restarts, simultaneous model weight sets, agent execution, or workspace access.

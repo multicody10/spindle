@@ -203,7 +203,7 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
           <span>SHARED INFERENCE SCHEDULER</span>
           <strong>
             {status?.inference.modelLoaded
-              ? `${status.inference.activeRequests}/${status.inference.parallelSlots} active slots · ${status.inference.queuedRequests} queued`
+              ? `${status.inference.activeRequests}/${status.inference.parallelSlots} active · ${status.inference.queuedRequests} queued · ${status.inference.assignedSessions} session slots retained · ${status.inference.slotEvictions} evictions`
               : "No managed model scheduler active"}
           </strong>
         </div>
