@@ -41,7 +41,7 @@ jobs:
         with:
           workspaces: |
             src-tauri -> target
-          shared-key: windows-x64-stable
+          shared-key: windows-x64-build
           cache-on-failure: true
 
       - name: Verify version and updater signing configuration
