@@ -27,10 +27,10 @@ This roadmap records implementation status rather than implying the full product
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
 - [ ] Provider capability registry.
-- [ ] Managed llama.cpp installation and version pinning.
+- [x] Pinned Windows x64 llama.cpp CPU and Vulkan runtime installation with SHA-256 verification.
 - [ ] Shared inference runtime manager.
-- [ ] Model load/unload lifecycle.
-- [ ] Real applied-settings readback.
+- [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
+- [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.
 - [ ] Calibration benchmarks with user consent.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
