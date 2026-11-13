@@ -378,3 +378,25 @@ export const DEFAULT_CONFIGURATION: ModelConfiguration = {
   optimizationNotes: [],
   optimizerRevision: 1
 };
+
+export interface GitRepositoryStatus {
+  rootPath: string; head: string; branch: string; clean: boolean;
+  changedFiles: number; stagedFiles: number; untrackedFiles: number;
+}
+export interface GitCommitSummary {
+  commit: string; shortCommit: string; author: string; committedAt: number; subject: string;
+}
+export interface TaskWorktree {
+  taskId: string; projectId: string; path: string; baseCommit: string; createdAt: number;
+}
+export interface TaskWorktreeDiff {
+  worktree: TaskWorktree; status: GitRepositoryStatus; diff: string; diffTruncated: boolean;
+}
+export interface SandboxStatus {
+  supported: boolean; platform: string; isolation: string; network: string; reason: string | null;
+}
+export interface SandboxExecutionResult {
+  command: string; exitCode: number; success: boolean; durationMs: number;
+  stdout: string; stderr: string; outputTruncated: boolean; isolation: string;
+}
+export type ValidationCommand = "cargo_fmt" | "cargo_check" | "cargo_test";

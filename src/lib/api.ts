@@ -34,7 +34,14 @@ import type {
   WorkspaceWriteResult,
   WorkspaceChangeProposal,
   PermissionAuditEvent,
-  WorkspaceSearchResult
+  WorkspaceSearchResult,
+  GitRepositoryStatus,
+  GitCommitSummary,
+  TaskWorktree,
+  TaskWorktreeDiff,
+  SandboxStatus,
+  SandboxExecutionResult,
+  ValidationCommand
 } from "./types";
 
 export const api = {
@@ -68,6 +75,14 @@ export const api = {
   approveAgentTaskPlan: (taskId: string) => invoke<AgentTask>("approve_agent_task_plan", { taskId }),
   rejectAgentTaskPlan: (taskId: string) => invoke<AgentTask>("reject_agent_task_plan", { taskId }),
   listAgentTaskEvents: (taskId: string) => invoke<AgentTaskEvent[]>("list_agent_task_events", { taskId }),
+  gitRepositoryStatus: (projectId: string) => invoke<GitRepositoryStatus>("git_repository_status", { projectId }),
+  gitRepositoryHistory: (projectId: string, limit = 20) => invoke<GitCommitSummary[]>("git_repository_history", { projectId, limit }),
+  createAgentTaskWorktree: (projectId: string, taskId: string) => invoke<TaskWorktree>("create_agent_task_worktree", { projectId, taskId }),
+  agentTaskWorktreeDiff: (taskId: string) => invoke<TaskWorktreeDiff>("agent_task_worktree_diff", { taskId }),
+  removeAgentTaskWorktree: (projectId: string, taskId: string) => invoke<void>("remove_agent_task_worktree", { projectId, taskId }),
+  agentSandboxStatus: () => invoke<SandboxStatus>("agent_sandbox_status"),
+  runAgentTaskValidation: (taskId: string, command: ValidationCommand) =>
+    invoke<SandboxExecutionResult>("run_agent_task_validation", { taskId, command }),
   planProjectTask: (
     projectId: string, sessionId: string, prompt: string, providerId: string,
     model: string, contextTokens: number, generation: GenerationSettings

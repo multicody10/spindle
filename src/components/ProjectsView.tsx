@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import type {
   AgentSkill, AgentTask, AgentTaskDetail, LocalProviderStatus, ModelConfiguration,
-  Project, ProjectMemory, ProjectSession, SessionPermissions
+  Project, ProjectMemory, ProjectSession, SessionPermissions, PermissionScope,
+  GitRepositoryStatus, GitCommitSummary, TaskWorktreeDiff, SandboxStatus, SandboxExecutionResult, ValidationCommand
 } from "../lib/types";
 import "./ProjectsView.css";
 
@@ -23,6 +24,12 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
   const [loadedSkill, setLoadedSkill] = useState<string | null>(null);
   const [memories, setMemories] = useState<ProjectMemory[]>([]);
   const [permissionState, setPermissionState] = useState<SessionPermissions | null>(null);
+  const [gitStatus, setGitStatus] = useState<GitRepositoryStatus | null>(null);
+  const [gitHistory, setGitHistory] = useState<GitCommitSummary[]>([]);
+  const [worktreeDiff, setWorktreeDiff] = useState<TaskWorktreeDiff | null>(null);
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
+  const [validationResult, setValidationResult] = useState<SandboxExecutionResult | null>(null);
+  const [validationBusy, setValidationBusy] = useState(false);
   const [memoryQuery, setMemoryQuery] = useState("");
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryKind, setMemoryKind] = useState("architecture_decision");
@@ -73,6 +80,7 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
   }, []);
 
   useEffect(() => { void refreshProjects(); }, [refreshProjects]);
+  useEffect(() => { void api.agentSandboxStatus().then(setSandboxStatus).catch((reason) => setError(String(reason))); }, []);
 
   useEffect(() => {
     if (selectedProvider && selectedProvider.id !== providerId) {
@@ -88,6 +96,11 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     setActiveSession(null);
     setSelectedTask(null);
     setTasks([]);
+    setWorktreeDiff(null);
+    setValidationResult(null);
+    const [git, history] = await Promise.allSettled([api.gitRepositoryStatus(project.id), api.gitRepositoryHistory(project.id, 8)]);
+    setGitStatus(git.status === "fulfilled" ? git.value : null);
+    setGitHistory(history.status === "fulfilled" ? history.value : []);
     await refreshProjectData(project);
     setNotice(project.name + " selected.");
   };
@@ -168,11 +181,12 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
 
   const openTask = async (task: AgentTask) => {
     setSelectedTask(null);
+    setWorktreeDiff(null);
+    setValidationResult(null);
     try {
       setSelectedTask(await api.agentTaskDetail(task.id));
-    } catch (reason) {
-      setError(String(reason));
-    }
+      try { setWorktreeDiff(await api.agentTaskWorktreeDiff(task.id)); } catch { setWorktreeDiff(null); }
+    } catch (reason) { setError(String(reason)); }
   };
 
   const approvePlan = async () => {
@@ -203,6 +217,56 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const grantScope = async (scope: PermissionScope) => {
+    if (!activeSession || busy) return;
+    setBusy(true);
+    try {
+      setPermissionState(await api.grantProjectPermissions(activeSession.id, [scope]));
+      setNotice(scope === "process_execution" ? "Restricted validation permission granted. Arbitrary shell commands remain unavailable." : "Project write permission granted for this session.");
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const createTaskWorktree = async () => {
+    if (!activeProject || !activeSession || !selectedTask || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await api.createAgentTaskWorktree(activeProject.id, selectedTask.task.id);
+      setWorktreeDiff(await api.agentTaskWorktreeDiff(selectedTask.task.id));
+      setNotice("Isolated Git worktree created from the approved task base commit. The main working tree was not changed.");
+      await refreshTasks(activeSession);
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const refreshTaskWorktree = async () => {
+    if (!selectedTask) return;
+    try { setWorktreeDiff(await api.agentTaskWorktreeDiff(selectedTask.task.id)); }
+    catch (reason) { setError(String(reason)); }
+  };
+
+  const runValidation = async (command: ValidationCommand) => {
+    if (!selectedTask || validationBusy) return;
+    setValidationBusy(true); setValidationResult(null); setError(null);
+    try {
+      const result = await api.runAgentTaskValidation(selectedTask.task.id, command);
+      setValidationResult(result);
+      setNotice(result.success ? "Restricted validation passed." : "Restricted validation completed with a nonzero exit code.");
+    } catch (reason) { setError(String(reason)); }
+    finally { setValidationBusy(false); }
+  };
+
+  const removeTaskWorktree = async () => {
+    if (!activeProject || !selectedTask || !worktreeDiff?.status.clean || busy) return;
+    setBusy(true);
+    try {
+      await api.removeAgentTaskWorktree(activeProject.id, selectedTask.task.id);
+      setWorktreeDiff(null);
+      setNotice("Clean task worktree removed. The project repository and its commits were left unchanged.");
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
   };
 
   const saveMemory = async () => {
@@ -297,9 +361,18 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                 </div>
               </section>
 
+              <section className="panel git-panel">
+                <div className="projects-section-title"><div><strong>Git repository</strong><small>Read-only status/history and isolated task worktrees.</small></div>
+                  {gitStatus && <span className={"task-state " + (gitStatus.clean ? "approved" : "planning")}>{gitStatus.clean ? "clean" : "modified"}</span>}</div>
+                {gitStatus ? <>
+                  <p className="projects-empty">{gitStatus.branch} · {gitStatus.head.slice(0, 8)} · {gitStatus.changedFiles} changed · {gitStatus.stagedFiles} staged · {gitStatus.untrackedFiles} untracked</p>
+                  {gitHistory.length > 0 && <div className="task-list">{gitHistory.slice(0, 5).map((commit) => <div key={commit.commit}><span><strong>{commit.subject}</strong><small>{commit.shortCommit} · {commit.author} · {new Date(commit.committedAt * 1000).toLocaleString()}</small></span></div>)}</div>}
+                </> : <p className="projects-empty">Git status is unavailable. Ensure this project folder is a Git repository and Git is on PATH.</p>}
+              </section>
+
               {activeSession && (
                 <section className="panel session-permission-panel">
-                  <div className="projects-section-title"><div><strong>Session permissions</strong><small>Grants are in-memory and expire when Spindle exits.</small></div>
+                  <div className="projects-section-title"><div><strong>Session permissions</strong><small>Grants expire when Spindle exits. Audit history is stored in SQLite.</small></div>
                     <span className="planning-label">LEAST PRIVILEGE</span></div>
                   <div className="permission-scopes">
                     <span className={permissionState?.scopes.includes("project_read") ? "granted" : ""}>Project read</span>
@@ -309,12 +382,17 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                     <span className={permissionState?.scopes.includes("mcp_tools") ? "granted" : ""}>MCP tools</span>
                     <span className={permissionState?.scopes.includes("parallel_agents") ? "granted" : ""}>Parallel agents</span>
                   </div>
-                  <p className="projects-empty">Only project read is granted by default. Higher privilege scopes are not used by this planner and must not be enabled until the isolated execution worker is validated.</p>
+                  <div className="planner-actions">
+                    {!permissionState?.scopes.includes("project_write") && <button className="button subtle" onClick={() => void grantScope("project_write")} disabled={busy}>Grant project write</button>}
+                    {!permissionState?.scopes.includes("process_execution") && <button className="button subtle" onClick={() => void grantScope("process_execution")} disabled={busy || !sandboxStatus?.supported}>Allow restricted validation</button>}
+                  </div>
+                  <p className="projects-empty">The worker accepts only fixed Cargo format, check, and test operations. It does not expose a shell, arbitrary arguments, external network access, or model initiated process execution.</p>
+                  {sandboxStatus && <small>{sandboxStatus.platform}: {sandboxStatus.isolation} · {sandboxStatus.network}{sandboxStatus.reason ? " · " + sandboxStatus.reason : ""}</small>}
                 </section>
               )}
               {activeSession && (
                 <section className="panel planner-panel">
-                  <div className="projects-section-title"><div><strong>Read-only task planner</strong><small>Planning only. No file writes, shell, MCP, or network tools.</small></div>
+                  <div className="projects-section-title"><div><strong>Task planner</strong><small>Model planning remains read-only. Approved tasks can use isolated worktrees and fixed validation commands.</small></div>
                     <span className="planning-label">PLAN MODE</span></div>
                   <div className="planner-controls">
                     <label>PROVIDER<select value={selectedProvider?.id ?? providerId} onChange={(event) => { setProviderId(event.target.value); setModelId(availableProviders.find((item) => item.id === event.target.value)?.models[0]?.id ?? ""); }}>
@@ -353,12 +431,32 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                   </ol>
                   {selectedTask.task.state === "awaiting_approval" && (
                     <div className="plan-review-actions">
-                      <span>Approval records consent only. Execution is not enabled in this build.</span>
+                      <span>Plan approval is separate from permission grants. Creating a worktree requires project write; validation requires restricted process permission.</span>
                       <button className="button subtle" onClick={() => void rejectPlan()} disabled={busy}>Reject</button>
                       <button className="button primary" onClick={() => void approvePlan()} disabled={busy}>Approve plan</button>
                     </div>
                   )}
-                  {selectedTask.task.state === "approved" && <p className="approved-note">Approved and persisted. No files or commands have been run.</p>}
+                  {selectedTask.task.state === "approved" && <div className="task-execution-panel">
+                    <div className="projects-section-title"><div><strong>Isolated execution</strong><small>Changes stay in a detached Git worktree until reviewed.</small></div></div>
+                    {!worktreeDiff ? <button className="button primary" onClick={() => void createTaskWorktree()} disabled={busy || !permissionState?.scopes.includes("project_write") || !gitStatus?.clean}>Create task worktree</button> : <>
+                      <p className="projects-empty">{worktreeDiff.status.branch} · base {worktreeDiff.worktree.baseCommit.slice(0, 8)} · {worktreeDiff.status.changedFiles} changed · {worktreeDiff.status.untrackedFiles} untracked</p>
+                      <p className="projects-empty">Worktree: {worktreeDiff.worktree.path}</p>
+                      <div className="planner-actions"><button className="button subtle" onClick={() => void refreshTaskWorktree()}>Refresh diff</button>
+                        <button className="button subtle" onClick={() => void removeTaskWorktree()} disabled={busy || !worktreeDiff.status.clean}>Remove clean worktree</button></div>
+                      {worktreeDiff.diff ? <pre className="skill-content">{worktreeDiff.diff}{worktreeDiff.diffTruncated ? "\n[Diff truncated at 2 MiB]" : ""}</pre> : <p className="projects-empty">No tracked changes. Untracked files are counted separately and are not included in this preview.</p>}
+                      <div className="planner-actions">
+                        <button className="button subtle" onClick={() => void runValidation("cargo_fmt")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run rustfmt check</button>
+                        <button className="button subtle" onClick={() => void runValidation("cargo_check")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run cargo check</button>
+                        <button className="button primary" onClick={() => void runValidation("cargo_test")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>{validationBusy ? "Running…" : "Run tests"}</button>
+                      </div>
+                    </>}
+                    {validationResult && <div className="validation-result"><strong>{validationResult.command} · {validationResult.success ? "passed" : "failed"} · exit {validationResult.exitCode} · {(validationResult.durationMs / 1000).toFixed(1)}s</strong>
+                      <small>{validationResult.isolation}</small>
+                      {validationResult.stdout && <pre className="skill-content">{validationResult.stdout}</pre>}
+                      {validationResult.stderr && <pre className="skill-content">{validationResult.stderr}</pre>}
+                      {validationResult.outputTruncated && <small>Output was truncated to the configured limit.</small>}
+                    </div>}
+                  </div>}
                 </section>
               )}
 
