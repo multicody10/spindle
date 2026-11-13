@@ -1,0 +1,39 @@
+name: Rust supply-chain checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+
+      - name: Resolve dependencies
+        run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Check Rust advisories
+        run: cargo audit --file src-tauri/Cargo.lock
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check licenses, bans, and sources
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check licenses bans sources

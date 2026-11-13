@@ -1,0 +1,21 @@
+[package]
+name = "spindle"
+version = "0.1.0"
+description = "Local-first AI development environment"
+authors = ["Spindle contributors"]
+edition = "2021"
+
+[lib]
+name = "spindle_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.3", features = [] }
+tauri-plugin-updater = "2.13.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.42.0", features = ["bundled"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

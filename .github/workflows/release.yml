@@ -1,0 +1,103 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build, sign, and publish Windows installer
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Verify version and updater signing configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          $cargoMatch = [regex]::Match($cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"')
+          if (-not $cargoMatch.Success) { throw "Cannot read Cargo package version." }
+          $versions = @($package.version, $tauri.version, $cargoMatch.Groups[1].Value)
+          if (($versions | Select-Object -Unique).Count -ne 1) { throw "Application versions do not match: $($versions -join ', ')" }
+          if ($env:GITHUB_REF_NAME -ne "v$($package.version)" -and -not $env:GITHUB_REF_NAME.StartsWith("v$($package.version)-")) {
+            throw "Tag $env:GITHUB_REF_NAME does not match application version $($package.version)."
+          }
+          if ($tauri.plugins.updater.pubkey -eq "REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY") {
+            throw "Updater public key is still a placeholder. Configure a real Tauri updater key pair before releasing."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is missing. Signed updater artifacts are mandatory."
+          }
+
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Validate frontend, formatting, and Rust tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw "Frontend validation failed." }
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rust formatting failed." }
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw "Clippy failed." }
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Rust tests failed." }
+
+      - name: Build and publish signed release
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Spindle ${{ github.ref_name }}
+          releaseBody: |
+            Windows x64 release of Spindle.
+
+            Review the README and security documentation for current implementation status and known limitations.
+          generateReleaseNotes: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+
+      - name: Publish SHA-256 checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not produced." }
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          $checksum = Join-Path $env:RUNNER_TEMP "SHA256SUMS.txt"
+          "$hash  $($installer.Name)" | Set-Content -Encoding ascii $checksum
+          gh release upload $env:GITHUB_REF_NAME $checksum --clobber
