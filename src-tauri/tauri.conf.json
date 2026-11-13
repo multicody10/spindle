@@ -40,7 +40,10 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh"
       }
     }
   },

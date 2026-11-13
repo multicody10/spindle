@@ -2,6 +2,7 @@ mod chat;
 mod domain;
 mod gguf;
 mod hardware;
+mod model_library;
 mod optimizer;
 mod persistence;
 mod providers;
@@ -263,6 +264,17 @@ async fn inspect_model(path: String) -> Result<domain::ModelMetadata, String> {
 }
 
 #[tauri::command]
+async fn list_model_library(app: AppHandle) -> Result<model_library::ModelLibrary, String> {
+    let documents_directory = app
+        .path()
+        .document_dir()
+        .map_err(|error| format!("Could not resolve the Documents directory: {error}"))?;
+    tokio::task::spawn_blocking(move || model_library::discover(documents_directory))
+        .await
+        .map_err(|error| format!("Model library scan task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn optimize_model(
     path: String,
     profile: OptimizationProfile,
@@ -450,6 +462,7 @@ pub fn run() {
             cancel_chat,
             hardware_profile,
             inspect_model,
+            list_model_library,
             optimize_model,
             load_model_configuration,
             save_model_configuration,

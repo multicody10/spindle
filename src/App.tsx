@@ -12,6 +12,7 @@ import {
   type LocalProviderStatus,
   type ModelConfiguration,
   type ModelMetadata,
+  type ModelLibrary,
   type OptimizationProfile,
   type SavedPreset
 } from "./lib/types";
@@ -48,6 +49,9 @@ function App() {
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [modelPath, setModelPath] = useState("");
+  const [modelLibrary, setModelLibrary] = useState<ModelLibrary | null>(null);
+  const [modelLibraryBusy, setModelLibraryBusy] = useState(false);
+  const [modelLibraryError, setModelLibraryError] = useState<string | null>(null);
   const [model, setModel] = useState<ModelMetadata | null>(null);
   const [configuration, setConfiguration] = useState<ModelConfiguration>(DEFAULT_CONFIGURATION);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
@@ -61,6 +65,20 @@ function App() {
   const [updateState, setUpdateState] = useState("Update check has not run.");
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
 
+  const refreshModelLibrary = useCallback(async () => {
+    setModelLibraryBusy(true);
+    setModelLibraryError(null);
+    try {
+      const library = await api.modelLibrary();
+      setModelLibrary(library);
+      setModelPath((current) => current || library.models[0]?.path || "");
+    } catch (reason) {
+      setModelLibraryError(String(reason));
+    } finally {
+      setModelLibraryBusy(false);
+    }
+  }, []);
+
   const refreshLocalProviders = useCallback(async () => {
     setProvidersBusy(true);
     setProvidersError(null);
@@ -72,6 +90,10 @@ function App() {
       setProvidersBusy(false);
     }
   }, []);
+
+  useEffect(() => {
+    void refreshModelLibrary();
+  }, [refreshModelLibrary]);
 
   useEffect(() => {
     void refreshLocalProviders();
@@ -386,9 +408,54 @@ function App() {
           </section>
 
           <section className="panel model-panel">
+            <div className="model-library-heading">
+              <div>
+                <strong>Model library</strong>
+                <span>Spindle scans its own library and existing LM Studio, GPT4All, and Jan GGUF folders. Files stay where they are.</span>
+              </div>
+              <button className="button subtle" onClick={() => void refreshModelLibrary()} disabled={modelLibraryBusy}>
+                {modelLibraryBusy ? "Scanning…" : "Refresh library"}
+              </button>
+            </div>
+            <div className="model-library-directory">
+              <span>SPINDLE MODEL FOLDER</span>
+              <code>{modelLibrary?.managedDirectory ?? "Creating model folder…"}</code>
+            </div>
+            <div className="model-library-locations">
+              {(modelLibrary?.locations ?? []).map((location) => (
+                <div key={location.name + location.path}>
+                  <span className={location.exists ? "location-found" : "location-missing"} />
+                  <strong>{location.name}</strong>
+                  <code>{location.path}</code>
+                  <small>{location.exists ? "Available" : "Not found"}</small>
+                </div>
+              ))}
+            </div>
+            <div className="model-library-list">
+              {(modelLibrary?.models ?? []).map((entry) => (
+                <button
+                  type="button"
+                  key={entry.path}
+                  className={"model-library-entry " + (modelPath === entry.path ? "selected" : "")}
+                  onClick={() => setModelPath(entry.path)}
+                  title={entry.path}
+                >
+                  <span>
+                    <strong>{entry.fileName}</strong>
+                    <small>{entry.source} · {formatBytes(entry.sizeBytes)}</small>
+                  </span>
+                  <code>{entry.path}</code>
+                </button>
+              ))}
+              {modelLibrary && modelLibrary.models.length === 0 && (
+                <div className="model-library-empty">No GGUF files found. Put models in the Spindle folder above or install them in LM Studio, GPT4All, or Jan, then refresh.</div>
+              )}
+            </div>
+            {modelLibrary?.truncated && <p className="footnote">The library scan reached its safety limit. Some model files may not be listed.</p>}
+            {modelLibraryError && <p className="provider-error">Model library scan failed: {modelLibraryError}</p>}
             <label className="field-label" htmlFor="model-path">MODEL FILE</label>
             <div className="path-row">
-              <input id="model-path" value={modelPath} onChange={(event) => setModelPath(event.target.value)} placeholder="C:\\Models\\model-Q4_K_M.gguf" spellCheck={false} />
+              <input id="model-path" value={modelPath} onChange={(event) => setModelPath(event.target.value)} placeholder="Select a model above or enter a GGUF path" spellCheck={false} />
               <button className="button primary" onClick={() => void inspect()} disabled={busy}>{busy ? "Working…" : "Inspect model"}</button>
             </div>
             <div className="status-line"><span className={error ? "status-dot red" : "status-dot"} />{error ?? message}</div>
