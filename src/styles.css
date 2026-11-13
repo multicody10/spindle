@@ -465,7 +465,7 @@ footer { font-size: 9px; }
   position: sticky;
   bottom: 0;
   padding: 11px 0 0;
-  background: linear-gradient(180deg, rgba(11,14,19,0), #0b0e13 20%);
+  background: #0b0e13;
 }
 .chat-status {
   display: flex;
