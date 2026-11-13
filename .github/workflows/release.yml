@@ -4,12 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create (must match the application version, e.g. v0.1.0)."
+        required: true
+        type: string
+        default: "v0.1.0"
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -19,8 +26,9 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_TERM_COLOR: always
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
-      - name: Check out tagged source
+      - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up Node.js
@@ -57,8 +65,20 @@ jobs:
           if (-not $cargoMatch.Success) { throw "Cannot read Cargo package version." }
           $versions = @($package.version, $tauri.version, $cargoMatch.Groups[1].Value)
           if (($versions | Select-Object -Unique).Count -ne 1) { throw "Application versions do not match: $($versions -join ', ')" }
-          if ($env:GITHUB_REF_NAME -ne "v$($package.version)" -and -not $env:GITHUB_REF_NAME.StartsWith("v$($package.version)-")) {
-            throw "Tag $env:GITHUB_REF_NAME does not match application version $($package.version)."
+
+          $releaseTag = $env:RELEASE_TAG
+          if ([string]::IsNullOrWhiteSpace($releaseTag) -or $releaseTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid release tag: $releaseTag"
+          }
+          if ($releaseTag -ne "v$($package.version)" -and -not $releaseTag.StartsWith("v$($package.version)-")) {
+            throw "Tag $releaseTag does not match application version $($package.version)."
+          }
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
+            $existingTag = git ls-remote --tags origin "refs/tags/$releaseTag"
+            if ($LASTEXITCODE -ne 0) { throw "Could not check whether tag $releaseTag already exists." }
+            if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
+              throw "Tag $releaseTag already exists. Refusing to overwrite or reuse an existing release tag."
+            }
           }
           if ($tauri.plugins.updater.pubkey -eq "REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY") {
             throw "Updater public key is still a placeholder. Configure a real Tauri updater key pair before releasing."
@@ -92,15 +112,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Spindle ${{ github.ref_name }}
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Spindle ${{ env.RELEASE_TAG }}
+          releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Windows x64 release of Spindle.
 
             Review the README and security documentation for current implementation status and known limitations.
           generateReleaseNotes: true
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-beta.') }}
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
 
@@ -115,4 +136,4 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
           $checksum = Join-Path $env:RUNNER_TEMP "SHA256SUMS.txt"
           "$hash  $($installer.Name)" | Set-Content -Encoding ascii $checksum
-          gh release upload $env:GITHUB_REF_NAME $checksum --clobber
+          gh release upload $env:RELEASE_TAG $checksum --clobber
