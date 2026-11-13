@@ -38,7 +38,6 @@ where
         .map_err(|error| format!("Project database task failed: {error}"))?
 }
 
-
 #[rustfmt::skip]
 #[tauri::command]
 async fn git_repository_status(app: AppHandle, project_id: String) -> Result<git::GitRepositoryStatus, String> {
@@ -1083,7 +1082,9 @@ pub fn run() {
         .manage(workspace::WorkspaceManager::default())
         .manage(permissions::PermissionBroker::default())
         .setup(|app| {
-            let database = app.path().app_data_dir()
+            let database = app
+                .path()
+                .app_data_dir()
                 .map_err(|error| std::io::Error::other(error.to_string()))?
                 .join("spindle.sqlite3");
             app.state::<permissions::PermissionBroker>()

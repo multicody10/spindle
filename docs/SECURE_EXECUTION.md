@@ -1,6 +1,6 @@
 # Secure agent execution design
 
-Status: permission and manual reviewed-file-change foundation implemented; isolated execution remains design and acceptance criteria only. No model-driven process execution is enabled in Spindle.
+Status: permission broker, manual reviewed-file-change flow, Git task worktrees, and a fixed user-triggered Windows validation worker are implemented. General model-driven tool execution remains disabled; the worker has not yet passed the full Windows adversarial acceptance suite.
 
 ## Trust boundary
 
@@ -14,14 +14,14 @@ A permission broker alone is not a sandbox. Prompt instructions, path filtering,
 
 Before enabling command or autonomous file-write tools, implement and validate all of the following:
 
-1. **AppContainer or LPAC isolation.** Create the worker with an AppContainer identity and an explicit capability list. Default to no network capability and no access to user profile secrets, browser stores, application databases, or unrelated projects.
+1. **AppContainer or LPAC isolation.** Implemented for the fixed Cargo validation worker using a persistent AppContainer identity with LPAC and no network capabilities. ACL grants are limited to the task worktree, private worker profile/offline Cargo cache, and read-only Rust toolchain directories. Actual access-denied boundaries still require adversarial Windows integration tests.
 2. **Restricted process creation.** Create the worker suspended, attach it to its Job Object, apply the intended process mitigations and access token, then resume it. Do not inherit application handles or credentials.
-3. **Job Object limits.** Enforce wall-clock deadlines, memory limits, process count limits, CPU policy, and kill-on-job-close. Deny breakaway unless a narrowly reviewed child-process design requires it.
-4. **Filesystem policy.** Give the worker a per-task scratch directory or isolated Git worktree. Start with read-only source access and a separate writable output area. Use handle-relative operations, reject reparse-point escapes, and protect against time-of-check/time-of-use races.
-5. **Network policy.** Deny outbound access by default. If a task needs network access, route it through an allowlisted broker that records destinations and requires explicit scope approval.
+3. **Job Object limits.** The current worker applies a 10-minute timeout, 2 GiB memory limit, 80% CPU cap, and kill-on-job-close. A process-count limit and verified breakaway policy remain outstanding.
+4. **Filesystem policy.** Approved tasks can receive a detached Git worktree under Spindle application data. The worker can write only within that worktree and its private profile, including a private writable offline Cargo-cache copy; the original Rust toolchain and linker directories are read-only. Handle-relative operations, reparse-point defenses, and race-resistant file mutation remain outstanding.
+5. **Network policy.** The current LPAC worker receives no network capabilities and Cargo runs offline. No egress broker exists; network-enabled tasks remain disabled.
 6. **MCP policy.** Launch MCP stdio servers only inside the worker boundary, with an explicit tool/schema allowlist. Do not pass user environment variables or secrets by default. Require separate approval for external side effects.
-7. **Permission policy.** Project read is the baseline. Project write, process execution, network, MCP, and parallel-agent scopes are separately granted, visible, revocable, and expire on application restart. The current broker enforces operation-to-scope checks and records bounded resource-tagged decisions; it is not yet a path-level policy engine. An agent plan or Skill cannot elevate itself.
-8. **Audit and recovery.** Record append-only task events for approval, worker creation, tool request/result, cancellation, validation, and cleanup. Make worker termination and scratch cleanup idempotent.
+7. **Permission policy.** Project read is the baseline. Project write and process execution are separately granted in the UI; external network, MCP, and parallel-agent scopes remain unused. Grants expire on application restart. The broker enforces operation-to-scope checks and records resource-tagged audit events durably in SQLite (10,000-event retention); it is not yet a path-level policy engine. An agent plan or Skill cannot elevate itself.
+8. **Audit and recovery.** Task events and permission audit history persist in SQLite. The current workflow records worktree creation and validation start/result/failure. Durable file-transaction checkpoints, interrupted-worker recovery, and idempotent cleanup still need implementation.
 
 A Windows Job Object controls process lifetime and resource usage; it is not sufficient by itself to provide AppContainer filesystem or network isolation.
 
@@ -37,7 +37,7 @@ The planned mutation flow is:
 6. On approval, apply the patch with expected-revision checks; otherwise discard the task workspace.
 7. Preserve checkpoints so an interrupted task can resume or roll back without silently overwriting external edits.
 
-The current Workspace editor routes manual changes through the permission broker and a temporary WorkspaceManager. Changes require a diff review and explicit apply; guarded undo refuses to overwrite later edits. Proposal checkpoints and audit entries are bounded process memory, not durable transaction records. This remains an application-level IPC permission gate. The file service is not yet handle-relative or race-resistant against all Windows reparse-point/TOCTOU cases.
+The current Workspace editor routes manual changes through the permission broker and a temporary WorkspaceManager. Changes require a diff review and explicit apply; guarded undo refuses to overwrite later edits. Proposal checkpoints remain bounded process memory; permission audit events and task events are durable SQLite records. Git status/history and detached task worktrees are available for approved tasks. The worker currently validates only fixed Cargo commands and does not generate or apply model-authored patches. This remains an incomplete security boundary: the file service is not yet handle-relative or race-resistant against all Windows reparse-point/TOCTOU cases.
 
 ## Network and MCP model
 
@@ -60,4 +60,4 @@ Secrets should be injected per task and per tool only after explicit authorizati
 
 ## Enablement rule
 
-Until the Windows worker passes these tests, Spindle must keep shell/process execution, autonomous file writes, network tools, MCP process launch, and parallel subagent execution disabled. Plan approval remains a record of approval only, not permission to execute.
+Until the Windows worker passes the remaining adversarial tests, Spindle must keep arbitrary shell/process execution, autonomous file writes, network tools, MCP process launch, and parallel subagent execution disabled. Only the fixed user-triggered Cargo validation commands are available after a separate process-execution grant. Plan approval does not itself grant execution permission.
