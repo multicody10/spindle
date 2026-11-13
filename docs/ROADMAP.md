@@ -57,11 +57,11 @@ This roadmap records implementation status rather than implying the full product
 
 ## Distribution
 
-- [x] NSIS per-user installer target.
+- [x] NSIS per-machine installer target.
 - [x] Tauri updater plugin and public endpoint configuration.
 - [x] Release workflow fails closed without signing material.
-- [ ] Publish first signed installer and latest.json.
-- [ ] Validate upgrades and data preservation on Windows.
+- [x] Publish first signed installer and latest.json.
+- [ ] Validate the initial per-user to per-machine migration, subsequent updates, and data preservation on Windows.
 - [ ] Windows Authenticode signing when a certificate is available.
 - [ ] Stable and opt-in beta update channels.
 - [ ] SBOM and release provenance.
