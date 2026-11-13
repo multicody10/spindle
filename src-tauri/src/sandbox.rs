@@ -167,6 +167,19 @@ fn run_validation_windows(
         .build()
         .map_err(|error| format!("Could not construct an LPAC security token: {error}"))?;
 
+    // Rust's Windows process launcher opens the NUL device when Cargo starts
+    // child tools with null stdin. LPAC blocks device access by default, so
+    // grant this package read-only access to that single inert device rather
+    // than enabling a broad device capability.
+    grant_to_package(
+        ResourcePath::File(PathBuf::from(r"\\.\NUL")),
+        &profile.sid,
+        AccessMask::FILE_GENERIC_READ,
+    )
+    .map_err(|error| format!(
+        "Could not grant the LPAC worker read-only access to the NUL device required for child stdin: {error}"
+    ))?;
+
     let profile_home = profile.folder_path()
         .map_err(|error| format!("Could not resolve the worker profile directory: {error}"))?;
     let cargo_home = profile_home.join("cargo-home");
