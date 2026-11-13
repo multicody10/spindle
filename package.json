@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "check": "npm run typecheck && npm run build",
     "tauri": "tauri",
-    "desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "package:windows": "tauri build --bundles nsis"
+    "desktop": "npm run typecheck && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "package:windows": "npm run typecheck && tauri build --bundles nsis"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",
