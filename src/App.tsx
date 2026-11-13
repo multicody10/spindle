@@ -48,7 +48,7 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("model-lab");
+  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("chat");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
@@ -330,22 +330,42 @@ function App() {
     setActiveView("chat");
   };
 
+  const startNewChat = () => {
+    setActiveSession(null);
+    setActiveView("chat");
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-logo" src={spindleLogo} alt="Spindle" />
         </div>
+        <button className="sidebar-newchat" onClick={startNewChat}>
+          <span aria-hidden="true">+</span>
+          New chat
+        </button>
+
         <div className="nav-caption">WORKSPACE</div>
-        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">▣</span> Projects &amp; sessions</button>
-        <div className="nav-caption section-gap">TOOLS</div>
-        <button className={"nav-item " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}><span className="nav-icon">◈</span> Model Lab</button>
-        <button className={"nav-item " + (activeView === "chat" ? "active" : "")} onClick={() => setActiveView("chat")}><span className="nav-icon">◉</span> Chat</button>
-        <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
-        <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
-        <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmark</button>
+        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}>
+          <span className="nav-icon">▣</span>
+          Projects
+        </button>
+
+        <details className="sidebar-tools" open={activeView === "runtime" || activeView === "workspace" || activeView === "benchmark"}>
+          <summary><span className="nav-icon">⌘</span><span>Tools</span><span className="sidebar-tools-chevron">⌄</span></summary>
+          <div className="sidebar-tool-list">
+            <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
+            <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
+            <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmarks</button>
+          </div>
+        </details>
+
         <div className="sidebar-bottom">
-          <div className="runtime-state"><span className="status-dot" /> Configuration core online</div>
+          <button className={"sidebar-settings " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}>
+            <span aria-hidden="true">⚙</span>
+            Settings
+          </button>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
         </div>
       </aside>
@@ -353,8 +373,8 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "projects" ? "PROJECT MANAGEMENT" : activeView === "benchmark" ? "MODEL PERFORMANCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
-            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Model benchmarks" : activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
+            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
+            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "runtime" ? "Runtime" : activeView === "workspace" ? "Workspace" : "Settings"}</h1>
           </div>
           
         </header>
