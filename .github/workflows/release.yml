@@ -53,6 +53,7 @@ jobs:
         with:
           workspaces: |
             src-tauri -> src-tauri/target
+          cache-on-failure: true
 
       - name: Verify version and updater signing configuration
         shell: pwsh
