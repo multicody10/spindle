@@ -289,7 +289,7 @@ fn run_validation_windows(
     let mut child = launch_in_container_with_io(&capabilities, &options)
         .map_err(|error| format!("The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"))?;
     let job_handle = match child.job_guard.as_ref() {
-        Some(guard) => guard.as_handle(),
+        Some(guard) => guard.as_handle().0,
         None => {
             terminate_worker_process(child.pid);
             return Err("The AppContainer launcher did not return its required Job Object guard; the suspended worker was terminated.".into());
@@ -641,6 +641,20 @@ mod tests {
         assert_eq!(ValidationCommand::Format.args("src-tauri/Cargo.toml").join(" "), "fmt --manifest-path src-tauri/Cargo.toml --all -- --check");
         assert_eq!(ValidationCommand::Check.args("Cargo.toml").join(" "), "check --locked --manifest-path Cargo.toml --all-targets");
         assert_eq!(ValidationCommand::Test.args("Cargo.toml").join(" "), "test --locked --manifest-path Cargo.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn worker_job_policy_is_applied_and_read_back_before_resume() {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::JobObjects::CreateJobObjectW;
+        use windows::core::PCWSTR;
+
+        let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+            .expect("a private Windows Job Object should be creatable");
+        let result = configure_worker_job(job);
+        unsafe { CloseHandle(job) }.expect("the test Job Object should close");
+        result.expect("the full process and memory policy must be retained by Windows");
     }
 
     #[test]
