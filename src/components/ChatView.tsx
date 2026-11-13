@@ -236,14 +236,6 @@ function ChatView({
     }
   };
 
-  const clear = () => {
-    if (sending || session) return;
-    setMessages([]);
-    setLastResult(null);
-    setError(null);
-    setStatus("Chat cleared.");
-  };
-
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -253,61 +245,6 @@ function ChatView({
 
   return (
     <section className="chat-view">
-      <div className="chat-heading">
-        <div>
-          <span className="eyebrow">LOCAL INFERENCE</span>
-          <h2>Chat with a model</h2>
-          <p>Stream responses from Ollama, LM Studio, or Spindle’s managed llama.cpp runtime.</p>
-        </div>
-        <div className="chat-heading-actions">
-          <span className="local-chip"><span /> LOOPBACK ONLY</span>
-          <button className="button subtle" onClick={clear} disabled={sending || !!session || messages.length === 0}>{session ? "Persistent session" : "Clear chat"}</button>
-        </div>
-      </div>
-
-      <section className="panel chat-connection">
-        <div className="chat-select">
-          <label htmlFor="chat-provider">PROVIDER</label>
-          <select
-            id="chat-provider"
-            value={providerId}
-            disabled={sending || availableProviders.length === 0}
-            onChange={(event) => {
-              const value = event.target.value as ChatProviderId;
-              setProviderId(value);
-              setModelId(providers.find((provider) => provider.id === value)?.models[0]?.id ?? "");
-            }}
-          >
-            <option value="ollama">Ollama</option>
-            <option value="lm-studio">LM Studio</option>
-            <option value="llama-cpp">llama.cpp (Spindle)</option>
-          </select>
-        </div>
-        <div className="chat-select model-select">
-          <label htmlFor="chat-model">MODEL</label>
-          <select
-            id="chat-model"
-            value={modelId}
-            disabled={sending || !selectedProvider?.available || selectedProvider.models.length === 0}
-            onChange={(event) => setModelId(event.target.value)}
-          >
-            {selectedProvider?.models.map((model) => (
-              <option key={model.id} value={model.id}>{model.id}</option>
-            ))}
-            {(!selectedProvider || selectedProvider.models.length === 0) && (
-              <option value="">No models found</option>
-            )}
-          </select>
-        </div>
-        <div className="chat-provider-state">
-          <span className={"status-dot " + (selectedProvider?.available ? "" : "red")} />
-          <span>{selectedProvider?.available ? selectedProvider.message : "Provider offline"}</span>
-        </div>
-        <button className="button subtle" onClick={onRefreshProviders} disabled={providersBusy || sending}>
-          {providersBusy ? "Scanning…" : "Refresh"}
-        </button>
-      </section>
-
       {availableProviders.length === 0 && (
         <section className="panel chat-help">
           <strong>No local inference server detected</strong>
@@ -369,15 +306,68 @@ function ChatView({
             maxLength={65536}
             disabled={!selectedProvider?.available || !modelId || sending}
           />
-          {sending ? (
-            <button className="button primary stop-button" onClick={() => void stop()}>Stop generation</button>
-          ) : (
-            <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || !selectedProvider?.available || !modelId}>
-              Send <span>↗</span>
-            </button>
-          )}
+          <div className="chat-composer-footer">
+            <div className="chat-model-controls">
+              <select
+                className="chat-provider-picker"
+                aria-label="Provider"
+                value={providerId}
+                disabled={sending || availableProviders.length === 0}
+                onChange={(event) => {
+                  const value = event.target.value as ChatProviderId;
+                  setProviderId(value);
+                  setModelId(providers.find((provider) => provider.id === value)?.models[0]?.id ?? "");
+                }}
+              >
+                <option value="ollama">Ollama</option>
+                <option value="lm-studio">LM Studio</option>
+                <option value="llama-cpp">Spindle Runtime</option>
+              </select>
+              <select
+                className="chat-model-picker"
+                aria-label="Model"
+                value={modelId}
+                disabled={sending || !selectedProvider?.available || selectedProvider.models.length === 0}
+                onChange={(event) => setModelId(event.target.value)}
+              >
+                {selectedProvider?.models.map((model) => (
+                  <option key={model.id} value={model.id}>{model.id}</option>
+                ))}
+                {(!selectedProvider || selectedProvider.models.length === 0) && (
+                  <option value="">No models available</option>
+                )}
+              </select>
+              <button
+                type="button"
+                className="chat-refresh"
+                onClick={onRefreshProviders}
+                disabled={providersBusy || sending}
+                title="Refresh local providers"
+                aria-label="Refresh local providers"
+              >
+                ↻
+              </button>
+              <span className="chat-provider-state">
+                <span className={"status-dot " + (selectedProvider?.available ? "" : "red")} />
+                {selectedProvider?.available ? selectedProvider.name : "Offline"}
+              </span>
+            </div>
+            <div className="chat-submit-controls">
+              {sending ? (
+                <button className="button primary stop-button" onClick={() => void stop()}>Stop</button>
+              ) : (
+                <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || !selectedProvider?.available || !modelId}>
+                  Send <span>↗</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-        <p className="chat-footnote">Messages are sent only to the selected local provider at 127.0.0.1. This chat stays in memory for this window and is not saved to disk.</p>
+        <p className="chat-footnote">
+          {session
+            ? "This conversation is saved to the selected project session."
+            : "New chats stay in memory for this window. Open a project session to save conversation history."}
+        </p>
       </div>
     </section>
   );
