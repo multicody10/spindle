@@ -1,6 +1,6 @@
 # Local Providers and Chat
 
-Spindle discovers and chats with Ollama, LM Studio, and its managed llama.cpp runtime. GGUF model files can be selected from Spindle's managed library or indexed from LM Studio's existing model directory.
+Spindle discovers and chats with Ollama, LM Studio, and its managed llama.cpp runtime. GGUF model files can be selected from Spindle's managed library or indexed from the existing model directories used by LM Studio, GPT4All, and Jan.
 
 | Provider | Fixed endpoint | Discovery | Streaming chat |
 |---|---|---|---|
@@ -8,7 +8,13 @@ Spindle discovers and chats with Ollama, LM Studio, and its managed llama.cpp ru
 | LM Studio | `http://127.0.0.1:1234` | `GET /v1/models` | `POST /v1/chat/completions` (SSE) |
 | llama.cpp (managed) | `http://127.0.0.1:12345` | `GET /v1/models` | `POST /v1/chat/completions` (SSE) |
 
-Spindle creates a dedicated model folder at `Documents/Spindle/Models` on first library scan. Put GGUF files there to keep a Spindle-owned library. The Model Lab also scans the documented LM Studio layout at `~/.lmstudio/models/<publisher>/<model>/*.gguf` and accepts `LMSTUDIO_MODELS_DIR` as an override for a custom model root. External model files are indexed in place, never copied or moved. Only GGUF files are listed for direct llama.cpp inspection; Ollama-managed blobs are not treated as standalone GGUF files.
+Spindle creates a dedicated model folder at `Documents/Spindle/Models` on first library scan. Put GGUF files there to keep a Spindle-owned library. Model Lab also indexes these existing GGUF locations:
+
+- LM Studio: `~/.lmstudio/models/<publisher>/<model>/*.gguf`
+- GPT4All: `%LOCALAPPDATA%/nomic.ai/GPT4All/*.gguf`
+- Jan: `%APPDATA%/Jan/data/models/**/*.gguf`
+
+The model roots can be overridden with `LMSTUDIO_MODELS_DIR`, `GPT4ALL_MODELS_DIR`, `JAN_MODELS_DIR`, and `KOBOLDCPP_MODELS_DIR`. KoboldCpp uses a user-selected download directory, so Spindle only scans it when that environment variable is set. External model files are indexed in place, never copied or moved. The scan is bounded and ignores symlinks and Windows reparse points. Only GGUF files are listed for direct llama.cpp inspection; Ollama-managed blobs are not treated as standalone GGUF files because Ollama already exposes those models through its local provider API.
 
 Start Ollama or LM Studio yourself and load a model before selecting it in **Chat**. For llama.cpp, use the **Runtime** workspace to install a pinned CPU, Vulkan, or NVIDIA CUDA 12.4 build, select an inspected GGUF file, and start the managed server. The CUDA installer also installs its matching runtime DLL bundle. Spindle binds the server only to 127.0.0.1:12345.
 
