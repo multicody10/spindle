@@ -429,7 +429,6 @@ async fn loop_agent(
 
     let mut generation = input.generation.clone();
     generation.max_output_tokens = generation.max_output_tokens.clamp(256, 4_096);
-    let mut turns = 0usize;
     let mut tool_calls = 0usize;
     let mut malformed = 0usize;
     let mut repeated_reads = HashMap::<String, usize>::new();
@@ -438,7 +437,6 @@ async fn loop_agent(
 
     for turn in 1..=MAX_TURNS {
         ensure_active(run)?;
-        turns = turn;
         let request_id = new_request_id();
         let cancellation = chat_runtime.begin(&request_id)?;
         let request = ChatRequest {
@@ -557,7 +555,7 @@ async fn loop_agent(
                     task_id: task.id.clone(),
                     state: "completed".into(),
                     final_response: summary,
-                    turns,
+                    turns: turn,
                     tool_calls,
                 });
             }
@@ -750,9 +748,10 @@ async fn execute_tool(
             permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:create_directory")?;
             let args: PathArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
+            let path = args.path.clone();
             tokio::task::spawn_blocking(move || {
                 let (manager, grant) = task_workspace(&root)?;
-                manager.create_directory(&grant.session_id, &args.path)
+                manager.create_directory(&grant.session_id, &path)
             }).await.map_err(|error| format!("Directory creation failed: {error}"))??;
             Ok((json!({"path":args.path,"created":true}), true))
         }
@@ -809,9 +808,10 @@ async fn execute_tool(
             permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:delete_file")?;
             let args: DeleteFileArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
+            let path = args.path.clone();
             tokio::task::spawn_blocking(move || {
                 let (manager, grant) = task_workspace(&root)?;
-                manager.delete_file(&grant.session_id, &args.path, &args.expected_revision)
+                manager.delete_file(&grant.session_id, &path, &args.expected_revision)
             }).await.map_err(|error| format!("File deletion failed: {error}"))??;
             Ok((json!({"path":args.path,"deleted":true}), true))
         }
