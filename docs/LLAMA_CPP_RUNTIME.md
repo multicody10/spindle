@@ -1,25 +1,29 @@
 # Managed llama.cpp runtime
 
-Spindle can install and manage a pinned Windows x64 build of llama.cpp without requiring a separate Ollama or LM Studio installation.
+Spindle installs and manages pinned Windows x64 llama.cpp builds without requiring a separate Ollama or LM Studio installation.
 
 ## Supported builds
 
-| Backend | Asset | SHA-256 |
+| Backend | Release asset(s) | SHA-256 |
 |---|---|---|
-| CPU | llama-b12347-bin-win-cpu-x64.zip | 476a30ac458f4881051a26c541707440de4aa744d878c739669289cbe137aa09 |
-| Vulkan | llama-b12347-bin-win-vulkan-x64.zip | 7dccbc28c03dc929687df80894d736c9fd91c71b88537f7f1a7d2eefb85a86c5 |
+| CPU | `llama-b12347-bin-win-cpu-x64.zip` | `476a30ac458f4881051a26c541707440de4aa744d878c739669289cbe137aa09` |
+| Vulkan | `llama-b12347-bin-win-vulkan-x64.zip` | `7dccbc28c03dc929687df80894d736c9fd91c71b88537f7f1a7d2eefb85a86c5` |
+| CUDA 12.4 | `llama-b12347-bin-win-cuda-12.4-x64.zip` | `990e0bb9519e26c8bbd2c0de6e01e59ec596c2f3fe7309376ec416c2be56ca3d` |
+| CUDA 12.4 runtime DLLs | `cudart-llama-bin-win-cuda-12.4-x64.zip` | `8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6` |
 
-Both archives are pinned to the official ggml-org/llama.cpp release tag b12347. Spindle does not resolve a moving latest URL at install time.
+All four assets are pinned to the official `ggml-org/llama.cpp` `b12347` release. The CUDA backend consists of two archives: the versioned llama.cpp binaries and the CUDA runtime DLL bundle. Spindle extracts both into the same managed runtime directory.
 
 ## Install and launch
 
 1. Inspect a local GGUF file in Model Lab.
 2. Review and save the model configuration.
-3. Open Runtime and choose CPU or Vulkan.
-4. Install the selected backend. Spindle downloads the fixed official release asset, enforces a download size limit, verifies SHA-256, rejects unsafe ZIP paths and symbolic links, and extracts into the per-user application data directory.
-5. Start the selected model. Spindle validates the configuration and model metadata again in Rust before launching llama-server.exe.
+3. Open Runtime and choose CPU, Vulkan, or NVIDIA CUDA 12.4. Spindle selects CUDA by default when the hardware inventory detects an NVIDIA GPU; the selection remains changeable.
+4. Install the selected backend. Downloads are streamed to temporary files rather than buffered fully in memory. Spindle follows one HTTPS redirect only from `github.com` to `release-assets.githubusercontent.com`, checks the exact published archive size and SHA-256, rejects unsafe ZIP paths and symbolic links, and extracts into a staging directory.
+5. Start the selected model. Spindle validates the configuration and model metadata again in Rust before launching `llama-server.exe`.
 
-The runtime binds only to 127.0.0.1:12345. Chat discovers it as llama.cpp (Spindle) and uses its OpenAI-compatible streaming chat endpoint.
+The CUDA package includes its runtime DLLs, so a separately installed CUDA Toolkit is not required. A compatible NVIDIA display driver is still required. The upstream b12347 Windows CUDA workflow builds the x64 CUDA 12.4 backend with `GGML_NATIVE=OFF`; its CUDA 12.4 CMake defaults include `61-virtual`, so Pascal GPUs such as the GTX 1070 (compute capability 6.1) have a PTX JIT path. The first model load can incur driver compilation time. Actual offload still depends on a compatible driver and available VRAM. See the [pinned Windows CUDA build workflow](https://github.com/ggml-org/llama.cpp/blob/b12347/.github/workflows/build-cuda-windows.yml) and [pinned CUDA architecture defaults](https://github.com/ggml-org/llama.cpp/blob/b12347/ggml/src/ggml-cuda/CMakeLists.txt). CPU and Vulkan remain available as alternatives.
+
+The runtime binds only to `127.0.0.1:12345`. Chat discovers it as llama.cpp (Spindle) and uses its OpenAI-compatible streaming chat endpoint.
 
 ## Process and data boundaries
 
@@ -29,11 +33,17 @@ The runtime binds only to 127.0.0.1:12345. Chat discovers it as llama.cpp (Spind
 - stdout/stderr are captured into a bounded in-memory ring buffer. They are not persisted.
 - Stop terminates the managed server process. One model process is supported at a time.
 - The API is loopback-only and does not require an API key because it is not exposed to the LAN.
-- Applied settings are read from llama.cpp's /props endpoint. Only values actually exposed by that endpoint are displayed; GPU offload and some load-time options are not currently reported there.
+- Applied settings are read from llama.cpp's `/props` endpoint. Only values actually exposed by that endpoint are displayed; hardware offload and some load-time options are not currently reported there.
 - Ollama and LM Studio remain separate, user-managed processes.
+
+## Download behavior and limits
+
+GitHub's release download URL responds with an HTTP 302 redirect to its release asset CDN. The installer now permits only a single HTTPS redirect from the fixed GitHub release URL to `release-assets.githubusercontent.com`; it rejects other redirect hosts and additional redirect hops.
+
+Each archive is downloaded to disk with a per-file size cap and pinned expected byte count, then SHA-256 verified before the ZIP is opened. CUDA downloads both archives (about 678 MiB total) and therefore needs additional free disk space for the extracted runtime and staging files. Extraction is bounded to 2 GiB and 2,048 entries per archive. The installer verifies that `llama-server.exe`, `cudart64_12.dll`, `cublas64_12.dll`, and `cublasLt64_12.dll` are present together before marking CUDA installed. Temporary downloads are removed after extraction, and the staged runtime is moved into place only after all assets verify.
 
 ## Compatibility and limitations
 
-The runtime build is deliberately pinned for reproducibility. Updating it requires changing the version, asset names, and independently verified SHA-256 digests together. CPU is the compatibility fallback. Vulkan requires a working Vulkan-capable graphics driver. The managed runtime currently targets Windows x64 only.
+The runtime build is deliberately pinned for reproducibility. Updating it requires changing the version, asset names, exact sizes, and SHA-256 digests together. CPU is the compatibility fallback. Vulkan requires a working Vulkan-capable graphics driver. CUDA requires a compatible NVIDIA GPU and display driver. The managed runtime currently targets Windows x64 only.
 
 The current runtime manager supports one loaded model and one server process. It is not yet the shared multi-session inference manager, and it does not provide agent execution or workspace access.

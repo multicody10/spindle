@@ -323,7 +323,7 @@ function App() {
           <div className="hardware-grid">
             <article className="metric-card">
               <div className="metric-label">PROCESSOR</div>
-              <div className="metric-main">{hardware?.cpuName ?? "Detecting…"}</div>
+              <div className="metric-main">{hardware ? (hardware.cpuName ?? "CPU model name unavailable") : "Detecting…"}</div>
               <div className="metric-foot">{hardware?.logicalThreads ?? "—"} logical threads · {hardware?.physicalCores ?? "physical core count unavailable"}</div>
             </article>
             <article className="metric-card">
@@ -333,8 +333,8 @@ function App() {
             </article>
             <article className="metric-card">
               <div className="metric-label">GRAPHICS</div>
-              <div className="metric-main">{hardware?.gpus[0]?.name ?? "No supported GPU detected"}</div>
-              <div className="metric-foot">{hardware?.gpus[0] ? formatBytes(hardware.gpus[0].totalVramBytes) + " VRAM · " + formatBytes(hardware.gpus[0].availableVramBytes) + " free" : "GPU detection is currently NVIDIA-specific"}</div>
+              <div className="metric-main">{hardware?.gpus[0]?.name ?? (hardware ? "No NVIDIA adapter detected" : "Detecting…")}</div>
+              <div className="metric-foot">{hardware?.gpus[0] ? formatBytes(hardware.gpus[0].totalVramBytes) + " VRAM · " + (/nvidia-smi|nvml/i.test(hardware.gpus[0].detectionMethod) ? formatBytes(hardware.gpus[0].availableVramBytes) + " free" : "live VRAM telemetry unavailable") : "Checks NVIDIA driver tools and Windows device inventory"}</div>
             </article>
           </div>
 

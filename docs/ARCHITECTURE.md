@@ -13,6 +13,7 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - The frontend is not a security authority.
 - The model file is treated as untrusted binary input. The GGUF parser bounds metadata counts, string lengths, and array lengths.
 - The model configuration is validated again in Rust before persistence.
+- Hardware inventory reads the human-readable processor model from the Windows processor registry, checks NVIDIA through nvidia-smi and NVML, and uses the Windows display-adapter registry as a detection fallback when live VRAM telemetry is unavailable.
 - SQLite lives in the operating system application data directory, not in the project folder.
 - Ollama and LM Studio discovery/chat use fixed IPv4 loopback endpoints and never launch or control those external provider processes.
 - The managed llama.cpp installer uses fixed official release URLs, pinned SHA-256 digests, bounded downloads, safe ZIP path checks, and per-user application-data storage.

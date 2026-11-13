@@ -14,7 +14,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Keep load-time runtime settings separate from generation sampling settings.
 - Save per-model configurations and reusable named presets in a local SQLite database.
 - Discover Ollama, LM Studio, and Spindle-managed llama.cpp endpoints, list available models, and stream local chat responses.
-- Install pinned Windows x64 llama.cpp CPU or Vulkan builds after SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
+- Install pinned Windows x64 llama.cpp CPU, Vulkan, or NVIDIA CUDA 12.4 builds after size and SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
 - Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded file browsing, text search, and editing.
 - Validate configuration ranges and chat requests in the Rust backend.
 - Chat locally with Ollama or LM Studio, including streamed responses, cancellation, and provider-reported token statistics.
