@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     fs::{self, File, OpenOptions},
-    io::{self, Cursor, Read, Seek, Write},
+    io::{self, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -80,7 +80,9 @@ impl RuntimeBackend {
         match self {
             Self::Cpu => "llama-b12347-bin-win-cpu-x64.zip",
             Self::Vulkan => "llama-b12347-bin-win-vulkan-x64.zip",
-            Self::Cuda => "llama-b12347-bin-win-cuda-12.4-x64.zip + cudart-llama-bin-win-cuda-12.4-x64.zip",
+            Self::Cuda => {
+                "llama-b12347-bin-win-cuda-12.4-x64.zip + cudart-llama-bin-win-cuda-12.4-x64.zip"
+            },
         }
     }
 
@@ -368,13 +370,14 @@ pub async fn install(
         "Downloading and verifying pinned llama.cpp {VERSION} ({})…",
         backend.id()
     ));
-    let verified_assets = match download_and_extract_assets(&client, runtime, backend, &staging).await {
-        Ok(assets) => assets,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
-        }
-    };
+    let verified_assets =
+        match download_and_extract_assets(&client, runtime, backend, &staging).await {
+            Ok(assets) => assets,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+        };
 
     let server = find_backend_server(&staging, backend).ok_or_else(|| {
         let _ = fs::remove_dir_all(&staging);
@@ -606,7 +609,9 @@ fn extract_archive<R: Read + Seek>(
             .write(true)
             .create_new(true)
             .open(&output)
-            .map_err(|_| "The runtime archive contains a duplicate or unwritable file path.".to_string())?;
+            .map_err(|_| {
+                "The runtime archive contains a duplicate or unwritable file path.".to_string()
+            })?;
         let copied = io::copy(&mut entry, &mut file)
             .map_err(|error| format!("Could not extract a runtime file: {error}"))?;
         if copied != size {
@@ -622,7 +627,10 @@ fn find_backend_server(root: &Path, backend: RuntimeBackend) -> Option<PathBuf> 
     let server = find_server(root)?;
     if backend == RuntimeBackend::Cuda {
         let directory = server.parent()?;
-        if !CUDA_RUNTIME_DLLS.iter().all(|name| directory.join(name).is_file()) {
+        if !CUDA_RUNTIME_DLLS
+            .iter()
+            .all(|name| directory.join(name).is_file())
+        {
             return None;
         }
     }
@@ -938,6 +946,7 @@ pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn runtime_assets_are_pinned_and_distinct() {
@@ -967,7 +976,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "spindle-cuda-runtime-test-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("llama-server.exe"), b"test").unwrap();
@@ -991,14 +1003,24 @@ mod tests {
         )
         .unwrap();
         let external = reqwest::Url::parse("https://example.com/archive.zip").unwrap();
-        let http_target = reqwest::Url::parse(
-            "http://release-assets.githubusercontent.com/asset.zip",
-        )
-        .unwrap();
-        assert!(is_allowed_release_asset_redirect(&[source.clone()], &target));
-        assert!(!is_allowed_release_asset_redirect(&[source.clone()], &external));
-        assert!(!is_allowed_release_asset_redirect(&[source.clone()], &http_target));
-        assert!(!is_allowed_release_asset_redirect(&[source.clone(), target.clone()], &external));
+        let http_target =
+            reqwest::Url::parse("http://release-assets.githubusercontent.com/asset.zip").unwrap();
+        assert!(is_allowed_release_asset_redirect(
+            std::slice::from_ref(&source),
+            &target
+        ));
+        assert!(!is_allowed_release_asset_redirect(
+            std::slice::from_ref(&source),
+            &external
+        ));
+        assert!(!is_allowed_release_asset_redirect(
+            std::slice::from_ref(&source),
+            &http_target
+        ));
+        assert!(!is_allowed_release_asset_redirect(
+            &[source.clone(), target.clone()],
+            &external
+        ));
     }
 
     #[test]
