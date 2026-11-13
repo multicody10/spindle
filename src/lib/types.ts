@@ -54,6 +54,17 @@ export interface AppliedRuntimeSettings {
   note: string;
 }
 
+export interface InferenceRuntimeStatus {
+  modelLoaded: boolean;
+  modelPath: string | null;
+  backend: RuntimeBackend | null;
+  parallelSlots: number;
+  activeRequests: number;
+  queuedRequests: number;
+  availableSlots: number;
+  configurationFingerprint: string | null;
+}
+
 export interface RuntimeStatus {
   version: string;
   running: boolean;
@@ -63,6 +74,7 @@ export interface RuntimeStatus {
   installedBackends: BackendInstallStatus[];
   logs: string[];
   appliedSettings: AppliedRuntimeSettings | null;
+  inference: InferenceRuntimeStatus;
 }
 
 export interface WorkspaceGrant {
@@ -121,6 +133,7 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   requestId: string;
+  sessionId: string;
   providerId: ChatProviderId;
   model: string;
   messages: ChatMessage[];

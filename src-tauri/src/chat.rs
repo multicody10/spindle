@@ -1,4 +1,4 @@
-use crate::domain::GenerationSettings;
+use crate::{domain::GenerationSettings, inference::InferenceRuntimeManager};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -48,6 +48,7 @@ pub struct ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     pub request_id: String,
+    pub session_id: String,
     pub provider_id: ChatProvider,
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -509,7 +510,17 @@ pub async fn run(
     app: AppHandle,
     request: ChatRequest,
     cancellation: Arc<Notify>,
+    inference: &InferenceRuntimeManager,
 ) -> Result<ChatResult, String> {
+    let _session_lease = if request.provider_id == ChatProvider::LlamaCpp {
+        Some(
+            inference
+                .acquire_session(&request.session_id, &request.request_id, &cancellation)
+                .await?,
+        )
+    } else {
+        None
+    };
     let started = Instant::now();
     let client = provider_client()?;
     verify_model(&client, request.provider_id, &request.model, &cancellation).await?;

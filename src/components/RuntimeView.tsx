@@ -200,6 +200,12 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
           <strong>{gpuSummary}</strong>
           <span>CONFIGURATION</span>
           <strong>{configuration.runtime.contextTokens.toLocaleString()} context · {configuration.runtime.gpuLayers} GPU layers · {configuration.runtime.threads} CPU threads</strong>
+          <span>SHARED INFERENCE SCHEDULER</span>
+          <strong>
+            {status?.inference.modelLoaded
+              ? `${status.inference.activeRequests}/${status.inference.parallelSlots} active slots · ${status.inference.queuedRequests} queued`
+              : "No managed model scheduler active"}
+          </strong>
         </div>
         <div className="runtime-action-row">
           {status?.running ? (
