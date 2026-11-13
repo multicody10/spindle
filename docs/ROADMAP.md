@@ -48,7 +48,9 @@ This roadmap records implementation status rather than implying the full product
 - [x] Supervised approved-task workflow for detached Git worktree creation, bounded diff/status review, fixed sandboxed validation, and persisted task events.
 - [x] Bounded agent-authored task worktree edits, transcript persistence, task event streaming, cancellation, resume, final diff review, and journaled apply/undo (draft; security acceptance tests remain outstanding).
 - [ ] Handle-relative and race-resistant Windows file broker with path/resource-specific grants.
-- [ ] Adversarial AppContainer/LPAC integration tests, Job Object process-breakaway verification, and process-count/resource controls.
+- [x] Suspended AppContainer validation-worker startup with verified Job Object active-process (64), per-process memory (2 GiB), aggregate memory (4 GiB), CPU (80%), kill-on-close, and no-breakaway policy before primary-thread resume.
+- [ ] Adversarial AppContainer/LPAC integration tests proving effective process-count and breakaway enforcement, filesystem/network denial, handle inheritance, cancellation, and crash recovery.
+- [ ] Move model-authored agent tool execution behind an OS-enforced worker boundary with authenticated, narrowly scoped IPC.
 - [ ] Node/Vite and additional language-specific restricted validation profiles.
 - [ ] Semantic context compaction and durable large-task recovery.
 - [x] Bounded Git status/history inspection and detached per-task worktrees created only for approved tasks from a clean repository state; worktree metadata and task events are persisted.
