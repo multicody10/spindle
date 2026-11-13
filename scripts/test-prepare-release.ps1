@@ -78,7 +78,7 @@ try {
         [string]$cargoLockVersion
     )
 
-    if (($versions | Select-Object -Unique).Count -ne 1 -or $versions[0] -ne "0.1.1") {
+    if (($versions | Select-Object -Unique).Count -ne 1 -or $versions[0] -ne "9.8.7") {
         throw "Expected every manifest and lockfile to contain 0.1.1; got $($versions -join ', ')."
     }
 
@@ -92,7 +92,7 @@ try {
         throw "The script did not publish its release commit output."
     }
 
-    & $prepareScript -ReleaseTag "v0.1.1" -EventName "workflow_dispatch" -GitRef "refs/heads/main"
+    & $prepareScript -ReleaseTag "v9.8.7" -EventName "workflow_dispatch" -GitRef "refs/heads/main"
     $retryCommit = Invoke-TestGit -GitArgs @("rev-parse", "HEAD")
     if ($retryCommit -ne $firstCommit) {
         throw "Retrying the same version created an unexpected second version commit."
@@ -100,7 +100,7 @@ try {
 
     $olderVersionRejected = $false
     try {
-        & $prepareScript -ReleaseTag "v0.1.0" -EventName "workflow_dispatch" -GitRef "refs/heads/main"
+        & $prepareScript -ReleaseTag "v9.8.6" -EventName "workflow_dispatch" -GitRef "refs/heads/main"
     }
     catch {
         $olderVersionRejected = $_.Exception.Message -like "*older than the current application version*"
