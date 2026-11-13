@@ -31,6 +31,37 @@ export interface LocalProviderModel {
   quantization: string | null;
 }
 
+export type ChatProviderId = "ollama" | "lm-studio";
+export type ChatMessageRole = "system" | "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatMessageRole;
+  content: string;
+}
+
+export interface ChatRequest {
+  requestId: string;
+  providerId: ChatProviderId;
+  model: string;
+  messages: ChatMessage[];
+  contextTokens: number;
+  generation: GenerationSettings;
+}
+
+export interface ChatDelta {
+  requestId: string;
+  delta: string;
+}
+
+export interface ChatResult {
+  providerId: string;
+  model: string;
+  durationMs: number;
+  promptTokens: number | null;
+  outputTokens: number | null;
+  tokensPerSecond: number | null;
+}
+
 export interface LocalProviderStatus {
   id: string;
   name: string;

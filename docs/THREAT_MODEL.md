@@ -21,7 +21,8 @@
 
 - The UI has a narrow Tauri command surface; no shell or arbitrary filesystem APIs are exposed.
 - Production CSP restricts scripts and network destinations.
-- Local provider discovery is restricted to fixed loopback HTTP endpoints, disables proxies and redirects, applies short timeouts, and caps parsed model metadata.
+- Provider discovery and chat are restricted to fixed loopback HTTP endpoints, disable proxies and redirects, and apply request, response, frame, and history limits.
+- Chat requests validate message roles, sizes, model identifiers, context, and generation ranges in Rust; active requests can be cancelled.
 - Model inspection is read-only and uses bounded GGUF metadata parsing.
 - Database inputs are parameterized SQL statements.
 - Settings are validated in Rust before being saved.
@@ -33,7 +34,7 @@
 - No AppContainer/LPAC execution worker exists.
 - No permission broker, network isolation, restricted token, or process Job Object policy exists.
 - No filesystem handle-relative/reparse-point-safe workspace mutation service exists.
-- No model provider is active and no inference process is launched.
+- Spindle can send chat to an already-running Ollama or LM Studio process over loopback, but does not install, launch, stop, or configure provider processes.
 - NVIDIA telemetry does not prove that a matching CUDA or Vulkan inference backend is installed.
 - Updater keys and Authenticode certificates must be provisioned by the repository owner before signed releases can ship.
 
