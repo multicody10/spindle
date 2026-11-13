@@ -751,7 +751,10 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.contains("changed outside Spindle"));
-        assert_eq!(fs::read_to_string(root.join("conflict.txt")).unwrap(), "external change");
+        assert_eq!(
+            fs::read_to_string(root.join("conflict.txt")).unwrap(),
+            "external change"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
