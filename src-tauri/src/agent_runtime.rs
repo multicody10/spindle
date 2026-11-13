@@ -159,7 +159,7 @@ pub async fn run_task(
     let run = runtime.begin(&task_id)?;
     let result = run_inner(
         app, database, chat_runtime, inference, permissions, &run, provider, input,
-    ).await?;
+    ).await;
     runtime.finish(&task_id);
     result
 }
@@ -537,7 +537,7 @@ async fn execute_tool(
             let value = tokio::task::spawn_blocking(move || {
                 crate::skills::load(Path::new(&root), &args.name)
             }).await.map_err(|error| format!("Skill loading failed: {error}"))??;
-            Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, false))
+            Ok((json!({"name":value.name,"source":value.source,"manifest":value.manifest}), false))
         }
         "search_files" => {
             permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:search_files")?;
