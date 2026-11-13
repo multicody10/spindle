@@ -15,7 +15,7 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Save per-model configurations and reusable named presets in a local SQLite database.
 - Discover Ollama, LM Studio, and Spindle-managed llama.cpp endpoints, list available models, and stream local chat responses.
 - Install pinned Windows x64 llama.cpp CPU, Vulkan, or NVIDIA CUDA 12.4 builds after size and SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
-- Browse GGUF models from the dedicated `Documents/Spindle/Models` library and existing LM Studio, GPT4All, and Jan model folders without copying or moving large model files.
+- Browse GGUF models from `Documents/Spindle/Models`, LM Studio's active download folder (including legacy `.cache/lm-studio/models` installs), GPT4All Desktop/Python folders, Jan's `data/llamacpp/models` folder, and the Hugging Face Hub cache. File symlinks in Hugging Face snapshots are supported without following linked directories.
 - Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded file browsing, text search, and editing.
 - Register projects and maintain independent sessions, saved messages, structured plans, task events, and approval state in SQLite.
 - Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp; approvals record intent but never execute the plan.
@@ -55,6 +55,26 @@ Rust validation:
 - **cargo test --locked --manifest-path src-tauri/Cargo.toml**
 
 Build a Windows installer with **npm run package:windows**.
+
+## Model library discovery
+
+Model Lab scans the following locations for .gguf files. Model files remain in place; Spindle only reads their metadata until you load one through the managed runtime.
+
+| Source | Windows default |
+|---|---|
+| Spindle | %USERPROFILE%\Documents\Spindle\Models |
+| LM Studio | Active downloadsFolder in settings.json; otherwise the selected LM Studio home plus models. Spindle recognizes the legacy %USERPROFILE%\.cache\lm-studio\models and current %USERPROFILE%\.lmstudio\models homes. |
+| GPT4All Desktop | %LOCALAPPDATA%\nomic.ai\GPT4All |
+| GPT4All Python | %USERPROFILE%\.cache\gpt4all |
+| Jan | %APPDATA%\Jan\data\llamacpp\models, or the configured Jan data folder plus llamacpp\models. |
+| Hugging Face Hub | %USERPROFILE%\.cache\huggingface\hub, including GGUF files in repository snapshots directories. |
+| KoboldCpp | The directory selected in KoboldCpp's Loaded Files > Download Dir. Configure it for Spindle with KOBOLDCPP_MODELS_DIR. |
+
+LM Studio's home pointer (%USERPROFILE%\.lmstudio-home-pointer) and settings file are read to locate a moved home or custom download folder. Jan's %APPDATA%\Jan\settings.json data_folder setting is read when present.
+
+Optional environment overrides are LMSTUDIO_HOME, LMSTUDIO_MODELS_DIR, GPT4ALL_MODELS_DIR, JAN_DATA_DIR, JAN_MODELS_DIR, HF_HOME, HF_HUB_CACHE, and KOBOLDCPP_MODELS_DIR. HF_HUB_CACHE is the direct Hub cache path; HF_HOME is the parent folder containing hub.
+
+Ollama is intentionally not scanned as a GGUF directory: it stores imported models in its own manifest/blob layout rather than as ordinary .gguf files. Use Spindle's Ollama provider discovery to select those models.
 
 ## Updater signing setup
 

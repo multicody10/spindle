@@ -183,6 +183,28 @@ fn as_usize(value: Option<&Value>) -> Option<usize> {
         .and_then(|number| usize::try_from(number).ok())
 }
 
+pub(crate) fn display_model_path(path: &Path) -> String {
+    // Resolve the containing directory but retain the final filename. GGUF files
+    // in Hugging Face snapshots can be file symlinks whose blob target has no
+    // .gguf extension; canonicalizing the complete file path would break reloads.
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(file_name)) => parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf())
+            .join(file_name)
+            .to_string_lossy()
+            .to_string(),
+        _ => absolute.to_string_lossy().to_string(),
+    }
+}
+
 fn quantization_label(file_type: Option<u32>) -> Option<String> {
     // Values follow llama.cpp's public llama_ftype enum. They describe the
     // dominant model file type, not the quantization of every individual tensor.
@@ -324,11 +346,7 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
         });
 
     Ok(ModelMetadata {
-        path: model_path
-            .canonicalize()
-            .unwrap_or_else(|_| model_path.to_path_buf())
-            .to_string_lossy()
-            .to_string(),
+        path: display_model_path(model_path),
         file_size_bytes,
         gguf_version: version,
         tensor_count,
@@ -458,6 +476,34 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert!(error.contains("does not contain any model tensors"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_gguf_extension_for_symlinked_hugging_face_snapshots() {
+        use std::os::unix::fs::symlink;
+
+        let temporary =
+            std::env::temp_dir().join(format!("spindle-gguf-snapshot-link-{}", std::process::id()));
+        std::fs::create_dir_all(&temporary).unwrap();
+        let blob = temporary.join("0123456789abcdef");
+        let snapshot = temporary.join("model-Q4_K_M.gguf");
+
+        let mut bytes = Vec::new();
+        bytes.extend(b"GGUF");
+        put_u32(&mut bytes, 3);
+        put_u64(&mut bytes, 1);
+        put_u64(&mut bytes, 0);
+        std::fs::write(&blob, bytes).unwrap();
+        symlink(&blob, &snapshot).unwrap();
+
+        let metadata = inspect(snapshot.to_str().unwrap()).unwrap();
+        assert!(metadata.path.ends_with("model-Q4_K_M.gguf"));
+        assert!(Path::new(&metadata.path)
+            .extension()
+            .is_some_and(|ext| { ext.to_string_lossy().eq_ignore_ascii_case("gguf") }));
+
+        let _ = std::fs::remove_dir_all(temporary);
     }
 
     #[test]
