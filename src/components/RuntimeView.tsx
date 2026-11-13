@@ -11,6 +11,7 @@ interface RuntimeViewProps {
   modelPath: string;
   configuration: ModelConfiguration;
   hardware: HardwareProfile | null;
+  onRuntimeChange: () => void;
 }
 
 const backendLabel = (backend: RuntimeBackend) => backend === "vulkan" ? "Vulkan GPU" : "CPU";
@@ -27,7 +28,7 @@ function formatBytes(value: number): string {
   return amount.toFixed(1) + " " + units[unit];
 }
 
-function RuntimeView({ modelPath, configuration, hardware }: RuntimeViewProps) {
+function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: RuntimeViewProps) {
   const [backend, setBackend] = useState<RuntimeBackend>("vulkan");
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,6 +88,7 @@ function RuntimeView({ modelPath, configuration, hardware }: RuntimeViewProps) {
       await api.startRuntime(modelPath, configuration, backend);
       setMessage("Model loaded. The local runtime is ready.");
       await refresh();
+      onRuntimeChange();
     } catch (reason) {
       setError(String(reason));
       setMessage("The runtime could not start.");
@@ -104,6 +106,7 @@ function RuntimeView({ modelPath, configuration, hardware }: RuntimeViewProps) {
       await api.stopRuntime();
       setMessage("Runtime stopped.");
       await refresh();
+      onRuntimeChange();
     } catch (reason) {
       setError(String(reason));
       setMessage("Could not stop the runtime.");
