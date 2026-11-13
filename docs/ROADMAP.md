@@ -46,7 +46,11 @@ This roadmap records implementation status rather than implying the full product
 - [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
 - [x] Manual workspace diff previews, explicit apply/discard, revision conflict checks, and guarded undo (bounded in-memory proposal history).
 - [x] Supervised approved-task workflow for detached Git worktree creation, bounded diff/status review, fixed sandboxed validation, and persisted task events.
-- [ ] Agent-authored changes in task worktrees, per-file transactional review/apply back to the primary tree, and rollback/recovery across restarts.
+- [x] Bounded agent-authored task worktree edits, transcript persistence, task event streaming, cancellation, resume, final diff review, and journaled apply/undo (draft; security acceptance tests remain outstanding).
+- [ ] Handle-relative and race-resistant Windows file broker with path/resource-specific grants.
+- [ ] Adversarial AppContainer/LPAC integration tests, Job Object process-breakaway verification, and process-count/resource controls.
+- [ ] Node/Vite and additional language-specific restricted validation profiles.
+- [ ] Semantic context compaction and durable large-task recovery.
 - [x] Bounded Git status/history inspection and detached per-task worktrees created only for approved tasks from a clean repository state; worktree metadata and task events are persisted.
 - [x] Project-scoped memory records with bounded lexical retrieval; embedding and source-revision freshness ranking remain future work.
 - [x] Standard SKILL.md discovery and bounded manifest loading; MCP extension host remains deferred.

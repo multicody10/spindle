@@ -65,3 +65,12 @@
 .memory-create select,.memory-create input,.memory-create textarea { min-width:0; width:100%; background:#0a1017; border:1px solid #2a394a; border-radius:5px; color:#dce5ef; padding:8px; font-size:9px; }
 .memory-create textarea { grid-column:1 / -1; resize:vertical; line-height:1.5; }
 .memory-create button { justify-self:end; grid-column:1 / -1; }
+
+.agent-event-list { display:flex; flex-direction:column; gap:7px; border-top:1px solid #293543; margin-top:14px; padding-top:12px; }
+.agent-event-list > strong { color:#dce6f2; font-size:10px; }
+.agent-event-list > div { display:flex; flex-direction:column; gap:3px; border-left:2px solid #34485d; padding:5px 9px; min-width:0; }
+.agent-event-list > div > span { color:#c3d0de; text-transform:capitalize; font-size:9px; }
+.agent-event-list > div > small { color:#75869b; font-size:8px; line-height:1.4; overflow-wrap:anywhere; }
+.task-state.running { color:#8eb9e8; }
+.task-state.interrupted,.task-state.cancelled { color:#d7b777; }
+.task-state.completed { color:#83d5ad; }

@@ -41,7 +41,10 @@ import type {
   TaskWorktreeDiff,
   SandboxStatus,
   SandboxExecutionResult,
-  ValidationCommand
+  ValidationCommand,
+  AgentRunRequest,
+  AgentRunSummary,
+  TaskApplicationResult
 } from "./types";
 
 export const api = {
@@ -83,6 +86,16 @@ export const api = {
   agentSandboxStatus: () => invoke<SandboxStatus>("agent_sandbox_status"),
   runAgentTaskValidation: (taskId: string, command: ValidationCommand) =>
     invoke<SandboxExecutionResult>("run_agent_task_validation", { taskId, command }),
+  runAgentTask: (input: AgentRunRequest) =>
+    invoke<AgentRunSummary>("run_agent_task", { input }),
+  cancelAgentTask: (taskId: string) =>
+    invoke<boolean>("cancel_agent_task", { taskId }),
+  applyAgentTaskChanges: (taskId: string) =>
+    invoke<TaskApplicationResult>("apply_agent_task_changes", { taskId }),
+  undoAgentTaskApplication: (taskId: string) =>
+    invoke<TaskApplicationResult>("undo_agent_task_application", { taskId }),
+  agentTaskApplicationStatus: (taskId: string) =>
+    invoke<TaskApplicationResult | null>("agent_task_application_status", { taskId }),
   planProjectTask: (
     projectId: string, sessionId: string, prompt: string, providerId: string,
     model: string, contextTokens: number, generation: GenerationSettings

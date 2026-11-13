@@ -4,7 +4,7 @@
 
 Spindle is the successor project to Rivet, designed around a Rust/Tauri application core, model-agnostic provider architecture, hardware-aware model configuration, and security boundaries that do not rely on model compliance.
 
-> **Current status:** Foundation and Project Core preview. Spindle now provides persistent projects and independent SQLite-backed sessions, read-only model planning, reviewed workspace changes, durable permission auditing, Git status/history, detached task worktrees, and user-triggered restricted Cargo validation on supported Windows systems. General model-driven tool execution remains disabled.
+> **Current status:** Foundation and Project Core preview. Spindle now provides persistent projects and independent SQLite-backed sessions, read-only model planning, reviewed workspace changes, durable permission auditing, Git status/history, detached task worktrees, and user-triggered restricted Cargo validation on supported Windows systems. Supervised agent execution is under active development on the production-agent-workflow branch; it remains a draft pending Windows CI and adversarial sandbox acceptance tests. Current restricted validation is Cargo-only and Windows-only.
 
 ## What works in this foundation
 
@@ -19,6 +19,8 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded browsing/search plus diff preview, explicit apply/discard, and revision-guarded undo.
 - Route workspace operations through the shared permission broker, which records bounded resource-tagged decisions and expires grants on application restart.
 - Register projects and maintain independent sessions, saved messages, structured plans, task events, and approval state in SQLite.
+- Execute approved tasks through a bounded JSON tool loop in detached worktrees, with durable transcripts and per-operation permission auditing.
+- Resume interrupted runs without blindly replaying prior writes; stream task activity, require final diff review, and apply/undo patches separately.
 - Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp. Approval is separate from execution permissions.
 - Inspect Git status/history and create detached task worktrees only for approved plans from a clean repository state.
 - Run explicit Cargo format/check/test validation inside a Windows AppContainer/LPAC worker with no network capabilities, Job Object limits, offline dependencies, and a fixed command allowlist.
