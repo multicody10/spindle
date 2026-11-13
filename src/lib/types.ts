@@ -399,4 +399,4 @@ export interface SandboxExecutionResult {
   command: string; exitCode: number; success: boolean; durationMs: number;
   stdout: string; stderr: string; outputTruncated: boolean; isolation: string;
 }
-export type ValidationCommand = "cargo_fmt" | "cargo_check" | "cargo_test";
+export type ValidationCommand = "format" | "check" | "test";

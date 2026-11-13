@@ -445,9 +445,9 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                         <button className="button subtle" onClick={() => void removeTaskWorktree()} disabled={busy || !worktreeDiff.status.clean || worktreeDiff.status.head !== worktreeDiff.worktree.baseCommit}>Remove unchanged worktree</button></div>
                       {worktreeDiff.diff ? <pre className="skill-content">{worktreeDiff.diff}{worktreeDiff.diffTruncated ? "\n[Diff truncated at 2 MiB]" : ""}</pre> : <p className="projects-empty">No tracked changes. Untracked files are counted separately and are not included in this preview.</p>}
                       <div className="planner-actions">
-                        <button className="button subtle" onClick={() => void runValidation("cargo_fmt")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run rustfmt check</button>
-                        <button className="button subtle" onClick={() => void runValidation("cargo_check")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run cargo check</button>
-                        <button className="button primary" onClick={() => void runValidation("cargo_test")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>{validationBusy ? "Running…" : "Run tests"}</button>
+                        <button className="button subtle" onClick={() => void runValidation("format")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run rustfmt check</button>
+                        <button className="button subtle" onClick={() => void runValidation("check")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run cargo check</button>
+                        <button className="button primary" onClick={() => void runValidation("test")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>{validationBusy ? "Running…" : "Run tests"}</button>
                       </div>
                     </>}
                     {validationResult && <div className="validation-result"><strong>{validationResult.command} · {validationResult.success ? "passed" : "failed"} · exit {validationResult.exitCode} · {(validationResult.durationMs / 1000).toFixed(1)}s</strong>

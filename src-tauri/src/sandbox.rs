@@ -9,25 +9,25 @@ const EXECUTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationCommand {
-    CargoFmt,
-    CargoCheck,
-    CargoTest,
+    Format,
+    Check,
+    Test,
 }
 
 impl ValidationCommand {
     pub fn label(self) -> &'static str {
         match self {
-            Self::CargoFmt => "cargo fmt --manifest-path <project manifest> --all -- --check",
-            Self::CargoCheck => "cargo check --locked --manifest-path <project manifest> --all-targets",
-            Self::CargoTest => "cargo test --locked --manifest-path <project manifest>",
+            Self::Format => "cargo fmt --manifest-path <project manifest> --all -- --check",
+            Self::Check => "cargo check --locked --manifest-path <project manifest> --all-targets",
+            Self::Test => "cargo test --locked --manifest-path <project manifest>",
         }
     }
 
     fn args(self, manifest: &str) -> Vec<String> {
         let args = match self {
-            Self::CargoFmt => vec!["fmt", "--manifest-path", manifest, "--all", "--", "--check"],
-            Self::CargoCheck => vec!["check", "--locked", "--manifest-path", manifest, "--all-targets"],
-            Self::CargoTest => vec!["test", "--locked", "--manifest-path", manifest],
+            Self::Format => vec!["fmt", "--manifest-path", manifest, "--all", "--", "--check"],
+            Self::Check => vec!["check", "--locked", "--manifest-path", manifest, "--all-targets"],
+            Self::Test => vec!["test", "--locked", "--manifest-path", manifest],
         };
         args.into_iter().map(str::to_owned).collect()
     }
@@ -59,7 +59,7 @@ pub struct SandboxExecutionResult {
 pub fn status() -> SandboxStatus {
     #[cfg(windows)]
     {
-        return match rappct::supports_lpac() {
+        match rappct::supports_lpac() {
             Ok(()) => SandboxStatus {
                 supported: true,
                 platform: "windows".into(),
@@ -74,7 +74,7 @@ pub fn status() -> SandboxStatus {
                 network: "disabled".into(),
                 reason: Some(format!("Windows LPAC is unavailable: {error}")),
             },
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -193,7 +193,7 @@ fn run_validation_windows(
         rustfmt.parent().ok_or("rustfmt executable path has no parent.")?.to_path_buf(),
         system32.clone(),
     ];
-    if matches!(command, ValidationCommand::CargoCheck | ValidationCommand::CargoTest) {
+    if matches!(command, ValidationCommand::Check | ValidationCommand::Test) {
         if let Ok(linker) = find_executable("link.exe") {
             if let Some(parent) = linker.parent() {
                 let parent = parent.to_path_buf();
@@ -441,9 +441,9 @@ mod tests {
 
     #[test]
     fn validation_commands_are_fixed_and_do_not_accept_arguments() {
-        assert_eq!(ValidationCommand::CargoFmt.args("src-tauri/Cargo.toml").join(" "), "fmt --manifest-path src-tauri/Cargo.toml --all -- --check");
-        assert_eq!(ValidationCommand::CargoCheck.args("Cargo.toml").join(" "), "check --locked --manifest-path Cargo.toml --all-targets");
-        assert_eq!(ValidationCommand::CargoTest.args("Cargo.toml").join(" "), "test --locked --manifest-path Cargo.toml");
+        assert_eq!(ValidationCommand::Format.args("src-tauri/Cargo.toml").join(" "), "fmt --manifest-path src-tauri/Cargo.toml --all -- --check");
+        assert_eq!(ValidationCommand::Check.args("Cargo.toml").join(" "), "check --locked --manifest-path Cargo.toml --all-targets");
+        assert_eq!(ValidationCommand::Test.args("Cargo.toml").join(" "), "test --locked --manifest-path Cargo.toml");
     }
 
     #[test]
