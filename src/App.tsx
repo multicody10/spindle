@@ -411,7 +411,7 @@ function App() {
             <div className="model-library-heading">
               <div>
                 <strong>Model library</strong>
-                <span>Spindle scans its own library and existing LM Studio GGUF folders. Files stay where they are.</span>
+                <span>Spindle scans its own library and existing LM Studio, GPT4All, and Jan GGUF folders. Files stay where they are.</span>
               </div>
               <button className="button subtle" onClick={() => void refreshModelLibrary()} disabled={modelLibraryBusy}>
                 {modelLibraryBusy ? "Scanning…" : "Refresh library"}
@@ -448,7 +448,7 @@ function App() {
                 </button>
               ))}
               {modelLibrary && modelLibrary.models.length === 0 && (
-                <div className="model-library-empty">No GGUF files found. Put models in the Spindle folder above or install them in LM Studio, then refresh.</div>
+                <div className="model-library-empty">No GGUF files found. Put models in the Spindle folder above or install them in LM Studio, GPT4All, or Jan, then refresh.</div>
               )}
             </div>
             {modelLibrary?.truncated && <p className="footnote">The library scan reached its safety limit. Some model files may not be listed.</p>}
