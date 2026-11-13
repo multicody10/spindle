@@ -8,10 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Publishes a signed GitHub release. Must match all app versions. For installer-only testing, run Continuous integration instead."
+        description: "Next release version. The workflow updates all version files and commits them to main automatically (e.g. v0.1.1)."
         required: true
         type: string
-        default: "v0.1.0"
 
 permissions:
   contents: write
@@ -31,6 +30,17 @@ jobs:
     steps:
       - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Prepare release version and verify signing configuration
+        id: prepare_release
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          ./scripts/prepare-release.ps1 -ReleaseTag "$env:RELEASE_TAG" -EventName "$env:GITHUB_EVENT_NAME" -GitRef "$env:GITHUB_REF"
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -52,47 +62,6 @@ jobs:
             src-tauri -> target
           shared-key: windows-x64-build
           cache-on-failure: true
-
-      - name: Verify version and updater signing configuration
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
-          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $cargo = Get-Content src-tauri/Cargo.toml -Raw
-          $cargoMatch = [regex]::Match($cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"')
-          if (-not $cargoMatch.Success) { throw "Cannot read Cargo package version." }
-          $versions = @($package.version, $tauri.version, $cargoMatch.Groups[1].Value)
-          if (($versions | Select-Object -Unique).Count -ne 1) { throw "Application versions do not match: $($versions -join ', ')" }
-          if ($tauri.bundle.windows.nsis.installMode -ne "perMachine") {
-            throw "NSIS installMode must be perMachine so installs and updates target Program Files."
-          }
-          if ($tauri.plugins.updater.windows.installMode -ne "passive") {
-            throw "Updater installMode must be passive so machine-wide updates can request elevation."
-          }
-
-          $releaseTag = $env:RELEASE_TAG
-          if ([string]::IsNullOrWhiteSpace($releaseTag) -or $releaseTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
-            throw "Invalid release tag: $releaseTag"
-          }
-          if ($releaseTag -ne "v$($package.version)" -and -not $releaseTag.StartsWith("v$($package.version)-")) {
-            throw "Tag $releaseTag does not match application version $($package.version)."
-          }
-          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
-            $existingTag = git ls-remote --tags origin "refs/tags/$releaseTag"
-            if ($LASTEXITCODE -ne 0) { throw "Could not check whether tag $releaseTag already exists." }
-            if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
-              throw "Tag $releaseTag already exists. Refusing to overwrite or reuse an existing release tag."
-            }
-          }
-          if ($tauri.plugins.updater.pubkey -eq "REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY") {
-            throw "Updater public key is still a placeholder. Configure a real Tauri updater key pair before releasing."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "TAURI_SIGNING_PRIVATE_KEY is missing. Signed updater artifacts are mandatory."
-          }
 
       - name: Install frontend dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -121,7 +90,7 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: Spindle ${{ env.RELEASE_TAG }}
-          releaseCommitish: ${{ github.sha }}
+          releaseCommitish: ${{ steps.prepare_release.outputs.release_commit }}
           releaseBody: |
             Windows x64 release of Spindle.
 
