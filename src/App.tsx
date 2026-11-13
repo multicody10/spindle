@@ -21,6 +21,7 @@ import {
   type SavedPreset,
   type Project,
   type ProjectSession,
+  type RuntimeBackend,
   type RuntimeStatus
 } from "./lib/types";
 
@@ -140,6 +141,54 @@ function App() {
       setProvidersBusy(false);
     }
   }, []);
+
+  const loadChatModel = useCallback(async (): Promise<string> => {
+    const candidatePath = modelPath.trim();
+    if (!candidatePath || model?.path !== candidatePath || configuration.modelPath !== candidatePath) {
+      throw new Error("Select a GGUF model and let Spindle finish inspecting it first.");
+    }
+
+    let current = await api.runtimeStatus();
+    setRuntimeStatus(current);
+    if (current.running) {
+      const runningPath = current.modelPath?.replace(/\\/g, "/").toLowerCase();
+      const selectedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
+      if (runningPath !== selectedPath) {
+        throw new Error("Another model is already loaded. Stop it in Tools → Runtime before switching models.");
+      }
+    } else {
+      const hasNvidia = hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ?? false;
+      const preferredBackends: RuntimeBackend[] = hasNvidia
+        ? ["cuda", "vulkan", "cpu"]
+        : ["vulkan", "cpu", "cuda"];
+      const installed = new Set(
+        current.installedBackends.filter((item) => item.installed).map((item) => item.backend)
+      );
+      const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
+      if (!backend) throw new Error("No compatible llama.cpp backend is available.");
+
+      if (!installed.has(backend)) {
+        await api.installRuntime(backend);
+        current = await api.runtimeStatus();
+        setRuntimeStatus(current);
+        if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
+          throw new Error("The selected llama.cpp backend did not finish installing.");
+        }
+      }
+
+      const started = await api.startRuntime(candidatePath, configuration, backend);
+      setRuntimeStatus(started);
+    }
+
+    const discovered = await api.localProviders();
+    setLocalProviders(discovered);
+    const managedProvider = discovered.find((provider) => provider.id === "llama-cpp" && provider.available);
+    const loadedModelId = managedProvider?.models[0]?.id;
+    if (!loadedModelId) {
+      throw new Error("llama.cpp started, but its model endpoint did not report a loaded model. Check Tools → Runtime for details.");
+    }
+    return loadedModelId;
+  }, [configuration, hardware, model, modelPath]);
 
   useEffect(() => {
     void refreshModelLibrary();
@@ -431,6 +480,8 @@ function App() {
               managedModelPath={modelPath}
               runtimeStatus={runtimeStatus}
               onSelectManagedModel={prepareChatModel}
+              onLoadManagedModel={loadChatModel}
+              managedModelReady={Boolean(model && model.path === modelPath && configuration.modelPath === modelPath)}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
               session={activeSession}
