@@ -135,7 +135,9 @@ impl PermissionBroker {
             scopes: vec![PermissionScope::ProjectRead],
             expires_on_restart: true,
         };
-        state.sessions.insert(session_id.clone(), permissions.clone());
+        state
+            .sessions
+            .insert(session_id.clone(), permissions.clone());
         Self::record(
             &mut state,
             PermissionAuditEvent {
@@ -183,7 +185,11 @@ impl PermissionBroker {
         session.scopes = scopes.into_iter().collect();
         let result = session.clone();
         let project_id = result.project_id.clone();
-        for scope in requested.iter().copied().filter(|scope| !before.contains(scope)) {
+        for scope in requested
+            .iter()
+            .copied()
+            .filter(|scope| !before.contains(scope))
+        {
             Self::record(
                 &mut state,
                 PermissionAuditEvent {
@@ -215,14 +221,15 @@ impl PermissionBroker {
         })?;
         let revoke = requested.iter().copied().collect::<BTreeSet<_>>();
         let before = session.scopes.iter().copied().collect::<BTreeSet<_>>();
-        session.scopes.retain(|scope| {
-            *scope == PermissionScope::ProjectRead || !revoke.contains(scope)
-        });
+        session
+            .scopes
+            .retain(|scope| *scope == PermissionScope::ProjectRead || !revoke.contains(scope));
         let result = session.clone();
         let project_id = result.project_id.clone();
-        for scope in revoke.into_iter().filter(|scope| {
-            *scope != PermissionScope::ProjectRead && before.contains(scope)
-        }) {
+        for scope in revoke
+            .into_iter()
+            .filter(|scope| *scope != PermissionScope::ProjectRead && before.contains(scope))
+        {
             Self::record(
                 &mut state,
                 PermissionAuditEvent {
@@ -279,13 +286,15 @@ impl PermissionBroker {
             .cloned()
             .ok_or_else(|| "The project session has no active permission grant.".to_string())?;
         let scope = operation.required_scope();
-        let invalid_resource = resource.len() > MAX_RESOURCE_BYTES
-            || resource.chars().any(char::is_control);
+        let invalid_resource =
+            resource.len() > MAX_RESOURCE_BYTES || resource.chars().any(char::is_control);
         let allowed = !invalid_resource && session.scopes.contains(&scope);
         let reason = if invalid_resource {
             Some("The requested resource identifier is invalid.".to_string())
         } else if !allowed {
-            Some(format!("The session has not been granted the {scope:?} permission."))
+            Some(format!(
+                "The session has not been granted the {scope:?} permission."
+            ))
         } else {
             None
         };
@@ -397,11 +406,15 @@ mod tests {
     #[test]
     fn authorization_is_operation_scoped_and_audited() {
         let broker = PermissionBroker::default();
-        broker.register_session("s1".into(), "project-root".into()).unwrap();
+        broker
+            .register_session("s1".into(), "project-root".into())
+            .unwrap();
         assert!(broker
             .authorize("s1", PermissionOperation::FileChangeApply, "src/main.rs")
             .is_err());
-        broker.grant("s1", &[PermissionScope::ProjectWrite]).unwrap();
+        broker
+            .grant("s1", &[PermissionScope::ProjectWrite])
+            .unwrap();
         broker
             .authorize("s1", PermissionOperation::FileChangeApply, "src/main.rs")
             .unwrap();
@@ -414,18 +427,22 @@ mod tests {
                 && event.resource == "src/main.rs"
                 && event.allowed
         }));
-        assert!(log.iter().any(|event| {
-            event.operation == "process_execution" && !event.allowed
-        }));
+        assert!(log
+            .iter()
+            .any(|event| { event.operation == "process_execution" && !event.allowed }));
     }
 
     #[test]
     fn revocation_removes_the_session_and_its_authority() {
         let broker = PermissionBroker::default();
         broker.register_session("s1".into(), "p1".into()).unwrap();
-        broker.grant("s1", &[PermissionScope::ProjectWrite]).unwrap();
+        broker
+            .grant("s1", &[PermissionScope::ProjectWrite])
+            .unwrap();
         broker.revoke_all("s1").unwrap();
-        assert!(broker.authorize("s1", PermissionOperation::FileChangeApply, "a.rs").is_err());
+        assert!(broker
+            .authorize("s1", PermissionOperation::FileChangeApply, "a.rs")
+            .is_err());
     }
 
     #[test]

@@ -23,7 +23,7 @@ Paths are relative to the canonicalized grant root. Absolute paths, parent trave
 
 Common environment and credential material is excluded from listing, reading, searching, and writing. Current name filters include `.env*`, `.npmrc`, `.pypirc`, SSH private key names, common cloud credential files/directories, and `.pem`, `.key`, `.p12`, `.pfx`, and `.asc` files.
 
-Before saving, Spindle compares the currently stored file with the SHA-256 revision captured when the editor opened it. A mismatch rejects the save and asks the user to reopen the file. This reduces accidental lost updates but is not a complete atomic compare-and-swap and does not eliminate every filesystem race.
+Before staging and again before applying, Spindle compares the current file with the SHA-256 revision captured when the editor opened. A mismatch rejects the operation. Undo performs the inverse revision check before restoring the original text. The diff, proposal state, and original content are held in bounded process memory only (up to 100 proposals) and are discarded when the application exits or the workspace grant is revoked. This is optimistic conflict detection, not a complete atomic compare-and-swap and does not eliminate every filesystem race.
 
 These name filters are a defensive default, not a complete secret scanner. Projects can store credentials under arbitrary names; users should not grant an untrusted agent access to a directory containing secrets.
 

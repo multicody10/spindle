@@ -37,7 +37,7 @@ The planned mutation flow is:
 6. On approval, apply the patch with expected-revision checks; otherwise discard the task workspace.
 7. Preserve checkpoints so an interrupted task can resume or roll back without silently overwriting external edits.
 
-The existing workspace manager is still an application-level IPC permission gate. It is not yet handle-relative or race-resistant against all Windows reparse-point/TOCTOU cases.
+The current Workspace editor routes manual changes through the permission broker and a temporary WorkspaceManager. Changes require a diff review and explicit apply; guarded undo refuses to overwrite later edits. Proposal checkpoints and audit entries are bounded process memory, not durable transaction records. This remains an application-level IPC permission gate. The file service is not yet handle-relative or race-resistant against all Windows reparse-point/TOCTOU cases.
 
 ## Network and MCP model
 

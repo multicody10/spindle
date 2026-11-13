@@ -475,7 +475,11 @@ async fn list_workspace_directory(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceListing, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, &relative_path)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.list_directory(&session_id, &relative_path))
         .await
@@ -489,7 +493,11 @@ async fn read_workspace_file(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceFile, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, &relative_path)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.read_file(&session_id, &relative_path))
         .await
@@ -505,11 +513,17 @@ async fn stage_workspace_file_change(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceChangeProposal, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangePropose, &relative_path)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangePropose,
+        &relative_path,
+    )?;
     let manager = workspace.inner().clone();
-    tokio::task::spawn_blocking(move || manager.stage_file_change(&session_id, &relative_path, content, &expected_revision))
-        .await
-        .map_err(|error| format!("Workspace change staging task failed: {error}"))?
+    tokio::task::spawn_blocking(move || {
+        manager.stage_file_change(&session_id, &relative_path, content, &expected_revision)
+    })
+    .await
+    .map_err(|error| format!("Workspace change staging task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -519,7 +533,11 @@ async fn apply_workspace_file_change(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceWriteResult, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangeApply, &proposal_id)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangeApply,
+        &proposal_id,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.apply_file_change(&session_id, &proposal_id))
         .await
@@ -533,7 +551,11 @@ async fn undo_workspace_file_change(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceWriteResult, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangeUndo, &proposal_id)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangeUndo,
+        &proposal_id,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.undo_file_change(&session_id, &proposal_id))
         .await
@@ -547,7 +569,11 @@ async fn cancel_workspace_file_change(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangePropose, &proposal_id)?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::FileChangePropose,
+        &proposal_id,
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.cancel_file_change(&session_id, &proposal_id))
         .await
@@ -561,7 +587,11 @@ async fn search_workspace(
     workspace: State<'_, workspace::WorkspaceManager>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceSearchResult, String> {
-    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, "")?;
+    permissions.authorize(
+        &session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        "",
+    )?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.search(&session_id, &query))
         .await

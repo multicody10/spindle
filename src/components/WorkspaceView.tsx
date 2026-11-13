@@ -354,14 +354,14 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
               <button className="button subtle" onClick={() => void loadDirectory(grant, currentDirectory)} disabled={busy || dirty || !!proposal}>Refresh</button>
             </div>
             <div className="workspace-breadcrumbs">
-              <button onClick={() => void loadDirectory(grant, "")} disabled={busy || dirty}>ROOT</button>
+              <button onClick={() => void loadDirectory(grant, "")} disabled={busy || dirty || !!proposal}>ROOT</button>
               {breadcrumbs.map((part, index) => {
                 const path = breadcrumbs.slice(0, index + 1).join("/");
-                return <span key={path}><i>/</i><button onClick={() => void loadDirectory(grant, path)} disabled={busy || dirty}>{part}</button></span>;
+                return <span key={path}><i>/</i><button onClick={() => void loadDirectory(grant, path)} disabled={busy || dirty || !!proposal}>{part}</button></span>;
               })}
             </div>
             {currentDirectory && (
-              <button className="workspace-parent" onClick={navigateUp} disabled={busy || dirty}>↑ Parent directory</button>
+              <button className="workspace-parent" onClick={navigateUp} disabled={busy || dirty || !!proposal}>↑ Parent directory</button>
             )}
             <div className="workspace-entry-list">
               {entries.map((entry) => (
@@ -371,7 +371,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
                   onClick={() => entry.kind === "directory"
                     ? void loadDirectory(grant, entry.relativePath)
                     : void openFile(entry.relativePath)}
-                  disabled={busy || dirty}
+                  disabled={busy || dirty || !!proposal}
                 >
                   <span className={"workspace-entry-icon " + entry.kind}>{entry.kind === "directory" ? "▸" : "·"}</span>
                   <span className="workspace-entry-name">{entry.name}</span>
@@ -453,7 +453,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
           {searchResults && (
             <div className="workspace-search-results">
               {searchResults.matches.map((match, index) => (
-                <button key={match.relativePath + ":" + match.lineNumber + ":" + index} onClick={() => void openFile(match.relativePath)} disabled={busy || dirty}>
+                <button key={match.relativePath + ":" + match.lineNumber + ":" + index} onClick={() => void openFile(match.relativePath)} disabled={busy || dirty || !!proposal}>
                   <strong>{match.relativePath}:{match.lineNumber}</strong>
                   <code>{match.preview}</code>
                 </button>

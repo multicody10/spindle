@@ -339,8 +339,13 @@ impl WorkspaceManager {
         let path = resolve_file(&session, relative_path)?;
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| format!("Could not inspect the selected workspace file: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_FILE_BYTES as u64 {
-            return Err("Workspace changes are limited to regular text files no larger than 1 MiB.".into());
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() > MAX_FILE_BYTES as u64
+        {
+            return Err(
+                "Workspace changes are limited to regular text files no larger than 1 MiB.".into(),
+            );
         }
         let original_bytes = read_bounded(&path, MAX_FILE_BYTES)
             .map_err(|error| format!("Could not read the current file revision: {error}"))?;
@@ -384,10 +389,13 @@ impl WorkspaceManager {
             .changes
             .lock()
             .map_err(|_| "The workspace change store is unavailable.".to_string())?;
-        if changes.values().any(|change| {
-            change.session_id == session_id && change.proposal.status == "pending"
-        }) {
-            return Err("Review or discard the existing staged change before creating another.".into());
+        if changes
+            .values()
+            .any(|change| change.session_id == session_id && change.proposal.status == "pending")
+        {
+            return Err(
+                "Review or discard the existing staged change before creating another.".into(),
+            );
         }
         if changes.len() >= 100 {
             return Err("The workspace change history is full. Restart Spindle to clear its temporary history.".into());
@@ -409,13 +417,16 @@ impl WorkspaceManager {
         let change = changes
             .get_mut(proposal_id)
             .filter(|change| change.session_id == session_id)
-            .ok_or_else(|| "The staged file change does not exist for this workspace session.".to_string())?;
+            .ok_or_else(|| {
+                "The staged file change does not exist for this workspace session.".to_string()
+            })?;
         if change.proposal.status != "pending" {
             return Err("Only a pending file change can be applied.".into());
         }
         let path = resolve_file(&session, &change.proposal.relative_path)?;
-        let current = read_bounded(&path, MAX_FILE_BYTES)
-            .map_err(|error| format!("Could not verify the current file before applying the change: {error}"))?;
+        let current = read_bounded(&path, MAX_FILE_BYTES).map_err(|error| {
+            format!("Could not verify the current file before applying the change: {error}")
+        })?;
         let revision = format!("{:x}", Sha256::digest(&current));
         if revision != change.proposal.base_revision {
             return Err("The file changed after this preview was created. Discard the preview, reopen the file, and stage the change again.".into());
@@ -447,7 +458,9 @@ impl WorkspaceManager {
         let change = changes
             .get_mut(proposal_id)
             .filter(|change| change.session_id == session_id)
-            .ok_or_else(|| "The applied file change does not exist for this workspace session.".to_string())?;
+            .ok_or_else(|| {
+                "The applied file change does not exist for this workspace session.".to_string()
+            })?;
         if change.proposal.status != "applied" {
             return Err("Only an applied file change can be undone.".into());
         }
@@ -481,7 +494,9 @@ impl WorkspaceManager {
         let change = changes
             .get_mut(proposal_id)
             .filter(|change| change.session_id == session_id)
-            .ok_or_else(|| "The staged file change does not exist for this workspace session.".to_string())?;
+            .ok_or_else(|| {
+                "The staged file change does not exist for this workspace session.".to_string()
+            })?;
         if change.proposal.status != "pending" {
             return Err("Only a pending file change can be discarded.".into());
         }
@@ -603,9 +618,13 @@ impl WorkspaceManager {
 
 fn validate_revision(revision: &str) -> Result<(), String> {
     if revision.len() != 64
-        || !revision.chars().all(|character| character.is_ascii_hexdigit())
+        || !revision
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
-        return Err("The file revision token is invalid. Reopen the file before staging a change.".into());
+        return Err(
+            "The file revision token is invalid. Reopen the file before staging a change.".into(),
+        );
     }
     Ok(())
 }
@@ -655,12 +674,22 @@ fn build_diff(path: &str, original: &str, proposed: &str) -> (String, usize, usi
         output.push_str(line);
         output.push('\n');
     }
-    for line in old_lines.iter().take(old_end).skip(prefix).take(MAX_DIFF_LINES) {
+    for line in old_lines
+        .iter()
+        .take(old_end)
+        .skip(prefix)
+        .take(MAX_DIFF_LINES)
+    {
         output.push('-');
         output.push_str(line);
         output.push('\n');
     }
-    for line in new_lines.iter().take(new_end).skip(prefix).take(MAX_DIFF_LINES) {
+    for line in new_lines
+        .iter()
+        .take(new_end)
+        .skip(prefix)
+        .take(MAX_DIFF_LINES)
+    {
         output.push('+');
         output.push_str(line);
         output.push('\n');
@@ -675,7 +704,11 @@ fn build_diff(path: &str, original: &str, proposed: &str) -> (String, usize, usi
         output.push('\n');
     }
     if output.len() > MAX_DIFF_BYTES {
-        output = output.chars().take(MAX_DIFF_BYTES).collect();
+        let mut end = MAX_DIFF_BYTES.saturating_sub(32).min(output.len());
+        while !output.is_char_boundary(end) {
+            end -= 1;
+        }
+        output.truncate(end);
         output.push_str("\n... diff preview truncated ...");
     }
     (output, added, removed)
@@ -710,7 +743,10 @@ fn atomic_replace(
         let metadata = fs::symlink_metadata(target)
             .map_err(|error| format!("Could not revalidate the target file: {error}"))?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err("Workspace replacement is limited to regular files, not links or special files.".into());
+            return Err(
+                "Workspace replacement is limited to regular files, not links or special files."
+                    .into(),
+            );
         }
         let canonical = fs::canonicalize(target)
             .map_err(|error| format!("Could not revalidate the target path: {error}"))?;
@@ -719,7 +755,10 @@ fn atomic_replace(
             .map_err(|error| format!("Could not recheck the target revision: {error}"))?;
         let current_revision = format!("{:x}", Sha256::digest(&current));
         if current_revision != expected_revision {
-            return Err("The file changed immediately before replacement. The operation was aborted.".into());
+            return Err(
+                "The file changed immediately before replacement. The operation was aborted."
+                    .into(),
+            );
         }
         fs::rename(&temporary, &canonical)
             .map_err(|error| format!("Could not atomically replace the workspace file: {error}"))?;
@@ -961,15 +1000,25 @@ mod tests {
             .unwrap();
         assert_eq!(proposal.status, "pending");
         assert!(proposal.diff.contains("-workspace text"));
-        assert_eq!(fs::read_to_string(root.join("src-notes.txt")).unwrap(), "workspace text");
-        let saved = manager.apply_file_change(&grant.session_id, &proposal.id).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("src-notes.txt")).unwrap(),
+            "workspace text"
+        );
+        let saved = manager
+            .apply_file_change(&grant.session_id, &proposal.id)
+            .unwrap();
         assert_eq!(saved.revision.len(), 64);
         let updated = manager
             .read_file(&grant.session_id, "src-notes.txt")
             .unwrap();
         assert_eq!(updated.content, "updated text");
-        manager.undo_file_change(&grant.session_id, &proposal.id).unwrap();
-        assert_eq!(fs::read_to_string(root.join("src-notes.txt")).unwrap(), "workspace text");
+        manager
+            .undo_file_change(&grant.session_id, &proposal.id)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("src-notes.txt")).unwrap(),
+            "workspace text"
+        );
         assert!(manager
             .stage_file_change(
                 &grant.session_id,
@@ -1011,17 +1060,67 @@ mod tests {
     #[test]
     fn staged_changes_abort_on_external_edits_and_can_be_cancelled() {
         let (manager, root, _) = test_workspace();
-        let grant = manager.grant(root.to_string_lossy().into_owned(), true).unwrap();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
         fs::write(root.join("conflict.txt"), "original").unwrap();
-        let opened = manager.read_file(&grant.session_id, "conflict.txt").unwrap();
+        let opened = manager
+            .read_file(&grant.session_id, "conflict.txt")
+            .unwrap();
         let proposal = manager
-            .stage_file_change(&grant.session_id, "conflict.txt", "planned".into(), &opened.revision)
+            .stage_file_change(
+                &grant.session_id,
+                "conflict.txt",
+                "planned".into(),
+                &opened.revision,
+            )
             .unwrap();
         fs::write(root.join("conflict.txt"), "newer external edit").unwrap();
-        assert!(manager.apply_file_change(&grant.session_id, &proposal.id).is_err());
-        assert_eq!(fs::read_to_string(root.join("conflict.txt")).unwrap(), "newer external edit");
-        manager.cancel_file_change(&grant.session_id, &proposal.id).unwrap();
-        assert!(manager.apply_file_change(&grant.session_id, &proposal.id).is_err());
+        assert!(manager
+            .apply_file_change(&grant.session_id, &proposal.id)
+            .is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("conflict.txt")).unwrap(),
+            "newer external edit"
+        );
+        manager
+            .cancel_file_change(&grant.session_id, &proposal.id)
+            .unwrap();
+        assert!(manager
+            .apply_file_change(&grant.session_id, &proposal.id)
+            .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn undo_refuses_to_overwrite_edits_made_after_apply() {
+        let (manager, root, _) = test_workspace();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        fs::write(root.join("preserve.txt"), "original").unwrap();
+        let opened = manager
+            .read_file(&grant.session_id, "preserve.txt")
+            .unwrap();
+        let proposal = manager
+            .stage_file_change(
+                &grant.session_id,
+                "preserve.txt",
+                "spindle change".into(),
+                &opened.revision,
+            )
+            .unwrap();
+        manager
+            .apply_file_change(&grant.session_id, &proposal.id)
+            .unwrap();
+        fs::write(root.join("preserve.txt"), "newer user edit").unwrap();
+        assert!(manager
+            .undo_file_change(&grant.session_id, &proposal.id)
+            .is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("preserve.txt")).unwrap(),
+            "newer user edit"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

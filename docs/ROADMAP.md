@@ -39,7 +39,7 @@ This roadmap records implementation status rather than implying the full product
 
 - [x] Persistent projects and independent sessions in SQLite.
 - [x] Temporary project workspace grants with read-only defaults and separately granted write access.
-- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and file writes.
+- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and reviewed staged file changes.
 - [x] Versioned SQLite schema for projects, sessions, messages, tasks, task steps, events, and memory.
 - [x] Read-only agent planner with persisted task lifecycle and approval states; no execution worker is enabled.
 - [x] Read-only project snapshot planning with bounded source inventory and structured plan validation.
@@ -52,7 +52,7 @@ This roadmap records implementation status rather than implying the full product
 ## Security and reliability
 
 - [x] Revocable in-memory workspace read/write grants.
-- [x] Per-session permission broker with read-only defaults, explicit scope grants, revocation, and process-restart expiry.
+- [x] Project and workspace sessions registered with the shared permission broker; read-only defaults, explicit scope grants, revocation, and process-restart expiry.
 - [x] General operation-aware scope broker with bounded resource-tagged audit decisions; path-specific policy remains enforced by owning services.
 - [ ] Durable audit/event persistence and resource-specific permission constraints.
 - [ ] Windows AppContainer/LPAC execution worker feasibility validation.
