@@ -4,9 +4,9 @@ mod capabilities;
 mod chat;
 mod child_process;
 mod domain;
-mod inference;
 mod gguf;
 mod hardware;
+mod inference;
 mod model_library;
 mod optimizer;
 mod permissions;
@@ -388,7 +388,14 @@ async fn run_model_benchmark(
     input: benchmark::BenchmarkRequest,
 ) -> Result<benchmark::BenchmarkRun, String> {
     let database = database_path(&app)?;
-    benchmark::run(app, database, runtime.inner(), &managed_runtime.inference, input).await
+    benchmark::run(
+        app,
+        database,
+        runtime.inner(),
+        &managed_runtime.inference,
+        input,
+    )
+    .await
 }
 #[tauri::command]
 async fn list_model_benchmarks(

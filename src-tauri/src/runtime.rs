@@ -1,4 +1,7 @@
-use crate::{domain::ModelConfiguration, inference::{InferenceRuntimeManager, InferenceRuntimeStatus}};
+use crate::{
+    domain::ModelConfiguration,
+    inference::{InferenceRuntimeManager, InferenceRuntimeStatus},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};

@@ -1,7 +1,4 @@
-use crate::{
-    domain::RuntimeSettings,
-    runtime::RuntimeBackend,
-};
+use crate::{domain::RuntimeSettings, runtime::RuntimeBackend};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -106,10 +103,7 @@ impl InferenceRuntimeManager {
             .lock()
             .map_err(|_| "The inference scheduler state is unavailable.".to_string())?;
         if !state.reserved_sessions.is_empty() || state.queued_requests > 0 {
-            return Err(
-                "The shared inference runtime still has active or queued session requests."
-                    .into(),
-            );
+            return Err("The shared inference runtime still has active or queued session requests.".into());
         }
         let semaphore = Arc::new(Semaphore::new(settings.parallel_slots));
         *self
@@ -226,8 +220,7 @@ impl InferenceRuntimeManager {
             active_requests,
             queued_requests: state.queued_requests,
             available_slots: parallel_slots.saturating_sub(active_requests),
-            configuration_fingerprint: model
-                .map(|loaded| loaded.configuration_fingerprint.clone()),
+            configuration_fingerprint: model.map(|loaded| loaded.configuration_fingerprint.clone()),
         }
     }
 
@@ -239,9 +232,9 @@ impl InferenceRuntimeManager {
     ) -> Result<InferenceSessionLease, String> {
         if session_id.is_empty()
             || session_id.len() > 128
-            || !session_id
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+            || !session_id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
         {
             return Err("The inference session identifier is invalid.".into());
         }
@@ -256,13 +249,17 @@ impl InferenceRuntimeManager {
                 .lock()
                 .map_err(|_| "The inference scheduler state is unavailable.".to_string())?;
             if !state.accepting_requests || state.model.is_none() {
-                return Err("Load a Spindle managed model before sending llama.cpp requests.".into());
+                return Err(
+                    "Load a Spindle managed model before sending llama.cpp requests.".into(),
+                );
             }
             if state.reserved_sessions.contains(session_id) {
                 return Err("This session already has an inference request in progress.".into());
             }
             if state.reserved_sessions.len() >= MAX_RESERVED_SESSIONS {
-                return Err("The shared inference scheduler has reached its session queue limit.".into());
+                return Err(
+                    "The shared inference scheduler has reached its session queue limit.".into(),
+                );
             }
             if state.queued_requests >= MAX_QUEUED_REQUESTS {
                 return Err("The shared inference request queue is full. Try again after a request finishes.".into());
@@ -303,9 +300,13 @@ impl InferenceRuntimeManager {
         state.queued_requests = state.queued_requests.saturating_sub(1);
         if state.generation != generation || !state.accepting_requests || state.model.is_none() {
             state.reserved_sessions.remove(session_id);
-            return Err("The managed inference runtime changed before this request received a slot.".into());
+            return Err(
+                "The managed inference runtime changed before this request received a slot.".into(),
+            );
         }
-        state.active_sessions.insert(session_id.to_owned(), request_id.to_owned());
+        state
+            .active_sessions
+            .insert(session_id.to_owned(), request_id.to_owned());
         drop(state);
 
         Ok(InferenceSessionLease {
@@ -334,7 +335,9 @@ mod tests {
         let mut settings =
             ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic).runtime;
         settings.parallel_slots = slots;
-        manager.configure("sample.gguf", RuntimeBackend::Cpu, &settings, "test-build").unwrap();
+        manager
+            .configure("sample.gguf", RuntimeBackend::Cpu, &settings, "test-build")
+            .unwrap();
         manager
     }
 
@@ -342,8 +345,14 @@ mod tests {
     async fn shares_loaded_model_across_parallel_sessions_and_queues_excess() {
         let manager = manager_with_slots(2);
         let cancelled = Notify::new();
-        let first = manager.acquire_session("session-one", "request-one", &cancelled).await.unwrap();
-        let second = manager.acquire_session("session-two", "request-two", &cancelled).await.unwrap();
+        let first = manager
+            .acquire_session("session-one", "request-one", &cancelled)
+            .await
+            .unwrap();
+        let second = manager
+            .acquire_session("session-two", "request-two", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(manager.status().active_requests, 2);
         assert_eq!(manager.status().available_slots, 0);
 
@@ -351,16 +360,26 @@ mod tests {
         let waiting_cancel = Arc::new(Notify::new());
         let waiting_cancel_for_task = waiting_cancel.clone();
         let waiting = tokio::spawn(async move {
-            waiting_manager.acquire_session("session-three", "request-three", &waiting_cancel_for_task).await
+            waiting_manager
+                .acquire_session("session-three", "request-three", &waiting_cancel_for_task)
+                .await
         });
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                if manager.status().queued_requests == 1 { break; }
+                if manager.status().queued_requests == 1 {
+                    break;
+                }
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         drop(first);
-        let third = tokio::time::timeout(Duration::from_secs(1), waiting).await.unwrap().unwrap().unwrap();
+        let third = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(manager.status().active_requests, 2);
         assert_eq!(manager.status().queued_requests, 0);
         drop((second, third));
@@ -371,8 +390,14 @@ mod tests {
     async fn prevents_overlapping_generations_in_the_same_session() {
         let manager = manager_with_slots(2);
         let cancelled = Notify::new();
-        let _lease = manager.acquire_session("same-session", "request-one", &cancelled).await.unwrap();
-        let error = match manager.acquire_session("same-session", "request-two", &cancelled).await {
+        let _lease = manager
+            .acquire_session("same-session", "request-one", &cancelled)
+            .await
+            .unwrap();
+        let error = match manager
+            .acquire_session("same-session", "request-two", &cancelled)
+            .await
+        {
             Ok(_) => panic!("A second request for the same session must be rejected."),
             Err(error) => error,
         };
@@ -383,19 +408,28 @@ mod tests {
     async fn cancellation_removes_a_waiting_session_from_the_queue() {
         let manager = manager_with_slots(1);
         let cancelled = Notify::new();
-        let _active = manager.acquire_session("active-session", "request-one", &cancelled).await.unwrap();
+        let _active = manager
+            .acquire_session("active-session", "request-one", &cancelled)
+            .await
+            .unwrap();
         let waiting_manager = manager.clone();
         let waiting_cancel = Arc::new(Notify::new());
         let cancel_for_task = waiting_cancel.clone();
         let waiting = tokio::spawn(async move {
-            waiting_manager.acquire_session("waiting-session", "request-two", &cancel_for_task).await
+            waiting_manager
+                .acquire_session("waiting-session", "request-two", &cancel_for_task)
+                .await
         });
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                if manager.status().queued_requests == 1 { break; }
+                if manager.status().queued_requests == 1 {
+                    break;
+                }
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         waiting_cancel.notify_one();
         let error = match waiting.await.unwrap() {
             Ok(_) => panic!("A cancelled waiting session must not acquire a slot."),
@@ -411,13 +445,19 @@ mod tests {
         let manager = manager_with_slots(1);
         let cancelled = Notify::new();
         manager.begin_shutdown().unwrap();
-        let error = match manager.acquire_session("session", "request", &cancelled).await {
+        let error = match manager
+            .acquire_session("session", "request", &cancelled)
+            .await
+        {
             Ok(_) => panic!("A request must not be admitted during runtime shutdown."),
             Err(error) => error,
         };
         assert!(error.contains("Load a Spindle managed model"));
         manager.resume();
-        let lease = manager.acquire_session("session", "request", &cancelled).await.unwrap();
+        let lease = manager
+            .acquire_session("session", "request", &cancelled)
+            .await
+            .unwrap();
         drop(lease);
     }
 
@@ -425,7 +465,10 @@ mod tests {
     async fn runtime_cannot_be_cleared_while_a_session_lease_is_active() {
         let manager = manager_with_slots(1);
         let cancelled = Notify::new();
-        let lease = manager.acquire_session("active-session", "request-one", &cancelled).await.unwrap();
+        let lease = manager
+            .acquire_session("active-session", "request-one", &cancelled)
+            .await
+            .unwrap();
         assert!(manager.ensure_idle().is_err());
         drop(lease);
         assert!(manager.ensure_idle().is_ok());

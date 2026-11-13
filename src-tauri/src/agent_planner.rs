@@ -1,6 +1,6 @@
 use crate::chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime};
-use crate::inference::InferenceRuntimeManager;
 use crate::domain::GenerationSettings;
+use crate::inference::InferenceRuntimeManager;
 use crate::{projects, workspace::WorkspaceManager};
 use serde::Deserialize;
 use std::collections::BTreeSet;
