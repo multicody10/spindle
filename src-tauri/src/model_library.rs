@@ -173,16 +173,21 @@ fn read_text_path(path: &Path, relative_to: &Path) -> Option<PathBuf> {
     })
 }
 
-fn read_json_path_setting(path: &Path, key: &str) -> Option<PathBuf> {
+fn read_json_path_setting(path: &Path, key: &str, relative_to: &Path) -> Option<PathBuf> {
     let contents = fs::read_to_string(path).ok()?;
     let contents = contents.trim_start_matches('\u{feff}');
     let document: Value = serde_json::from_str(contents).ok()?;
-    document
+    let configured = document
         .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+        .map(PathBuf::from)?;
+    Some(if configured.is_absolute() {
+        configured
+    } else {
+        relative_to.join(configured)
+    })
 }
 
 #[derive(Default)]
@@ -235,7 +240,11 @@ fn default_model_roots(
                 }
             });
         let configured_downloads =
-            read_json_path_setting(&selected_home.join("settings.json"), "downloadsFolder");
+            read_json_path_setting(
+                &selected_home.join("settings.json"),
+                "downloadsFolder",
+                &selected_home,
+            );
         roots.push((
             "LM Studio".to_owned(),
             configured_downloads.unwrap_or_else(|| selected_home.join("models")),
@@ -259,11 +268,14 @@ fn default_model_roots(
     // cache are separate locations and may both contain directly usable GGUF files.
     if let Some(path) = overrides.gpt4all_models.clone() {
         roots.push(("GPT4All (configured)".to_owned(), path));
-    } else if let Some(base) = local_app_data_directory {
-        roots.push((
-            "GPT4All".to_owned(),
-            base.join("nomic.ai").join("GPT4All"),
-        ));
+    }
+    if let Some(base) = local_app_data_directory {
+        let desktop_models = base.join("nomic.ai").join("GPT4All");
+        if overrides.gpt4all_models.is_some() {
+            add_existing_fallback(&mut roots, "GPT4All Desktop", desktop_models);
+        } else {
+            roots.push(("GPT4All".to_owned(), desktop_models));
+        }
     }
     if let Some(home) = home_directory {
         add_existing_fallback(
@@ -283,6 +295,7 @@ fn default_model_roots(
         let settings_data = read_json_path_setting(
             &roaming.join("Jan").join("settings.json"),
             "data_folder",
+            &roaming.join("Jan"),
         );
         let jan_data = overrides
             .jan_data_directory
