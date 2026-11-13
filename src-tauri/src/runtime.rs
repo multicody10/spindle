@@ -199,7 +199,7 @@ fn backend_status(app: &AppHandle, backend: RuntimeBackend) -> Result<BackendIns
     })
 }
 
-pub fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
+pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
     let (running, process_id, backend, model_path, logs) = runtime.take_snapshot();
     Ok(RuntimeStatus {
         version: VERSION,
@@ -212,7 +212,7 @@ pub fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<RuntimeStatus
             backend_status(app, RuntimeBackend::Vulkan)?,
         ],
         logs,
-        applied_settings: if running { read_applied_settings().ok() } else { None },
+        applied_settings: if running { read_applied_settings().await.ok() } else { None },
     })
 }
 
@@ -353,7 +353,7 @@ fn find_server(root: &Path) -> Option<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.file_name().is_some_and(|name| name.eq_ignore_ascii_case("llama-server.exe")) {
+            } else if path.file_name().is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("llama-server.exe")) {
                 return Some(path);
             }
         }
@@ -485,7 +485,7 @@ pub async fn start(
             .is_ok_and(|response| response.status().is_success())
         {
             runtime.push_log("Model loaded. llama.cpp is ready for local chat.");
-            return status(&app, runtime);
+            return status(&app, runtime).await;
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
     }
@@ -508,20 +508,20 @@ pub fn stop(runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
     })
 }
 
-pub fn read_applied_settings() -> Result<AppliedSettings, String> {
-    let client = reqwest::blocking::Client::builder()
+pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
+    let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(2))
         .timeout(Duration::from_secs(3))
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize the runtime settings client.".to_string())?;
-    let response = client.get(format!("{BASE_URL}/props")).send()
+    let response = client.get(format!("{BASE_URL}/props")).send().await
         .map_err(|_| "The managed llama.cpp server is not responding.".to_string())?;
     if !response.status().is_success() {
         return Err(format!("llama.cpp returned HTTP {} while reading settings.", response.status().as_u16()));
     }
-    let document: Value = response.json().map_err(|_| "llama.cpp returned invalid runtime settings.".to_string())?;
+    let document: Value = response.json().await.map_err(|_| "llama.cpp returned invalid runtime settings.".to_string())?;
     let defaults = document.get("default_generation_settings").unwrap_or(&Value::Null);
     let params = defaults.get("params").unwrap_or(&Value::Null);
     Ok(AppliedSettings {
