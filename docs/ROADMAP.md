@@ -13,11 +13,13 @@ This roadmap records implementation status rather than implying the full product
 - [x] Separate runtime and generation configuration schemas.
 - [x] Per-model configuration and named preset persistence in SQLite.
 - [x] Configuration range validation in the Rust command boundary.
-- [x] Windows NSIS per-user installer target.
-- [x] Dedicated CI and signed release workflow skeleton.
-- [ ] Successful Windows CI and desktop build verification.
-- [ ] Generate repository-owned updater key and provision GitHub Actions secrets.
-- [ ] Generate npm and Cargo lockfiles from a verified Windows toolchain.
+- [x] Windows NSIS per-machine installer target.
+- [x] Dedicated CI and signed release workflow.
+- [x] Successful Windows CI and desktop build verification.
+- [x] Repository-owned updater key and GitHub Actions signing secrets.
+- [x] npm and Cargo lockfiles committed and used in CI.
+- [x] First signed Windows release published and installed.
+- [ ] Validate the one-time per-user to per-machine installation transition and in-app update path.
 
 ## Model runtime
 
