@@ -103,7 +103,9 @@ impl InferenceRuntimeManager {
             .lock()
             .map_err(|_| "The inference scheduler state is unavailable.".to_string())?;
         if !state.reserved_sessions.is_empty() || state.queued_requests > 0 {
-            return Err("The shared inference runtime still has active or queued session requests.".into());
+            return Err(
+                "The shared inference runtime still has active or queued session requests.".into(),
+            );
         }
         let semaphore = Arc::new(Semaphore::new(settings.parallel_slots));
         *self
