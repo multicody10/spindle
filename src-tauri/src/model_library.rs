@@ -121,9 +121,10 @@ fn scan_root(
                 continue;
             }
 
-            if !path.extension().is_some_and(|extension| {
-                extension.to_string_lossy().eq_ignore_ascii_case("gguf")
-            }) {
+            if !path
+                .extension()
+                .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("gguf"))
+            {
                 continue;
             }
 
@@ -202,11 +203,7 @@ struct ModelDirectoryOverrides {
     huggingface_cache: Option<PathBuf>,
 }
 
-fn add_existing_fallback(
-    roots: &mut Vec<(String, PathBuf)>,
-    name: &str,
-    path: PathBuf,
-) {
+fn add_existing_fallback(roots: &mut Vec<(String, PathBuf)>, name: &str, path: PathBuf) {
     if path.is_dir() {
         roots.push((name.to_owned(), path));
     }
@@ -239,12 +236,11 @@ fn default_model_roots(
                     home.join(".lmstudio")
                 }
             });
-        let configured_downloads =
-            read_json_path_setting(
-                &selected_home.join("settings.json"),
-                "downloadsFolder",
-                &selected_home,
-            );
+        let configured_downloads = read_json_path_setting(
+            &selected_home.join("settings.json"),
+            "downloadsFolder",
+            &selected_home,
+        );
         roots.push((
             "LM Studio".to_owned(),
             configured_downloads.unwrap_or_else(|| selected_home.join("models")),
@@ -302,15 +298,8 @@ fn default_model_roots(
             .clone()
             .or(settings_data)
             .unwrap_or(default_jan_data);
-        roots.push((
-            "Jan".to_owned(),
-            jan_data.join("llamacpp").join("models"),
-        ));
-        add_existing_fallback(
-            &mut roots,
-            "Jan (legacy models)",
-            jan_data.join("models"),
-        );
+        roots.push(("Jan".to_owned(), jan_data.join("llamacpp").join("models")));
+        add_existing_fallback(&mut roots, "Jan (legacy models)", jan_data.join("models"));
     }
 
     // KoboldCpp's Download Dir is selected in its UI. It has no single stable
@@ -517,15 +506,25 @@ mod tests {
             "huggingface.gguf",
             "koboldcpp.gguf",
         ] {
-            assert!(result.models.iter().any(|model| model.file_name == filename));
+            assert!(result
+                .models
+                .iter()
+                .any(|model| model.file_name == filename));
         }
 
-        let jan = result.models.iter().find(|model| model.file_name == "jan.gguf").unwrap();
+        let jan = result
+            .models
+            .iter()
+            .find(|model| model.file_name == "jan.gguf")
+            .unwrap();
         assert!(jan.path.contains("llamacpp"));
         let managed = Path::new(&result.managed_directory);
         assert_eq!(managed.file_name().and_then(|name| name.to_str()), Some("Models"));
         assert_eq!(
-            managed.parent().and_then(Path::file_name).and_then(|name| name.to_str()),
+            managed
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str()),
             Some("Spindle")
         );
 
@@ -553,9 +552,9 @@ mod tests {
         fs::write(custom_home.join("settings.json"), settings.to_string()).unwrap();
 
         let roots = default_model_roots(Some(&home), None, None, no_overrides());
-        assert!(roots.iter().any(|(name, path)| {
-            name == "LM Studio" && path == &custom_models
-        }));
+        assert!(roots
+            .iter()
+            .any(|(name, path)| { name == "LM Studio" && path == &custom_models }));
 
         let _ = fs::remove_dir_all(temporary);
     }
@@ -573,12 +572,7 @@ mod tests {
         });
         fs::write(jan_config.join("settings.json"), settings.to_string()).unwrap();
 
-        let roots = default_model_roots(
-            None,
-            None,
-            Some(&roaming),
-            no_overrides(),
-        );
+        let roots = default_model_roots(None, None, Some(&roaming), no_overrides());
         assert!(roots.iter().any(|(name, path)| {
             name == "Jan" && path == &custom_data.join("llamacpp").join("models")
         }));
@@ -588,8 +582,10 @@ mod tests {
 
     #[test]
     fn uses_configured_model_directories_when_supplied() {
-        let temporary =
-            env::temp_dir().join(format!("spindle-model-library-custom-{}", std::process::id()));
+        let temporary = env::temp_dir().join(format!(
+            "spindle-model-library-custom-{}",
+            std::process::id()
+        ));
         let custom = temporary.join("shared-models");
         fs::create_dir_all(&custom).unwrap();
         fs::write(custom.join("custom.gguf"), b"model").unwrap();
@@ -616,8 +612,7 @@ mod tests {
     fn discovers_gguf_files_linked_from_hugging_face_snapshots() {
         use std::os::unix::fs::symlink;
 
-        let temporary =
-            env::temp_dir().join(format!("spindle-hf-symlink-{}", std::process::id()));
+        let temporary = env::temp_dir().join(format!("spindle-hf-symlink-{}", std::process::id()));
         let hub = temporary.join("hub");
         let snapshot = hub
             .join("models--org--repo")
