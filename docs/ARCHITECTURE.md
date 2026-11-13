@@ -6,7 +6,7 @@ Spindle uses a native Rust/Tauri 2 core and a React/TypeScript/Vite interface. R
 
 Current request path:
 
-React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, and SQLite persistence.
+React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, read-only loopback provider discovery, and SQLite persistence.
 
 ## Trust boundaries
 
