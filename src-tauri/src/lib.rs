@@ -5,6 +5,7 @@ mod hardware;
 mod optimizer;
 mod persistence;
 mod providers;
+mod runtime;
 
 use crate::domain::{
     AppInfo, ModelConfiguration, OptimizationProfile, OptimizationResult, SavedPreset,
@@ -33,6 +34,43 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 async fn local_provider_statuses() -> Result<Vec<providers::LocalProviderStatus>, String> {
     providers::discover().await
+}
+
+#[tauri::command]
+async fn managed_runtime_status(
+    app: AppHandle,
+    runtime: State<'_, runtime::ManagedRuntime>,
+) -> Result<runtime::RuntimeStatus, String> {
+    runtime::status(&app, &runtime).await
+}
+
+#[tauri::command]
+async fn install_llama_runtime(
+    app: AppHandle,
+    runtime: State<'_, runtime::ManagedRuntime>,
+    backend: runtime::RuntimeBackend,
+) -> Result<runtime::BackendInstallStatus, String> {
+    runtime::install(app, &runtime, backend).await
+}
+
+#[tauri::command]
+async fn start_llama_runtime(
+    app: AppHandle,
+    runtime: State<'_, runtime::ManagedRuntime>,
+    model_path: String,
+    configuration: ModelConfiguration,
+    backend: runtime::RuntimeBackend,
+) -> Result<runtime::RuntimeStatus, String> {
+    runtime::start(app, &runtime, model_path, configuration, backend).await
+}
+
+#[tauri::command]
+async fn stop_llama_runtime(
+    app: AppHandle,
+    runtime: State<'_, runtime::ManagedRuntime>,
+) -> Result<runtime::RuntimeStatus, String> {
+    runtime::stop(&runtime)?;
+    runtime::status(&app, &runtime).await
 }
 
 #[tauri::command]
@@ -314,10 +352,15 @@ fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), Stri
 pub fn run() {
     tauri::Builder::default()
         .manage(chat::ChatRuntime::default())
+        .manage(runtime::ManagedRuntime::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
             local_provider_statuses,
+            managed_runtime_status,
+            install_llama_runtime,
+            start_llama_runtime,
+            stop_llama_runtime,
             start_chat,
             cancel_chat,
             hardware_profile,
