@@ -7,8 +7,8 @@ mod gguf;
 mod hardware;
 mod model_library;
 mod optimizer;
-mod persistence;
 mod permissions;
+mod persistence;
 mod projects;
 mod providers;
 mod runtime;
@@ -30,8 +30,6 @@ where
         .await
         .map_err(|error| format!("Project database task failed: {error}"))?
 }
-
-
 
 const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
 
@@ -58,8 +56,12 @@ async fn project_permission_status(
     session_id: String,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<permissions::SessionPermissions, String> {
-    let session = with_project_database(&app, move |database| projects::get_session(database, session_id)).await?;
-    permissions.register_session(session.id, session.project_id)
+    let session = with_project_database(&app, move |database| {
+        projects::get_session(database, session_id)
+    })
+    .await?;
+    permissions.register_session(session.id.clone(), session.project_id)?;
+    permissions.status(&session.id)
 }
 
 #[tauri::command]
@@ -70,7 +72,10 @@ async fn grant_project_permissions(
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<permissions::SessionPermissions, String> {
     let lookup_id = session_id.clone();
-    let session = with_project_database(&app, move |database| projects::get_session(database, lookup_id)).await?;
+    let session = with_project_database(&app, move |database| {
+        projects::get_session(database, lookup_id)
+    })
+    .await?;
     permissions.register_session(session.id.clone(), session.project_id)?;
     permissions.grant(&session_id, &requested)
 }
@@ -95,28 +100,54 @@ async fn list_projects(app: AppHandle) -> Result<Vec<projects::Project>, String>
 }
 
 #[tauri::command]
-async fn create_project(app: AppHandle, root_path: String, name: String) -> Result<projects::Project, String> {
-    with_project_database(&app, move |database| projects::create_project(database, root_path, name)).await
+async fn create_project(
+    app: AppHandle,
+    root_path: String,
+    name: String,
+) -> Result<projects::Project, String> {
+    with_project_database(&app, move |database| {
+        projects::create_project(database, root_path, name)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn rename_project(app: AppHandle, project_id: String, name: String) -> Result<projects::Project, String> {
-    with_project_database(&app, move |database| projects::rename_project(database, project_id, name)).await
+async fn rename_project(
+    app: AppHandle,
+    project_id: String,
+    name: String,
+) -> Result<projects::Project, String> {
+    with_project_database(&app, move |database| {
+        projects::rename_project(database, project_id, name)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn archive_project(app: AppHandle, project_id: String) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::archive_project(database, project_id)).await
+    with_project_database(&app, move |database| {
+        projects::archive_project(database, project_id)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn delete_project(app: AppHandle, project_id: String) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::delete_project(database, project_id)).await
+    with_project_database(&app, move |database| {
+        projects::delete_project(database, project_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn list_sessions(app: AppHandle, project_id: String) -> Result<Vec<projects::Session>, String> {
-    with_project_database(&app, move |database| projects::list_sessions(database, project_id)).await
+async fn list_sessions(
+    app: AppHandle,
+    project_id: String,
+) -> Result<Vec<projects::Session>, String> {
+    with_project_database(&app, move |database| {
+        projects::list_sessions(database, project_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -126,29 +157,59 @@ async fn create_session(
     title: String,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<projects::Session, String> {
-    let session = with_project_database(&app, move |database| projects::create_session(database, project_id, title)).await?;
+    let session = with_project_database(&app, move |database| {
+        let session = projects::create_session(database.clone(), project_id, title)?;
+        let _ = projects::touch_project(database, session.project_id.clone())?;
+        Ok(session)
+    })
+    .await?;
     permissions.register_session(session.id.clone(), session.project_id.clone())?;
     Ok(session)
 }
-
 #[tauri::command]
-async fn rename_session(app: AppHandle, session_id: String, title: String) -> Result<projects::Session, String> {
-    with_project_database(&app, move |database| projects::rename_session(database, session_id, title)).await
+async fn rename_session(
+    app: AppHandle,
+    session_id: String,
+    title: String,
+) -> Result<projects::Session, String> {
+    with_project_database(&app, move |database| {
+        projects::rename_session(database, session_id, title)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn delete_session(app: AppHandle, session_id: String) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::delete_session(database, session_id)).await
+async fn delete_session(
+    app: AppHandle,
+    session_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<(), String> {
+    let permission_session_id = session_id.clone();
+    with_project_database(&app, move |database| projects::delete_session(database, session_id)).await?;
+    permissions.revoke_all(&permission_session_id)
+}
+#[tauri::command]
+async fn update_session_model(
+    app: AppHandle,
+    session_id: String,
+    provider_id: String,
+    model_id: String,
+) -> Result<projects::Session, String> {
+    with_project_database(&app, move |database| {
+        projects::update_session_model(database, session_id, provider_id, model_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn update_session_model(app: AppHandle, session_id: String, provider_id: String, model_id: String) -> Result<projects::Session, String> {
-    with_project_database(&app, move |database| projects::update_session_model(database, session_id, provider_id, model_id)).await
-}
-
-#[tauri::command]
-async fn list_session_messages(app: AppHandle, session_id: String) -> Result<Vec<projects::SessionMessage>, String> {
-    with_project_database(&app, move |database| projects::list_messages(database, session_id)).await
+async fn list_session_messages(
+    app: AppHandle,
+    session_id: String,
+) -> Result<Vec<projects::SessionMessage>, String> {
+    with_project_database(&app, move |database| {
+        projects::list_messages(database, session_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -158,72 +219,128 @@ async fn append_session_message(
     role: String,
     content: String,
 ) -> Result<projects::SessionMessage, String> {
-    with_project_database(&app, move |database| projects::append_message(database, session_id, role, content)).await
+    with_project_database(&app, move |database| {
+        projects::append_message(database, session_id, role, content)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn list_agent_tasks(app: AppHandle, session_id: String) -> Result<Vec<projects::AgentTask>, String> {
-    with_project_database(&app, move |database| projects::list_tasks(database, session_id)).await
+async fn list_agent_tasks(
+    app: AppHandle,
+    session_id: String,
+) -> Result<Vec<projects::AgentTask>, String> {
+    with_project_database(&app, move |database| {
+        projects::list_tasks(database, session_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn agent_task_detail(app: AppHandle, task_id: String) -> Result<projects::TaskDetail, String> {
-    with_project_database(&app, move |database| projects::task_detail(database, task_id)).await
+async fn agent_task_detail(
+    app: AppHandle,
+    task_id: String,
+) -> Result<projects::TaskDetail, String> {
+    with_project_database(&app, move |database| {
+        projects::task_detail(database, task_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn approve_agent_task_plan(app: AppHandle, task_id: String) -> Result<projects::AgentTask, String> {
-    with_project_database(&app, move |database| projects::approve_task_plan(database, task_id)).await
+async fn approve_agent_task_plan(
+    app: AppHandle,
+    task_id: String,
+) -> Result<projects::AgentTask, String> {
+    with_project_database(&app, move |database| {
+        projects::approve_task_plan(database, task_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn reject_agent_task_plan(app: AppHandle, task_id: String) -> Result<projects::AgentTask, String> {
-    with_project_database(&app, move |database| projects::reject_task_plan(database, task_id)).await
+async fn reject_agent_task_plan(
+    app: AppHandle,
+    task_id: String,
+) -> Result<projects::AgentTask, String> {
+    with_project_database(&app, move |database| {
+        projects::reject_task_plan(database, task_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn list_agent_task_events(app: AppHandle, task_id: String) -> Result<Vec<projects::AgentEvent>, String> {
-    with_project_database(&app, move |database| projects::list_task_events(database, task_id)).await
+async fn list_agent_task_events(
+    app: AppHandle,
+    task_id: String,
+) -> Result<Vec<projects::AgentEvent>, String> {
+    with_project_database(&app, move |database| {
+        projects::list_task_events(database, task_id)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn save_project_memory(
-    app: AppHandle, project_id: String, kind: String, memory_key: String, content: String,
-    source_path: String, source_revision: String, confidence: f64, importance: f64,
+    app: AppHandle,
+    input: projects::SaveProjectMemoryInput,
 ) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::save_project_memory(
-        database, project_id, kind, memory_key, content, source_path, source_revision, confidence, importance
-    )).await
+    with_project_database(&app, move |database| projects::save_project_memory(database, input)).await
 }
-
 #[tauri::command]
 async fn search_project_memory(
-    app: AppHandle, project_id: String, query: String, limit: usize,
+    app: AppHandle,
+    project_id: String,
+    query: String,
+    limit: usize,
 ) -> Result<Vec<projects::ProjectMemory>, String> {
-    with_project_database(&app, move |database| projects::search_project_memory(database, project_id, query, limit)).await
+    with_project_database(&app, move |database| {
+        projects::search_project_memory(database, project_id, query, limit)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn archive_project_memory(
-    app: AppHandle, project_id: String, memory_id: String,
+    app: AppHandle,
+    project_id: String,
+    memory_id: String,
 ) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::archive_project_memory(database, project_id, memory_id)).await
+    with_project_database(&app, move |database| {
+        projects::archive_project_memory(database, project_id, memory_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn list_agent_skills(app: AppHandle, project_id: String) -> Result<Vec<skills::AgentSkill>, String> {
-    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
+async fn list_agent_skills(
+    app: AppHandle,
+    project_id: String,
+) -> Result<Vec<skills::AgentSkill>, String> {
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, project_id)
+    })
+    .await?;
     tokio::task::spawn_blocking(move || skills::discover(std::path::Path::new(&project.root_path)))
         .await
         .map_err(|error| format!("Agent Skill discovery task failed: {error}"))?
 }
 
 #[tauri::command]
-async fn load_agent_skill(app: AppHandle, project_id: String, name: String) -> Result<skills::LoadedSkill, String> {
-    let project = with_project_database(&app, move |database| projects::get_project(database, project_id)).await?;
-    tokio::task::spawn_blocking(move || skills::load(std::path::Path::new(&project.root_path), &name))
-        .await
-        .map_err(|error| format!("Agent Skill loading task failed: {error}"))?
+async fn load_agent_skill(
+    app: AppHandle,
+    project_id: String,
+    name: String,
+) -> Result<skills::LoadedSkill, String> {
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, project_id)
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || {
+        skills::load(std::path::Path::new(&project.root_path), &name)
+    })
+    .await
+    .map_err(|error| format!("Agent Skill loading task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -231,59 +348,33 @@ async fn plan_project_task(
     app: AppHandle,
     runtime: State<'_, chat::ChatRuntime>,
     permissions: State<'_, permissions::PermissionBroker>,
-    project_id: String,
-    session_id: String,
-    prompt: String,
-    provider_id: String,
-    model: String,
-    context_tokens: usize,
-    generation: domain::GenerationSettings,
+    input: agent_planner::PlanTaskRequest,
 ) -> Result<projects::TaskDetail, String> {
     let database = database_path(&app)?;
-    let permission_session = session_id.clone();
-    let session = with_project_database(&app, move |database| projects::get_session(database, permission_session)).await?;
-    if session.project_id != project_id { return Err("The selected session does not belong to this project.".into()); }
+    let lookup_session = input.session_id.clone();
+    let project_id = input.project_id.clone();
+    let session = with_project_database(&app, move |database| projects::get_session(database, lookup_session)).await?;
+    if session.project_id != project_id {
+        return Err("The selected session does not belong to this project.".into());
+    }
     permissions.register_session(session.id.clone(), session.project_id.clone())?;
     permissions.require(&session.id, permissions::PermissionScope::ProjectRead)?;
-    agent_planner::create_read_only_plan(
-        app,
-        database,
-        runtime.inner(),
-        project_id,
-        session_id,
-        prompt,
-        provider_id,
-        model,
-        context_tokens,
-        generation,
-    ).await
+    agent_planner::create_read_only_plan(app, database, runtime.inner(), input).await
 }
-
 #[tauri::command]
 async fn run_model_benchmark(
     app: AppHandle,
     runtime: State<'_, chat::ChatRuntime>,
-    provider_id: String,
-    model_id: String,
-    context_tokens: usize,
-    generation: domain::GenerationSettings,
-    iterations: usize,
+    input: benchmark::BenchmarkRequest,
 ) -> Result<benchmark::BenchmarkRun, String> {
     let database = database_path(&app)?;
-    benchmark::run(
-        app,
-        database,
-        runtime.inner(),
-        provider_id,
-        model_id,
-        context_tokens,
-        generation,
-        iterations,
-    ).await
+    benchmark::run(app, database, runtime.inner(), input).await
 }
-
 #[tauri::command]
-async fn list_model_benchmarks(app: AppHandle, limit: usize) -> Result<Vec<benchmark::BenchmarkRun>, String> {
+async fn list_model_benchmarks(
+    app: AppHandle,
+    limit: usize,
+) -> Result<Vec<benchmark::BenchmarkRun>, String> {
     with_project_database(&app, move |database| benchmark::list_runs(database, limit)).await
 }
 
