@@ -254,7 +254,10 @@ pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<Runtime
         match read_applied_settings().await {
             Ok(settings)
                 if settings.model_path.as_deref() == model_path.as_deref()
-                    && settings.build_info.as_deref().is_some_and(|info| info.starts_with(VERSION)) =>
+                    && settings
+                        .build_info
+                        .as_deref()
+                        .is_some_and(|info| info.starts_with(VERSION)) =>
             {
                 Some(settings)
             }
@@ -569,18 +572,41 @@ pub async fn start(
         .arg("--no-webui")
         .arg("--no-agent")
         .arg("--offline")
-        .arg("--model").arg(&model)
-        .arg("--ctx-size").arg(configuration.runtime.context_tokens.to_string())
-        .arg("--threads").arg(configuration.runtime.threads.to_string())
-        .arg("--threads-batch").arg(configuration.runtime.batch_threads.to_string())
-        .arg("--batch-size").arg(configuration.runtime.batch_size.to_string())
-        .arg("--ubatch-size").arg(configuration.runtime.micro_batch_size.to_string())
-        .arg("--gpu-layers").arg(if backend == RuntimeBackend::Cpu { "0".into() } else { configuration.runtime.gpu_layers.to_string() })
-        .arg("--parallel").arg(configuration.runtime.parallel_slots.to_string())
-        .arg("--flash-attn").arg(if configuration.runtime.flash_attention { "on" } else { "off" })
-        .arg("--cache-type-k").arg(&configuration.runtime.kv_cache_k_type)
-        .arg("--cache-type-v").arg(&configuration.runtime.kv_cache_v_type)
-        .arg(if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu { "--kv-offload" } else { "--no-kv-offload" })
+        .arg("--model")
+        .arg(&model)
+        .arg("--ctx-size")
+        .arg(configuration.runtime.context_tokens.to_string())
+        .arg("--threads")
+        .arg(configuration.runtime.threads.to_string())
+        .arg("--threads-batch")
+        .arg(configuration.runtime.batch_threads.to_string())
+        .arg("--batch-size")
+        .arg(configuration.runtime.batch_size.to_string())
+        .arg("--ubatch-size")
+        .arg(configuration.runtime.micro_batch_size.to_string())
+        .arg("--gpu-layers")
+        .arg(if backend == RuntimeBackend::Cpu {
+            "0".into()
+        } else {
+            configuration.runtime.gpu_layers.to_string()
+        })
+        .arg("--parallel")
+        .arg(configuration.runtime.parallel_slots.to_string())
+        .arg("--flash-attn")
+        .arg(if configuration.runtime.flash_attention {
+            "on"
+        } else {
+            "off"
+        })
+        .arg("--cache-type-k")
+        .arg(&configuration.runtime.kv_cache_k_type)
+        .arg("--cache-type-v")
+        .arg(&configuration.runtime.kv_cache_v_type)
+        .arg(if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu {
+            "--kv-offload"
+        } else {
+            "--no-kv-offload"
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -654,14 +680,23 @@ pub async fn start(
     let started = std::time::Instant::now();
     while started.elapsed() < HEALTH_TIMEOUT {
         if !runtime.take_snapshot().0 {
-            return Err("llama-server exited before the model became ready. Review the runtime logs.".into());
+            return Err(
+                "llama-server exited before the model became ready. Review the runtime logs."
+                    .into(),
+            );
         }
-        if client.get(format!("{BASE_URL}/health")).send().await
+        if client
+            .get(format!("{BASE_URL}/health"))
+            .send()
+            .await
             .is_ok_and(|response| response.status().is_success())
         {
             if read_applied_settings().await.is_ok_and(|settings| {
                 settings.model_path.as_deref() == Some(expected_model_path.as_str())
-                    && settings.build_info.as_deref().is_some_and(|info| info.starts_with(VERSION))
+                    && settings
+                        .build_info
+                        .as_deref()
+                        .is_some_and(|info| info.starts_with(VERSION))
             }) {
                 runtime.push_log("Model loaded. The pinned llama.cpp process is ready for local chat.");
                 return status(&app, runtime).await;
@@ -696,16 +731,26 @@ pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize the runtime settings client.".to_string())?;
-    let mut response = client.get(format!("{BASE_URL}/props")).send().await
+    let mut response = client
+        .get(format!("{BASE_URL}/props"))
+        .send()
+        .await
         .map_err(|_| "The managed llama.cpp server is not responding.".to_string())?;
     if !response.status().is_success() {
-        return Err(format!("llama.cpp returned HTTP {} while reading settings.", response.status().as_u16()));
+        return Err(format!(
+            "llama.cpp returned HTTP {} while reading settings.",
+            response.status().as_u16()
+        ));
     }
     if response.content_length().is_some_and(|length| length > 1024 * 1024) {
         return Err("llama.cpp runtime settings exceeded the response size limit.".into());
     }
     let mut body = Vec::with_capacity(32 * 1024);
-    while let Some(chunk) = response.chunk().await.map_err(|_| "Could not read llama.cpp runtime settings.".to_string())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Could not read llama.cpp runtime settings.".to_string())?
+    {
         if body.len().saturating_add(chunk.len()) > 1024 * 1024 {
             return Err("llama.cpp runtime settings exceeded the response size limit.".into());
         }
@@ -766,7 +811,9 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         {
             let mut writer = zip::ZipWriter::new(&mut bytes);
-            writer.start_file("readme.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            writer
+                .start_file("readme.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
             writer.write_all(b"not a runtime").unwrap();
             writer.finish().unwrap();
         }
