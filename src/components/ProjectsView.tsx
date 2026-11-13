@@ -24,6 +24,9 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
   const [memories, setMemories] = useState<ProjectMemory[]>([]);
   const [permissionState, setPermissionState] = useState<SessionPermissions | null>(null);
   const [memoryQuery, setMemoryQuery] = useState("");
+  const [memoryKey, setMemoryKey] = useState("");
+  const [memoryKind, setMemoryKind] = useState("architecture_decision");
+  const [memoryContent, setMemoryContent] = useState("");
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
   const [taskPrompt, setTaskPrompt] = useState("");
@@ -202,6 +205,22 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     }
   };
 
+  const saveMemory = async () => {
+    if (!activeProject || !memoryKey.trim() || !memoryContent.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api.saveProjectMemory(activeProject.id, memoryKind, memoryKey.trim(), memoryContent.trim());
+      setMemoryKey("");
+      setMemoryContent("");
+      setMemories(await api.searchProjectMemory(activeProject.id, memoryQuery.trim() || memoryKey.trim()));
+      setNotice("Project memory saved. It will be treated as advisory context and checked against current files.");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const searchMemory = async () => {
     if (!activeProject || !memoryQuery.trim()) return;
     try {
@@ -368,6 +387,18 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                 <div className="projects-section-title"><div><strong>Project memory</strong><small>Explicitly stored project facts and decisions.</small></div></div>
                 <div className="memory-search"><input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder="Search project memory…" />
                   <button className="button subtle" onClick={() => void searchMemory()} disabled={!memoryQuery.trim()}>Search</button></div>
+                <div className="memory-create">
+                  <select value={memoryKind} onChange={(event) => setMemoryKind(event.target.value)}>
+                    <option value="convention">Convention</option>
+                    <option value="user_preference">Preference</option>
+                    <option value="architecture_decision">Architecture decision</option>
+                    <option value="task_outcome">Task outcome</option>
+                    <option value="failure_solution">Failure and solution</option>
+                  </select>
+                  <input value={memoryKey} onChange={(event) => setMemoryKey(event.target.value)} maxLength={160} placeholder="Memory key, e.g. auth-flow" />
+                  <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} maxLength={8192} rows={2} placeholder="Record a concise, durable project fact or decision…" />
+                  <button className="button subtle" onClick={() => void saveMemory()} disabled={busy || !memoryKey.trim() || !memoryContent.trim()}>Save memory</button>
+                </div>
                 {memories.map((memory) => <article key={memory.id}><strong>{memory.memoryKey}</strong><small>{memory.kind} · {memory.sourcePath || "Project scope"}</small><p>{memory.content}</p></article>)}
                 {memories.length === 0 && <p className="projects-empty">No matching memory records.</p>}
               </section>

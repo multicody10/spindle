@@ -63,6 +63,12 @@ export const api = {
   ) => invoke<AgentTaskDetail>("plan_project_task", { projectId, sessionId, prompt, providerId, model, contextTokens, generation }),
   listAgentSkills: (projectId: string) => invoke<AgentSkill[]>("list_agent_skills", { projectId }),
   loadAgentSkill: (projectId: string, name: string) => invoke<LoadedAgentSkill>("load_agent_skill", { projectId, name }),
+  saveProjectMemory: (
+    projectId: string, kind: string, memoryKey: string, content: string,
+    sourcePath = "", sourceRevision = "", confidence = 0.8, importance = 0.6
+  ) => invoke<void>("save_project_memory", {
+    projectId, kind, memoryKey, content, sourcePath, sourceRevision, confidence, importance
+  }),
   searchProjectMemory: (projectId: string, query: string, limit = 8) =>
     invoke<ProjectMemory[]>("search_project_memory", { projectId, query, limit }),
   appInfo: () => invoke<AppInfo>("app_info"),

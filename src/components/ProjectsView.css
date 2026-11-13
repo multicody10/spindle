@@ -60,3 +60,8 @@
 .permission-scopes span { border:1px solid #34404f; color:#8493a5; background:#0b1118; border-radius:4px; padding:6px 8px; font-size:9px; }
 .permission-scopes span.granted { border-color:#315342; color:#91d1b0; background:rgba(57,130,98,.09); }
 .session-permission-panel .projects-empty { margin:10px 0 0; }
+
+.memory-create { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:8px; margin:10px 0 12px; }
+.memory-create select,.memory-create input,.memory-create textarea { min-width:0; width:100%; background:#0a1017; border:1px solid #2a394a; border-radius:5px; color:#dce5ef; padding:8px; font-size:9px; }
+.memory-create textarea { grid-column:1 / -1; resize:vertical; line-height:1.5; }
+.memory-create button { justify-self:end; grid-column:1 / -1; }
