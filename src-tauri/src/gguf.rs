@@ -483,10 +483,8 @@ mod tests {
     fn preserves_gguf_extension_for_symlinked_hugging_face_snapshots() {
         use std::os::unix::fs::symlink;
 
-        let temporary = std::env::temp_dir().join(format!(
-            "spindle-gguf-snapshot-link-{}",
-            std::process::id()
-        ));
+        let temporary =
+            std::env::temp_dir().join(format!("spindle-gguf-snapshot-link-{}", std::process::id()));
         std::fs::create_dir_all(&temporary).unwrap();
         let blob = temporary.join("0123456789abcdef");
         let snapshot = temporary.join("model-Q4_K_M.gguf");
@@ -501,9 +499,9 @@ mod tests {
 
         let metadata = inspect(snapshot.to_str().unwrap()).unwrap();
         assert!(metadata.path.ends_with("model-Q4_K_M.gguf"));
-        assert!(Path::new(&metadata.path).extension().is_some_and(|ext| {
-            ext.to_string_lossy().eq_ignore_ascii_case("gguf")
-        }));
+        assert!(Path::new(&metadata.path)
+            .extension()
+            .is_some_and(|ext| { ext.to_string_lossy().eq_ignore_ascii_case("gguf") }));
 
         let _ = std::fs::remove_dir_all(temporary);
     }
