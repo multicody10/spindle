@@ -127,7 +127,12 @@ function ChatView({
     if (!current) return;
     cancelRequested.current = true;
     setStatus("Stopping generation…");
-    await api.cancelChat(current);
+    try {
+      const accepted = await api.cancelChat(current);
+      if (!accepted) setStatus("The request is already finishing.");
+    } catch (reason) {
+      setError("Could not stop generation: " + String(reason));
+    }
   };
 
   const clear = () => {
@@ -246,7 +251,10 @@ function ChatView({
         <div className="chat-status">
           <span className={"status-dot " + (error ? "red" : "")} />
           <span>{status}</span>
-          <span className="chat-context">Context {contextTokens.toLocaleString()} · Output {generation.maxOutputTokens.toLocaleString()}</span>
+          <span className="chat-context">
+            {providerId === "ollama" ? "Context " + contextTokens.toLocaleString() : "Context managed by LM Studio"}
+            {" · Output " + generation.maxOutputTokens.toLocaleString()}
+          </span>
         </div>
         <div className="chat-composer">
           <textarea
