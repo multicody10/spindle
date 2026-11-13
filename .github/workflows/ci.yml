@@ -105,6 +105,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
+      - name: Verify machine-wide install and updater modes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($config.bundle.windows.nsis.installMode -ne "perMachine") {
+            throw "The NSIS installer must remain perMachine so fresh installs and updates target Program Files."
+          }
+          if ($config.plugins.updater.windows.installMode -ne "passive") {
+            throw "The Windows updater must remain passive so machine-wide updates can show progress and request elevation."
+          }
+          if ($config.plugins.updater.pubkey -eq "REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY") {
+            throw "Updater public key is not configured."
+          }
+
       - name: Build unsigned NSIS installer
         shell: pwsh
         run: |
