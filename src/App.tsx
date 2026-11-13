@@ -50,6 +50,7 @@ const formatNumber = (value: number | null | undefined) =>
 function App() {
   const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("chat");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
+  const [chatInstance, setChatInstance] = useState(0);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
@@ -332,6 +333,7 @@ function App() {
 
   const startNewChat = () => {
     setActiveSession(null);
+    setChatInstance((current) => current + 1);
     setActiveView("chat");
   };
 
@@ -386,7 +388,7 @@ function App() {
             <BenchmarkView providers={localProviders} configuration={configuration} />
           ) : activeView === "chat" ? (
             <ChatView
-              key={activeSession?.id ?? "ephemeral-chat"}
+              key={activeSession?.id ?? `ephemeral-chat-${chatInstance}`}
               providers={localProviders}
               providersBusy={providersBusy}
               providersError={providersError}
