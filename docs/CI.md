@@ -13,7 +13,7 @@ The workflow does not run again for the merge push to `main`. The pull request i
 
 ## Full Windows package validation
 
-The NSIS packaging job is intentionally excluded from routine pull request runs. Run the full suite when a substantial change is ready for final validation:
+The NSIS packaging job is intentionally excluded from routine pull request runs. For an installer-only test, run the **Continuous integration** workflow, not **Windows release**. Run the full suite when a substantial change is ready for final validation:
 
 1. Open **Actions → Continuous integration**.
 2. Select **Run workflow**.
@@ -22,7 +22,7 @@ The NSIS packaging job is intentionally excluded from routine pull request runs.
 
 A manual run executes the frontend and Rust jobs plus the unsigned Windows NSIS build and installer verification. The artifact is retained for seven days.
 
-The actual signed installer is still built and verified by the Windows release workflow. Packaging validation does not use or require the updater private key.
+The actual signed installer is built and published by **Windows release**. That workflow creates a public GitHub Release and requires the requested tag to match the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. It also requires the updater signing secrets. Do not use it as a package-only test. Packaging validation does not use or require the updater private key.
 
 ## Security scans
 
@@ -33,6 +33,6 @@ These scans are deliberately not duplicated for every pull request commit and me
 
 ## Release validation
 
-The Windows release workflow remains unchanged. A release run performs frontend type-checking, Rust formatting, Clippy, Rust tests, and the signed Windows packaging and publishing steps.
+The Windows release workflow performs frontend type-checking, Rust formatting, Clippy, Rust tests, and signed Windows packaging and publishing. Release validation steps run only after the initial version and signing preflight succeeds, so an invalid tag does not trigger additional compilation and test work.
 
 This retains full validation at the release boundary while avoiding a second NSIS build on ordinary merge pushes.
