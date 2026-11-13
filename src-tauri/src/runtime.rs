@@ -244,9 +244,13 @@ pub async fn install(app: AppHandle, runtime: &ManagedRuntime, backend: RuntimeB
     if response.content_length().is_some_and(|length| length > MAX_DOWNLOAD_BYTES as u64) {
         return Err("The llama.cpp archive exceeded the download size limit.".into());
     }
-    let bytes = response.bytes().await.map_err(|_| "Could not read the llama.cpp download.".to_string())?;
-    if bytes.len() > MAX_DOWNLOAD_BYTES {
-        return Err("The llama.cpp archive exceeded the download size limit.".into());
+    let mut response = response;
+    let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(MAX_DOWNLOAD_BYTES as u64) as usize);
+    while let Some(chunk) = response.chunk().await.map_err(|_| "Could not read the llama.cpp download.".to_string())? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_DOWNLOAD_BYTES {
+            return Err("The llama.cpp archive exceeded the download size limit.".into());
+        }
+        bytes.extend_from_slice(&chunk);
     }
 
     let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -363,21 +367,29 @@ fn find_server(root: &Path) -> Option<PathBuf> {
 
 fn capture_output<R: Read + Send + 'static>(reader: R, logs: Arc<Mutex<VecDeque<String>>>, prefix: &'static str) {
     thread::spawn(move || {
-        let mut reader = BufReader::new(reader);
+        let mut reader = reader;
+        let mut chunk = [0u8; 2048];
+        let mut line = Vec::with_capacity(512);
         loop {
-            let mut buffer = Vec::new();
-            match reader.read_until(b'\n', &mut buffer) {
-                Ok(0) => break,
-                Ok(_) => {
-                    if buffer.len() > MAX_LOG_LINE_BYTES {
-                        buffer.truncate(MAX_LOG_LINE_BYTES);
+            let count = match reader.read(&mut chunk) {
+                Ok(0) => {
+                    if !line.is_empty() {
+                        push_log_to(&logs, format!("{prefix} {}", String::from_utf8_lossy(&line)));
                     }
-                    let line = String::from_utf8_lossy(&buffer);
-                    push_log_to(&logs, format!("{prefix} {}", line.trim()));
+                    break;
                 }
+                Ok(count) => count,
                 Err(error) => {
                     push_log_to(&logs, format!("{prefix} log stream ended: {error}"));
                     break;
+                }
+            };
+            for byte in &chunk[..count] {
+                if *byte == b'\\n' || line.len() >= MAX_LOG_LINE_BYTES {
+                    push_log_to(&logs, format!("{prefix} {}", String::from_utf8_lossy(&line)));
+                    line.clear();
+                } else if *byte != b'\\r' {
+                    line.push(*byte);
                 }
             }
         }
@@ -429,12 +441,13 @@ pub async fn start(
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
 
-    if !configuration.runtime.use_memory_mapping {
-        command.arg("--no-mmap");
-    }
-    if configuration.runtime.lock_memory {
-        command.arg("--mlock");
-    }
+    let load_mode = match (configuration.runtime.use_memory_mapping, configuration.runtime.lock_memory) {
+        (true, true) => "mmap+mlock",
+        (true, false) => "mmap",
+        (false, true) => "mlock",
+        (false, false) => "none",
+    };
+    command.arg("--load-mode").arg(load_mode);
 
     #[cfg(windows)]
     {
