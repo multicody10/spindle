@@ -3,6 +3,8 @@ import type {
   AppInfo,
   HardwareProfile,
   LocalProviderStatus,
+  ChatRequest,
+  ChatResult,
   ModelConfiguration,
   ModelMetadata,
   OptimizationProfile,
@@ -14,6 +16,8 @@ export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   hardware: () => invoke<HardwareProfile>("hardware_profile"),
   localProviders: () => invoke<LocalProviderStatus[]>("local_provider_statuses"),
+  startChat: (request: ChatRequest) => invoke<ChatResult>("start_chat", { request }),
+  cancelChat: (requestId: string) => invoke<boolean>("cancel_chat", { requestId }),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),
   optimizeModel: (path: string, profile: OptimizationProfile) =>
     invoke<OptimizationResult>("optimize_model", { path, profile }),
