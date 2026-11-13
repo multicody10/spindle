@@ -36,7 +36,7 @@ jobs:
         with:
           workspaces: |
             src-tauri -> target
-          shared-key: windows-x64-stable
+          shared-key: windows-x64-security
           cache-on-failure: true
 
       - name: Install cargo-audit
