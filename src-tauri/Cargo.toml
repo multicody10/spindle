@@ -24,6 +24,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 sha2 = "0.10.9"
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56.0"
+
 # Fast incremental builds for local development and CI validation.
 [profile.dev]
 opt-level = 0
