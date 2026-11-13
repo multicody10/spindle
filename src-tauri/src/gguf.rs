@@ -22,22 +22,40 @@ fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64> {
 }
 
 fn read_string<R: Read>(reader: &mut R, max_bytes: usize) -> io::Result<String> {
-    let length = usize::try_from(read_u64(reader)?)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "GGUF string length is too large"))?;
+    let length = usize::try_from(read_u64(reader)?).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GGUF string length is too large",
+        )
+    })?;
     if length > max_bytes {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "GGUF metadata string exceeds safety limit"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GGUF metadata string exceeds safety limit",
+        ));
     }
     let mut bytes = vec![0; length];
     reader.read_exact(&mut bytes)?;
-    String::from_utf8(bytes).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "GGUF metadata string is not UTF-8"))
+    String::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GGUF metadata string is not UTF-8",
+        )
+    })
 }
 
 fn skip_bytes<R: Seek>(reader: &mut R, count: u64) -> io::Result<()> {
     let current = reader.stream_position()?;
     let file_length = reader.seek(SeekFrom::End(0))?;
-    let target = current.checked_add(count)
+    let target = current
+        .checked_add(count)
         .filter(|target| *target <= file_length)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "GGUF metadata value extends beyond the file"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "GGUF metadata value extends beyond the file",
+            )
+        })?;
     reader.seek(SeekFrom::Start(target))?;
     Ok(())
 }
@@ -54,14 +72,22 @@ fn fixed_value_size(kind: u32) -> Option<u64> {
 
 fn skip_value<R: Read + Seek>(reader: &mut R, kind: u32, depth: usize) -> io::Result<()> {
     if depth > 4 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "GGUF metadata nesting exceeds safety limit"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GGUF metadata nesting exceeds safety limit",
+        ));
     }
-    if let Some(bytes) = fixed_value_size(kind) { return skip_bytes(reader, bytes); }
+    if let Some(bytes) = fixed_value_size(kind) {
+        return skip_bytes(reader, bytes);
+    }
     match kind {
         8 => {
             let length = read_u64(reader)?;
             if length > MAX_STRING_BYTES as u64 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "GGUF string exceeds safety limit"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "GGUF string exceeds safety limit",
+                ));
             }
             skip_bytes(reader, length)
         }
@@ -69,15 +95,23 @@ fn skip_value<R: Read + Seek>(reader: &mut R, kind: u32, depth: usize) -> io::Re
             let element_type = read_u32(reader)?;
             let count = read_u64(reader)?;
             if count > MAX_ARRAY_ENTRIES {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "GGUF metadata array exceeds safety limit"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "GGUF metadata array exceeds safety limit",
+                ));
             }
             if let Some(bytes) = fixed_value_size(element_type) {
                 return skip_bytes(reader, bytes.saturating_mul(count));
             }
-            for _ in 0..count { skip_value(reader, element_type, depth + 1)?; }
+            for _ in 0..count {
+                skip_value(reader, element_type, depth + 1)?;
+            }
             Ok(())
         }
-        _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unsupported GGUF metadata value type {kind}"))),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Unsupported GGUF metadata value type {kind}"),
+        )),
     }
 }
 
@@ -91,7 +125,9 @@ fn read_scalar<R: Read + Seek>(reader: &mut R, kind: u32) -> io::Result<Option<V
         5 => Value::from(read_i32(reader)?),
         6 => {
             let number = f32::from_le_bytes(read_array::<4, _>(reader)?);
-            serde_json::Number::from_f64(number as f64).map(Value::Number).unwrap_or(Value::Null)
+            serde_json::Number::from_f64(number as f64)
+                .map(Value::Number)
+                .unwrap_or(Value::Null)
         }
         7 => Value::Bool(read_u8(reader)? != 0),
         8 => Value::String(read_string(reader, MAX_STRING_BYTES)?),
@@ -99,9 +135,14 @@ fn read_scalar<R: Read + Seek>(reader: &mut R, kind: u32) -> io::Result<Option<V
         11 => Value::from(read_i64(reader)?),
         12 => {
             let number = f64::from_le_bytes(read_array::<8, _>(reader)?);
-            serde_json::Number::from_f64(number).map(Value::Number).unwrap_or(Value::Null)
+            serde_json::Number::from_f64(number)
+                .map(Value::Number)
+                .unwrap_or(Value::Null)
         }
-        _ => { skip_value(reader, kind, 0)?; return Ok(None); }
+        _ => {
+            skip_value(reader, kind, 0)?;
+            return Ok(None);
+        }
     };
     Ok(Some(value))
 }
@@ -111,14 +152,20 @@ fn read_u8<R: Read>(reader: &mut R) -> io::Result<u8> {
     reader.read_exact(&mut value)?;
     Ok(value[0])
 }
-fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8> { Ok(read_u8(reader)? as i8) }
+fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8> {
+    Ok(read_u8(reader)? as i8)
+}
 fn read_u16<R: Read>(reader: &mut R) -> io::Result<u16> {
     let mut value = [0; 2];
     reader.read_exact(&mut value)?;
     Ok(u16::from_le_bytes(value))
 }
-fn read_i16<R: Read>(reader: &mut R) -> io::Result<i16> { Ok(read_u16(reader)? as i16) }
-fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32> { Ok(read_u32(reader)? as i32) }
+fn read_i16<R: Read>(reader: &mut R) -> io::Result<i16> {
+    Ok(read_u16(reader)? as i16)
+}
+fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32> {
+    Ok(read_u32(reader)? as i32)
+}
 fn read_i64<R: Read>(reader: &mut R) -> io::Result<i64> {
     let mut value = [0; 8];
     reader.read_exact(&mut value)?;
@@ -131,7 +178,9 @@ fn read_array<const N: usize, R: Read>(reader: &mut R) -> io::Result<[u8; N]> {
 }
 
 fn as_usize(value: Option<&Value>) -> Option<usize> {
-    value?.as_u64().and_then(|number| usize::try_from(number).ok())
+    value?
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
 }
 
 fn quantization_label(file_type: Option<u32>) -> Option<String> {
@@ -183,18 +232,29 @@ fn quantization_label(file_type: Option<u32>) -> Option<String> {
 
 pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
     let model_path = Path::new(path);
-    if model_path.extension().and_then(|value| value.to_str()).is_none_or(|ext| !ext.eq_ignore_ascii_case("gguf")) {
+    if model_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|ext| !ext.eq_ignore_ascii_case("gguf"))
+    {
         return Err("The selected file must have a .gguf extension.".into());
     }
-    let file = File::open(model_path).map_err(|error| format!("Could not open GGUF model: {error}"))?;
+    let file =
+        File::open(model_path).map_err(|error| format!("Could not open GGUF model: {error}"))?;
     let file_size_bytes = file.metadata().map_err(|error| error.to_string())?.len();
     let mut reader = BufReader::new(file);
     let mut magic = [0; 4];
-    reader.read_exact(&mut magic).map_err(|error| format!("Could not read GGUF header: {error}"))?;
-    if &magic != b"GGUF" { return Err("The file does not contain a GGUF header.".into()); }
+    reader
+        .read_exact(&mut magic)
+        .map_err(|error| format!("Could not read GGUF header: {error}"))?;
+    if &magic != b"GGUF" {
+        return Err("The file does not contain a GGUF header.".into());
+    }
     let version = read_u32(&mut reader).map_err(|error| error.to_string())?;
     if !(2..=3).contains(&version) {
-        return Err(format!("GGUF version {version} is not supported by this metadata reader (expected v2 or v3)."));
+        return Err(format!(
+            "GGUF version {version} is not supported by this metadata reader (expected v2 or v3)."
+        ));
     }
     let tensor_count = read_u64(&mut reader).map_err(|error| error.to_string())?;
     let metadata_count = read_u64(&mut reader).map_err(|error| error.to_string())?;
@@ -218,15 +278,21 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
             || key.ends_with(".attention.key_length")
             || key.ends_with(".attention.value_length");
         if is_relevant {
-            if let Some(value) = read_scalar(&mut reader, kind).map_err(|error| format!("Invalid GGUF metadata for {key}: {error}"))? {
+            if let Some(value) = read_scalar(&mut reader, kind)
+                .map_err(|error| format!("Invalid GGUF metadata for {key}: {error}"))?
+            {
                 metadata.insert(key, value);
             }
         } else {
-            skip_value(&mut reader, kind, 0).map_err(|error| format!("Invalid GGUF metadata: {error}"))?;
+            skip_value(&mut reader, kind, 0)
+                .map_err(|error| format!("Invalid GGUF metadata: {error}"))?;
         }
     }
 
-    let architecture = metadata.get("general.architecture").and_then(Value::as_str).map(str::to_string);
+    let architecture = metadata
+        .get("general.architecture")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let arch_key = |suffix: &str| architecture.as_ref().map(|arch| format!("{arch}.{suffix}"));
     let get = |suffix: &str| arch_key(suffix).and_then(|key| metadata.get(&key));
     let layer_count = as_usize(get("block_count"));
@@ -235,11 +301,18 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
     let attention_heads = as_usize(get("attention.head_count"));
     let key_value_heads = as_usize(get("attention.head_count_kv")).or(attention_heads);
     let key_length = as_usize(get("attention.key_length")).or_else(|| {
-        embedding_length.zip(attention_heads).and_then(|(embedding, heads)| embedding.checked_div(heads))
+        embedding_length
+            .zip(attention_heads)
+            .and_then(|(embedding, heads)| embedding.checked_div(heads))
     });
     let value_length = as_usize(get("attention.value_length")).or(key_length);
-    let file_type = metadata.get("general.file_type").and_then(Value::as_u64).and_then(|number| u32::try_from(number).ok());
-    let kv_bytes_per_token = layer_count.zip(key_value_heads).zip(key_length.zip(value_length))
+    let file_type = metadata
+        .get("general.file_type")
+        .and_then(Value::as_u64)
+        .and_then(|number| u32::try_from(number).ok());
+    let kv_bytes_per_token = layer_count
+        .zip(key_value_heads)
+        .zip(key_length.zip(value_length))
         .and_then(|((layers, kv_heads), (key_dim, value_dim))| {
             (layers as u64)
                 .checked_mul(kv_heads as u64)?
@@ -248,7 +321,11 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
         });
 
     Ok(ModelMetadata {
-        path: model_path.canonicalize().unwrap_or_else(|_| model_path.to_path_buf()).to_string_lossy().to_string(),
+        path: model_path
+            .canonicalize()
+            .unwrap_or_else(|_| model_path.to_path_buf())
+            .to_string_lossy()
+            .to_string(),
         file_size_bytes,
         gguf_version: version,
         tensor_count,
@@ -271,8 +348,12 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    fn put_u32(writer: &mut Vec<u8>, value: u32) { writer.extend(value.to_le_bytes()); }
-    fn put_u64(writer: &mut Vec<u8>, value: u64) { writer.extend(value.to_le_bytes()); }
+    fn put_u32(writer: &mut Vec<u8>, value: u32) {
+        writer.extend(value.to_le_bytes());
+    }
+    fn put_u64(writer: &mut Vec<u8>, value: u64) {
+        writer.extend(value.to_le_bytes());
+    }
     fn put_string(writer: &mut Vec<u8>, value: &str) {
         put_u64(writer, value.len() as u64);
         writer.extend(value.as_bytes());
@@ -316,7 +397,8 @@ mod tests {
             put_u32(&mut bytes, value);
         }
 
-        let path = std::env::temp_dir().join(format!("spindle-gguf-test-{}.gguf", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("spindle-gguf-test-{}.gguf", std::process::id()));
         let mut file = File::create(&path).unwrap();
         file.write_all(&bytes).unwrap();
         drop(file);
@@ -341,7 +423,10 @@ mod tests {
         put_u32(&mut bytes, 8);
         put_u64(&mut bytes, 4096);
 
-        let path = std::env::temp_dir().join(format!("spindle-gguf-truncated-{}.gguf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "spindle-gguf-truncated-{}.gguf",
+            std::process::id()
+        ));
         let mut file = File::create(&path).unwrap();
         file.write_all(&bytes).unwrap();
         drop(file);

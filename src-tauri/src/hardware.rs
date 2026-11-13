@@ -40,7 +40,9 @@ fn memory_status() -> (u64, u64) {
         // SAFETY: GlobalMemoryStatusEx writes into a correctly sized, initialized
         // MEMORYSTATUSEX structure owned by this function.
         let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
-        if ok != 0 { return (status.total_phys, status.avail_phys); }
+        if ok != 0 {
+            return (status.total_phys, status.avail_phys);
+        }
     }
     (0, 0)
 }
@@ -48,18 +50,31 @@ fn memory_status() -> (u64, u64) {
 fn nvidia_devices() -> Vec<GpuDevice> {
     let mut candidates = Vec::new();
     if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        candidates.push(std::path::PathBuf::from(program_files)
-            .join("NVIDIA Corporation").join("NVSMI").join("nvidia-smi.exe"));
+        candidates.push(
+            std::path::PathBuf::from(program_files)
+                .join("NVIDIA Corporation")
+                .join("NVSMI")
+                .join("nvidia-smi.exe"),
+        );
     }
     if let Some(program_files) = std::env::var_os("ProgramW6432") {
-        candidates.push(std::path::PathBuf::from(program_files)
-            .join("NVIDIA Corporation").join("NVSMI").join("nvidia-smi.exe"));
+        candidates.push(
+            std::path::PathBuf::from(program_files)
+                .join("NVIDIA Corporation")
+                .join("NVSMI")
+                .join("nvidia-smi.exe"),
+        );
     }
 
     for executable in candidates {
-        if !executable.is_file() { continue; }
+        if !executable.is_file() {
+            continue;
+        }
         let output = match Command::new(&executable)
-            .args(["--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"])
+            .args([
+                "--query-gpu=name,memory.total,memory.free",
+                "--format=csv,noheader,nounits",
+            ])
             .output()
         {
             Ok(output) if output.status.success() => output,
@@ -69,8 +84,12 @@ fn nvidia_devices() -> Vec<GpuDevice> {
         let mut devices = Vec::new();
         for line in text.lines() {
             let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
-            if fields.len() != 3 { continue; }
-            let (Ok(total), Ok(free)) = (fields[1].parse::<u64>(), fields[2].parse::<u64>()) else { continue; };
+            if fields.len() != 3 {
+                continue;
+            }
+            let (Ok(total), Ok(free)) = (fields[1].parse::<u64>(), fields[2].parse::<u64>()) else {
+                continue;
+            };
             devices.push(GpuDevice {
                 vendor: "NVIDIA".into(),
                 name: fields[0].to_string(),
@@ -79,16 +98,21 @@ fn nvidia_devices() -> Vec<GpuDevice> {
                 detection_method: "NVIDIA Management Library CLI (nvidia-smi)".into(),
             });
         }
-        if !devices.is_empty() { return devices; }
+        if !devices.is_empty() {
+            return devices;
+        }
     }
     Vec::new()
 }
 
 pub fn detect() -> HardwareProfile {
     let (ram_total_bytes, ram_available_bytes) = memory_status();
-    let logical_threads = std::thread::available_parallelism().map(|v| v.get()).unwrap_or(1);
+    let logical_threads = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1);
     let cpu_name = std::env::var("PROCESSOR_IDENTIFIER")
-        .ok().filter(|value| !value.trim().is_empty());
+        .ok()
+        .filter(|value| !value.trim().is_empty());
     let gpus = nvidia_devices();
     let mut detection_notes = vec![
         "System RAM values are obtained from Windows GlobalMemoryStatusEx; available memory is a point-in-time measurement.".into(),
@@ -99,7 +123,9 @@ pub fn detect() -> HardwareProfile {
         detection_notes.push("System memory detection is unavailable on this platform; automatic memory budgeting will be conservative.".into());
     }
     if gpus.is_empty() {
-        detection_notes.push("No NVIDIA GPU was detected. This does not prove that the machine has no GPU.".into());
+        detection_notes.push(
+            "No NVIDIA GPU was detected. This does not prove that the machine has no GPU.".into(),
+        );
     }
 
     HardwareProfile {

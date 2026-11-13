@@ -5,8 +5,16 @@ use crate::domain::{
 const GIB: u64 = 1024 * 1024 * 1024;
 const COMPUTE_HEADROOM: u64 = 768 * 1024 * 1024;
 
-fn preferred_context(profile: OptimizationProfile, hardware: &HardwareProfile, model: &ModelMetadata) -> usize {
-    let model_limit = model.context_length.filter(|limit| *limit > 0).unwrap_or(8192).min(131072);
+fn preferred_context(
+    profile: OptimizationProfile,
+    hardware: &HardwareProfile,
+    model: &ModelMetadata,
+) -> usize {
+    let model_limit = model
+        .context_length
+        .filter(|limit| *limit > 0)
+        .unwrap_or(8192)
+        .min(131072);
     let minimum_context = model_limit.min(2048);
     let ram_gib = hardware.ram_total_bytes / GIB;
     let target = match profile {
@@ -24,8 +32,11 @@ fn preferred_context(profile: OptimizationProfile, hardware: &HardwareProfile, m
 }
 
 fn format_bytes(bytes: u64) -> String {
-    if bytes >= GIB { format!("{:.2} GiB", bytes as f64 / GIB as f64) }
-    else { format!("{:.0} MiB", bytes as f64 / (1024.0 * 1024.0)) }
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    } else {
+        format!("{:.0} MiB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 fn estimate_context_budget(
@@ -51,7 +62,11 @@ fn estimate_context_budget(
     let layers = model.layer_count.unwrap_or(0);
     let model_bytes = model.file_size_bytes;
     let slots = match profile {
-        OptimizationProfile::MaximumPerformance if ram_available >= 32 * GIB && gpu_total >= 12 * GIB => 2,
+        OptimizationProfile::MaximumPerformance
+            if ram_available >= 32 * GIB && gpu_total >= 12 * GIB =>
+        {
+            2
+        }
         _ => 1,
     };
     let bytes_per_token = model.kv_bytes_per_token;
@@ -62,13 +77,22 @@ fn estimate_context_budget(
     let target = preferred_context(profile, hardware, model);
     // Without architecture data, keep the initial recommendation small and reserve a
     // conservative memory allowance instead of treating an unknown KV cache as zero.
-    let target = if bytes_per_token.is_none() { target.min(4096) } else { target };
-    let minimum_context = model.context_length
+    let target = if bytes_per_token.is_none() {
+        target.min(4096)
+    } else {
+        target
+    };
+    let minimum_context = model
+        .context_length
         .filter(|limit| *limit > 0)
         .unwrap_or(8192)
         .min(2048);
     let mut candidate = target;
-    let unknown_kv_reserve = if bytes_per_token.is_none() { 2 * GIB } else { 0 };
+    let unknown_kv_reserve = if bytes_per_token.is_none() {
+        2 * GIB
+    } else {
+        0
+    };
 
     let (context, gpu_layers, slots, kv_on_gpu) = loop {
         let kv_bytes = bytes_per_token
@@ -87,11 +111,16 @@ fn estimate_context_budget(
             .saturating_sub(unknown_kv_reserve);
         let gpu_layers = if layers > 0 && model_bytes > 0 {
             ((gpu_weight_budget as f64 / model_bytes as f64) * layers as f64)
-                .floor().clamp(0.0, layers as f64) as usize
-        } else { 0 };
+                .floor()
+                .clamp(0.0, layers as f64) as usize
+        } else {
+            0
+        };
         let gpu_weight_bytes = if layers > 0 {
             model_bytes.saturating_mul(gpu_layers as u64) / layers as u64
-        } else { 0 };
+        } else {
+            0
+        };
         let cpu_weight_bytes = model_bytes.saturating_sub(gpu_weight_bytes);
         let cpu_required = cpu_weight_bytes
             .saturating_add(cpu_kv)
@@ -116,7 +145,11 @@ fn estimate_context_budget(
     if let Some(per_token) = bytes_per_token {
         notes.push(format!(
             "Estimated KV-cache footprint at {context} tokens and {slots} sequence slot(s): {}.",
-            format_bytes(per_token.saturating_mul(context as u64).saturating_mul(slots as u64))
+            format_bytes(
+                per_token
+                    .saturating_mul(context as u64)
+                    .saturating_mul(slots as u64)
+            )
         ));
     }
     notes.push("System-memory budgeting reserves at least 2 GiB; available memory can change while other applications run.".into());
@@ -141,7 +174,9 @@ pub fn optimize(
     let logical_threads = hardware.logical_threads.max(1);
     let (batch_size, micro_batch_size) = match profile {
         OptimizationProfile::MemoryEfficient => (64, 16),
-        OptimizationProfile::MaximumPerformance if hardware.ram_total_bytes >= 32 * GIB => (512, 128),
+        OptimizationProfile::MaximumPerformance if hardware.ram_total_bytes >= 32 * GIB => {
+            (512, 128)
+        }
         OptimizationProfile::MaximumPerformance => (256, 64),
         _ if hardware.ram_total_bytes < 16 * GIB => (128, 32),
         _ => (256, 64),
@@ -149,9 +184,15 @@ pub fn optimize(
     let threads = (logical_threads / 2).clamp(1, 16);
     let batch_threads = logical_threads.max(threads).min(32);
 
-    if model.file_size_bytes > hardware.ram_total_bytes.saturating_add(
-        hardware.gpus.iter().map(|gpu| gpu.total_vram_bytes).sum::<u64>()
-    ) {
+    if model.file_size_bytes
+        > hardware.ram_total_bytes.saturating_add(
+            hardware
+                .gpus
+                .iter()
+                .map(|gpu| gpu.total_vram_bytes)
+                .sum::<u64>(),
+        )
+    {
         warnings.push("The model file is larger than the combined detected RAM and VRAM capacity. Loading is unlikely to succeed without additional memory or a smaller quantization.".into());
     }
     if profile == OptimizationProfile::Custom {
@@ -163,7 +204,10 @@ pub fn optimize(
 
     let mut configuration = ModelConfiguration::new(model.path.clone(), profile);
     configuration.runtime.context_tokens = context_tokens;
-    configuration.generation.max_output_tokens = configuration.generation.max_output_tokens.min(context_tokens);
+    configuration.generation.max_output_tokens = configuration
+        .generation
+        .max_output_tokens
+        .min(context_tokens);
     configuration.runtime.gpu_layers = gpu_layers;
     configuration.runtime.threads = threads;
     configuration.runtime.batch_threads = batch_threads;
@@ -173,7 +217,12 @@ pub fn optimize(
     configuration.runtime.kv_cache_on_gpu = kv_cache_on_gpu;
     configuration.optimization_notes = notes;
 
-    OptimizationResult { model, hardware, configuration, warnings }
+    OptimizationResult {
+        model,
+        hardware,
+        configuration,
+        warnings,
+    }
 }
 
 #[cfg(test)]
@@ -183,20 +232,40 @@ mod tests {
 
     fn sample_model() -> ModelMetadata {
         ModelMetadata {
-            path: "sample.gguf".into(), file_size_bytes: 4 * GIB, gguf_version: 3,
-            tensor_count: 100, architecture: Some("llama".into()), layer_count: Some(32),
-            context_length: Some(32768), embedding_length: Some(4096), attention_heads: Some(32),
-            key_value_heads: Some(8), key_length: Some(128), value_length: Some(128),
-            file_type: Some(15), quantization: Some("Q4_K_M".into()), kv_bytes_per_token: Some(131_072),
+            path: "sample.gguf".into(),
+            file_size_bytes: 4 * GIB,
+            gguf_version: 3,
+            tensor_count: 100,
+            architecture: Some("llama".into()),
+            layer_count: Some(32),
+            context_length: Some(32768),
+            embedding_length: Some(4096),
+            attention_heads: Some(32),
+            key_value_heads: Some(8),
+            key_length: Some(128),
+            value_length: Some(128),
+            file_type: Some(15),
+            quantization: Some("Q4_K_M".into()),
+            kv_bytes_per_token: Some(131_072),
         }
     }
 
     #[test]
     fn memory_limited_hardware_gets_conservative_settings() {
         let hardware = HardwareProfile {
-            os: "windows".into(), cpu_name: Some("test".into()), logical_threads: 8, physical_cores: None,
-            ram_total_bytes: 16 * GIB, ram_available_bytes: 10 * GIB,
-            gpus: vec![GpuDevice { vendor: "NVIDIA".into(), name: "test gpu".into(), total_vram_bytes: 8 * GIB, available_vram_bytes: 7 * GIB, detection_method: "fixture".into() }],
+            os: "windows".into(),
+            cpu_name: Some("test".into()),
+            logical_threads: 8,
+            physical_cores: None,
+            ram_total_bytes: 16 * GIB,
+            ram_available_bytes: 10 * GIB,
+            gpus: vec![GpuDevice {
+                vendor: "NVIDIA".into(),
+                name: "test gpu".into(),
+                total_vram_bytes: 8 * GIB,
+                available_vram_bytes: 7 * GIB,
+                detection_method: "fixture".into(),
+            }],
             detection_notes: vec![],
         };
         let result = optimize(sample_model(), hardware, OptimizationProfile::Automatic);
@@ -204,7 +273,6 @@ mod tests {
         assert!(result.configuration.runtime.gpu_layers <= 32);
         assert_eq!(result.configuration.runtime.parallel_slots, 1);
     }
-
 
     #[test]
     fn maximum_context_never_exceeds_a_small_model_limit() {
@@ -228,8 +296,14 @@ mod tests {
     #[test]
     fn no_gpu_never_recommends_gpu_offload() {
         let hardware = HardwareProfile {
-            os: "windows".into(), cpu_name: None, logical_threads: 4, physical_cores: None,
-            ram_total_bytes: 8 * GIB, ram_available_bytes: 5 * GIB, gpus: vec![], detection_notes: vec![],
+            os: "windows".into(),
+            cpu_name: None,
+            logical_threads: 4,
+            physical_cores: None,
+            ram_total_bytes: 8 * GIB,
+            ram_available_bytes: 5 * GIB,
+            gpus: vec![],
+            detection_notes: vec![],
         };
         let result = optimize(sample_model(), hardware, OptimizationProfile::Balanced);
         assert_eq!(result.configuration.runtime.gpu_layers, 0);
