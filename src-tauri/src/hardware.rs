@@ -1,5 +1,9 @@
 use crate::domain::{GpuDevice, HardwareProfile};
-use std::{collections::HashSet, path::{Path, PathBuf}, process::Command};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const MIB: u64 = 1024 * 1024;
 
@@ -120,23 +124,18 @@ fn nvidia_smi_candidates() -> Vec<PathBuf> {
 
     for variable in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
         if let Some(program_files) = std::env::var_os(variable) {
-            add(
-                PathBuf::from(program_files)
-                    .join("NVIDIA Corporation")
-                    .join("NVSMI")
-                    .join("nvidia-smi.exe"),
-            );
+            add(PathBuf::from(program_files)
+                .join("NVIDIA Corporation")
+                .join("NVSMI")
+                .join("nvidia-smi.exe"));
         }
     }
 
-    if let Some(system_root) =
-        std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))
+    if let Some(system_root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))
     {
-        add(
-            PathBuf::from(system_root)
-                .join("System32")
-                .join("nvidia-smi.exe"),
-        );
+        add(PathBuf::from(system_root)
+            .join("System32")
+            .join("nvidia-smi.exe"));
     }
 
     if let Some(path) = std::env::var_os("PATH") {
@@ -197,10 +196,7 @@ struct NvmlMemory {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn LoadLibraryW(file_name: *const u16) -> *mut std::ffi::c_void;
-    fn GetProcAddress(
-        module: *mut std::ffi::c_void,
-        name: *const u8,
-    ) -> *mut std::ffi::c_void;
+    fn GetProcAddress(module: *mut std::ffi::c_void, name: *const u8) -> *mut std::ffi::c_void;
     fn FreeLibrary(module: *mut std::ffi::c_void) -> i32;
 }
 
@@ -211,20 +207,14 @@ type NvmlShutdown = unsafe extern "C" fn() -> i32;
 #[cfg(target_os = "windows")]
 type NvmlDeviceGetCount = unsafe extern "C" fn(*mut u32) -> i32;
 #[cfg(target_os = "windows")]
-type NvmlDeviceGetHandleByIndex =
-    unsafe extern "C" fn(u32, *mut *mut std::ffi::c_void) -> i32;
+type NvmlDeviceGetHandleByIndex = unsafe extern "C" fn(u32, *mut *mut std::ffi::c_void) -> i32;
 #[cfg(target_os = "windows")]
-type NvmlDeviceGetName =
-    unsafe extern "C" fn(*mut std::ffi::c_void, *mut i8, u32) -> i32;
+type NvmlDeviceGetName = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i8, u32) -> i32;
 #[cfg(target_os = "windows")]
-type NvmlDeviceGetMemoryInfo =
-    unsafe extern "C" fn(*mut std::ffi::c_void, *mut NvmlMemory) -> i32;
+type NvmlDeviceGetMemoryInfo = unsafe extern "C" fn(*mut std::ffi::c_void, *mut NvmlMemory) -> i32;
 
 #[cfg(target_os = "windows")]
-unsafe fn nvml_symbol<T: Copy>(
-    module: *mut std::ffi::c_void,
-    name: &'static [u8],
-) -> Option<T> {
+unsafe fn nvml_symbol<T: Copy>(module: *mut std::ffi::c_void, name: &'static [u8]) -> Option<T> {
     // SAFETY: The supplied symbol names are NUL-terminated static strings. The
     // returned address is checked before copying it into the matching function
     // pointer type declared for the NVML API.
@@ -251,8 +241,7 @@ fn nvml_candidates() -> Vec<PathBuf> {
             );
         }
     }
-    if let Some(system_root) =
-        std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))
+    if let Some(system_root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))
     {
         candidates.push(PathBuf::from(system_root).join("System32").join("nvml.dll"));
     }
@@ -268,7 +257,11 @@ fn nvml_devices() -> Vec<GpuDevice> {
         if !path.is_file() {
             continue;
         }
-        let wide = path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+        let wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
         // SAFETY: wide is a valid NUL-terminated UTF-16 path. The returned
         // module handle is released with FreeLibrary below.
         let module = unsafe { LoadLibraryW(wide.as_ptr()) };
@@ -284,25 +277,26 @@ fn nvml_devices() -> Vec<GpuDevice> {
                 .or_else(|| nvml_symbol::<NvmlDeviceGetCount>(module, b"nvmlDeviceGetCount\0"))
         };
         let get_handle = unsafe {
-            nvml_symbol::<NvmlDeviceGetHandleByIndex>(
-                module,
-                b"nvmlDeviceGetHandleByIndex_v2\0",
-            )
-            .or_else(|| {
-                nvml_symbol::<NvmlDeviceGetHandleByIndex>(
-                    module,
-                    b"nvmlDeviceGetHandleByIndex\0",
-                )
-            })
+            nvml_symbol::<NvmlDeviceGetHandleByIndex>(module, b"nvmlDeviceGetHandleByIndex_v2\0")
+                .or_else(|| {
+                    nvml_symbol::<NvmlDeviceGetHandleByIndex>(
+                        module,
+                        b"nvmlDeviceGetHandleByIndex\0",
+                    )
+                })
         };
-        let get_name =
-            unsafe { nvml_symbol::<NvmlDeviceGetName>(module, b"nvmlDeviceGetName\0") };
-        let get_memory = unsafe {
-            nvml_symbol::<NvmlDeviceGetMemoryInfo>(module, b"nvmlDeviceGetMemoryInfo\0")
-        };
+        let get_name = unsafe { nvml_symbol::<NvmlDeviceGetName>(module, b"nvmlDeviceGetName\0") };
+        let get_memory =
+            unsafe { nvml_symbol::<NvmlDeviceGetMemoryInfo>(module, b"nvmlDeviceGetMemoryInfo\0") };
 
-        let (Some(init), Some(shutdown), Some(get_count), Some(get_handle), Some(get_name), Some(get_memory)) =
-            (init, shutdown, get_count, get_handle, get_name, get_memory)
+        let (
+            Some(init),
+            Some(shutdown),
+            Some(get_count),
+            Some(get_handle),
+            Some(get_name),
+            Some(get_memory),
+        ) = (init, shutdown, get_count, get_handle, get_name, get_memory)
         else {
             // SAFETY: module is a live handle returned by LoadLibraryW.
             unsafe { FreeLibrary(module) };
@@ -330,9 +324,15 @@ fn nvml_devices() -> Vec<GpuDevice> {
                 if unsafe { get_name(device, name.as_mut_ptr(), name.len() as u32) } != 0 {
                     continue;
                 }
-                let end = name.iter().position(|byte| *byte == 0).unwrap_or(name.len());
+                let end = name
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(name.len());
                 let name = String::from_utf8_lossy(
-                    &name[..end].iter().map(|byte| *byte as u8).collect::<Vec<_>>(),
+                    &name[..end]
+                        .iter()
+                        .map(|byte| *byte as u8)
+                        .collect::<Vec<_>>(),
                 )
                 .trim()
                 .to_owned();
