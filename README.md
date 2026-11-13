@@ -32,15 +32,15 @@ Requirements:
 
 Commands:
 
-- Install frontend dependencies: **npm install**
+- Install frontend dependencies: **npm ci**
 - Type-check and build: **npm run check**
 - Start the desktop app: **npm run desktop**
 
 Rust validation:
 
 - **cargo fmt --manifest-path src-tauri/Cargo.toml -- --check**
-- **cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings**
-- **cargo test --manifest-path src-tauri/Cargo.toml**
+- **cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings**
+- **cargo test --locked --manifest-path src-tauri/Cargo.toml**
 
 Build a Windows installer with **npm run package:windows**.
 
