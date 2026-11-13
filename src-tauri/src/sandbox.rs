@@ -148,10 +148,14 @@ fn run_validation_windows(
         return Err("No supported Cargo.toml was found at the project root or src-tauri/Cargo.toml.".into());
     };
     let manifest = manifest.to_string_lossy().into_owned();
-    let cargo = find_executable("cargo.exe")?;
-    let rustc = find_executable("rustc.exe")?;
-    let rustfmt = find_executable("rustfmt.exe")?;
     let rustup_home = rustup_home()?;
+    // Resolve Rustup proxies on the trusted host before entering LPAC. The
+    // worker must execute the installed toolchain binaries directly because
+    // Rustup needs access to host profile metadata that LPAC intentionally
+    // cannot use.
+    let cargo = resolve_rustup_tool("cargo", &worktree, &rustup_home)?;
+    let rustc = resolve_rustup_tool("rustc", &worktree, &rustup_home)?;
+    let rustfmt = resolve_rustup_tool("rustfmt", &worktree, &rustup_home)?;
     let profile = AppContainerProfile::ensure(
         "com.spindle.agent.worker",
         "Spindle Restricted Agent Worker",
@@ -234,6 +238,8 @@ fn run_validation_windows(
         (OsString::from("ComSpec"), system32.join("cmd.exe").into_os_string()),
         (OsString::from("PATHEXT"), OsString::from(".COM;.EXE;.BAT;.CMD")),
         (OsString::from("PATH"), path_value),
+        (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
+        (OsString::from("RUSTFMT"), rustfmt.as_os_str().to_owned()),
         (OsString::from("USERPROFILE"), profile_home.as_os_str().to_owned()),
         (OsString::from("HOME"), profile_home.as_os_str().to_owned()),
         (
@@ -525,6 +531,54 @@ fn find_executable(name: &str) -> Result<PathBuf, String> {
         }
     }
     Err(format!("{name} was not found on PATH. Install the Rust toolchain and restart Spindle."))
+}
+
+#[cfg(windows)]
+fn resolve_rustup_tool(
+    name: &str,
+    worktree: &Path,
+    rustup_home: &Path,
+) -> Result<PathBuf, String> {
+    use std::process::Command;
+
+    let rustup = find_executable("rustup.exe")?;
+    let output = Command::new(rustup)
+        .args(["which", name])
+        .current_dir(worktree)
+        .env("RUSTUP_HOME", rustup_home)
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .output()
+        .map_err(|error| format!("Could not resolve the installed Rust {name} executable: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Rustup could not resolve an installed {name} executable without installing a toolchain: {}",
+            detail.trim()
+        ));
+    }
+
+    let resolved = String::from_utf8_lossy(&output.stdout);
+    let resolved = resolved.trim();
+    if resolved.is_empty() {
+        return Err(format!("Rustup returned an empty path for the {name} executable."));
+    }
+    let executable = PathBuf::from(resolved)
+        .canonicalize()
+        .map_err(|error| format!("Could not canonicalize the installed Rust {name} executable: {error}"))?;
+    let toolchains = rustup_home.join("toolchains")
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the installed Rust toolchain directory: {error}"))?;
+    if !executable.starts_with(&toolchains)
+        || !executable.is_file()
+        || !executable.file_name().is_some_and(|file| {
+            file.to_string_lossy().eq_ignore_ascii_case(&format!("{name}.exe"))
+        })
+    {
+        return Err(format!(
+            "Rustup resolved {name} outside the installed toolchain directory; refusing to launch it."
+        ));
+    }
+    Ok(executable)
 }
 
 #[cfg(windows)]
