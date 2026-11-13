@@ -322,69 +322,6 @@ fn default_model_roots(
     roots
 }
 
-fn default_model_roots(
-    home_directory: Option<&Path>,
-    local_app_data_directory: Option<&Path>,
-    roaming_app_data_directory: Option<&Path>,
-    lm_studio_override: Option<PathBuf>,
-    gpt4all_override: Option<PathBuf>,
-    jan_override: Option<PathBuf>,
-    koboldcpp_override: Option<PathBuf>,
-) -> Vec<(String, PathBuf)> {
-    let mut roots = Vec::new();
-
-    let lm_studio = lm_studio_override
-        .clone()
-        .or_else(|| home_directory.map(|home| home.join(".lmstudio").join("models")));
-    if let Some(path) = lm_studio {
-        roots.push((
-            if lm_studio_override.is_some() {
-                "LM Studio (configured)"
-            } else {
-                "LM Studio"
-            }
-            .into(),
-            path,
-        ));
-    }
-
-    let gpt4all = gpt4all_override
-        .clone()
-        .or_else(|| local_app_data_directory.map(|base| base.join("nomic.ai").join("GPT4All")));
-    if let Some(path) = gpt4all {
-        roots.push((
-            if gpt4all_override.is_some() {
-                "GPT4All (configured)"
-            } else {
-                "GPT4All"
-            }
-            .into(),
-            path,
-        ));
-    }
-
-    let jan = jan_override.clone().or_else(|| {
-        roaming_app_data_directory.map(|base| base.join("Jan").join("data").join("models"))
-    });
-    if let Some(path) = jan {
-        roots.push((
-            if jan_override.is_some() {
-                "Jan (configured)"
-            } else {
-                "Jan"
-            }
-            .into(),
-            path,
-        ));
-    }
-
-    if let Some(path) = koboldcpp_override {
-        roots.push(("KoboldCpp (configured)".to_owned(), path));
-    }
-
-    roots
-}
-
 fn discover_from_roots(
     documents_directory: &Path,
     roots: Vec<(String, PathBuf)>,
@@ -591,23 +528,16 @@ mod tests {
         let custom_models = temporary.join("External Models");
         fs::create_dir_all(&custom_home).unwrap();
         fs::create_dir_all(&custom_models).unwrap();
+        fs::create_dir_all(&home).unwrap();
         fs::write(
             home.join(".lmstudio-home-pointer"),
             custom_home.to_string_lossy().as_bytes(),
         )
-        .or_else(|_| {
-            fs::create_dir_all(&home)?;
-            fs::write(
-                home.join(".lmstudio-home-pointer"),
-                custom_home.to_string_lossy().as_bytes(),
-            )
-        })
         .unwrap();
-        fs::write(
-            custom_home.join("settings.json"),
-            format!(r#"{{"downloadsFolder":"{}"}}"#, custom_models.display()),
-        )
-        .unwrap();
+        let settings = serde_json::json!({
+            "downloadsFolder": custom_models.to_string_lossy()
+        });
+        fs::write(custom_home.join("settings.json"), settings.to_string()).unwrap();
 
         let roots = default_model_roots(Some(&home), None, None, no_overrides());
         assert!(roots.iter().any(|(name, path)| {
@@ -625,11 +555,10 @@ mod tests {
         let jan_config = roaming.join("Jan");
         let custom_data = temporary.join("Jan Data");
         fs::create_dir_all(&jan_config).unwrap();
-        fs::write(
-            jan_config.join("settings.json"),
-            format!(r#"{{"data_folder":"{}"}}"#, custom_data.display()),
-        )
-        .unwrap();
+        let settings = serde_json::json!({
+            "data_folder": custom_data.to_string_lossy()
+        });
+        fs::write(jan_config.join("settings.json"), settings.to_string()).unwrap();
 
         let roots = default_model_roots(
             None,
