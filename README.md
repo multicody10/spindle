@@ -4,7 +4,7 @@
 
 Spindle is the successor project to Rivet, designed around a Rust/Tauri application core, model-agnostic provider architecture, hardware-aware model configuration, and security boundaries that do not rely on model compliance.
 
-> **Current status:** Foundation milestone. The desktop shell, GGUF metadata inspection, Windows hardware inventory, explainable configuration recommendations, SQLite persistence, and signed-updater integration points are being established. Live inference, agent execution, session orchestration, and OS-level command isolation are not implemented yet.
+> **Current status:** Foundation milestone. The desktop shell, GGUF metadata inspection, Windows hardware inventory, explainable configuration recommendations, SQLite persistence, local Ollama/LM Studio discovery, and signed Windows releases are implemented. Live inference, agent execution, session orchestration, and OS-level command isolation are not implemented yet.
 
 ## What works in this foundation
 
@@ -13,9 +13,10 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Calculate conservative llama.cpp-oriented settings using model metadata, available memory, context/KV-cache estimates, and an explicit optimization profile.
 - Keep load-time runtime settings separate from generation sampling settings.
 - Save per-model configurations and reusable named presets in a local SQLite database.
+- Discover local Ollama and LM Studio endpoints and list available models without launching provider processes.
 - Validate configuration ranges in the Rust backend.
-- Run the frontend and Rust validation workflows on Windows.
-- Build a Windows x64 NSIS installer and prepare signed Tauri updater artifacts after a project-specific signing key is configured.
+- Run frontend, Rust, CodeQL, supply-chain, and Windows NSIS package validation on Windows.
+- Build and publish signed Windows NSIS releases with an in-app Tauri updater manifest.
 
 ## What is deliberately not claimed
 
@@ -58,11 +59,13 @@ The release workflow stops before packaging if the public key placeholder or sig
 
 ## Data and privacy
 
-Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. There is no telemetry implementation and the hardware profile is not uploaded. A future inference provider will need an explicit local/remote selection and a clear network boundary.
+Model paths and configuration profiles are stored in the OS application data directory in spindle.sqlite3. Model files are opened read-only for metadata inspection. Local provider discovery makes bounded GET requests only to fixed loopback endpoints; there is no telemetry implementation and the hardware profile is not uploaded. Live inference will retain an explicit provider boundary.
 
 ## Project documentation
 
 - Architecture: docs/ARCHITECTURE.md
+- Local provider discovery: docs/LOCAL_PROVIDERS.md
+- Windows installation and update scope: docs/DISTRIBUTION.md
 - Threat model: docs/THREAT_MODEL.md
 - Model configuration: docs/MODEL_CONFIGURATION.md
 - Research and competitive analysis: docs/RESEARCH.md
