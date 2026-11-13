@@ -308,7 +308,7 @@ function App() {
             <>
           <section className="notice warning">
             <strong>Foundation build</strong>
-            <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, and local configuration storage are implemented. Agent execution and persistent project sessions are still in development. Saved runtime values remain recommendations until a provider can apply and report them.</span>
+            <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, local configuration storage, and a managed llama.cpp runtime are implemented. llama.cpp applies load-time settings and reports the values exposed by its API; some hardware and load-time settings remain unverified. Agent execution and persistent project sessions are still in development.</span>
           </section>
 
           <section className="section-heading">
