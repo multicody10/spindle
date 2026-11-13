@@ -22,12 +22,16 @@ function boundedChatHistory(messages: ChatMessage[]): ChatMessage[] | null {
   );
   if (history.length === 0) return null;
 
-  if (encoder.encode(history[history.length - 1].content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
+  const lastMessage = history.at(-1);
+  if (!lastMessage || encoder.encode(lastMessage.content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
     return null;
   }
 
   for (let index = 0; index < history.length - 1;) {
-    if (encoder.encode(history[index].content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
+    const message = history[index];
+    if (!message) {
+      index++;
+    } else if (encoder.encode(message.content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
       history.splice(index, 1);
     } else {
       index++;
