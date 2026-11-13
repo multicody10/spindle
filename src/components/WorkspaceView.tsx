@@ -69,6 +69,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       } else {
         setListing(null);
         setSelectedPath("");
+        setSelectedRevision("");
         setEditorContent("");
       }
     } catch (reason) {
@@ -138,7 +139,6 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
     try {
       const file = await api.readWorkspaceFile(grant.sessionId, relativePath);
       setSelectedPath(file.relativePath);
-      setSelectedRevision(file.revision);
       setEditorContent(file.content);
       setSelectedRevision(file.revision);
       setDirty(false);
@@ -191,6 +191,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
     try {
       const file = await api.readWorkspaceFile(grant.sessionId, selectedPath);
       setEditorContent(file.content);
+      setSelectedRevision(file.revision);
       setDirty(false);
     } catch (reason) {
       setError(String(reason));
