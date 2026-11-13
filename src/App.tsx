@@ -284,7 +284,7 @@ function App() {
     generation: { ...current.generation, [key]: value }
   }));
 
-  const openProjectSession = (project: Project, session: ProjectSession) => {
+  const openProjectSession = (_project: Project, session: ProjectSession) => {
     setActiveSession(session);
     setActiveView("chat");
   };
