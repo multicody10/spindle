@@ -38,6 +38,8 @@ This roadmap records implementation status rather than implying the full product
 ## Core developer workflow
 
 - [ ] Projects and independent sessions.
+- [x] Temporary project workspace grants with read-only defaults and separately granted write access.
+- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and file writes.
 - [ ] SQLite migrations for project/session/task state.
 - [ ] Agent planner and execution state machine.
 - [ ] Read-only planning mode.
@@ -48,10 +50,11 @@ This roadmap records implementation status rather than implying the full product
 
 ## Security and reliability
 
-- [ ] Permission broker and revocable permission grants.
+- [x] Revocable in-memory workspace read/write grants.
+- [ ] General permission broker for agent tools, execution, network, and extensions.
 - [ ] Windows AppContainer/LPAC execution worker feasibility validation.
 - [ ] Restricted token, Job Object and process mitigation policies.
-- [ ] Reparse-point-safe file service and race-resistant operations.
+- [ ] Handle-relative, reparse-point-safe file service and race-resistant operations.
 - [ ] Network restrictions and controlled egress.
 - [ ] Environment/secret redaction.
 - [ ] Threat-driven integration tests on Windows.
