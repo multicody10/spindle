@@ -1,6 +1,7 @@
 mod chat;
 mod domain;
 mod gguf;
+mod hash;
 mod hardware;
 mod optimizer;
 mod persistence;

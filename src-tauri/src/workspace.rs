@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sha2::{Digest, Sha256};
+use crate::hash::sha256_hex;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -265,7 +265,7 @@ impl WorkspaceManager {
         }
         let bytes = read_bounded(&path, MAX_FILE_BYTES)
             .map_err(|error| format!("Could not read the selected workspace file: {error}"))?;
-        let revision = format!("{:x}", Sha256::digest(&bytes));
+        let revision = sha256_hex(&bytes);
         let content = String::from_utf8(bytes).map_err(|_| {
             "The selected file is not valid UTF-8 text and cannot be opened in the editor."
                 .to_string()
@@ -328,7 +328,7 @@ impl WorkspaceManager {
                 let current = read_bounded(&canonical, MAX_FILE_BYTES).map_err(|error| {
                     format!("Could not verify the current file revision: {error}")
                 })?;
-                let current_revision = format!("{:x}", Sha256::digest(&current));
+                let current_revision = sha256_hex(&current);
                 if current_revision != expected_revision {
                     return Err("This file changed outside Spindle after it was opened. Reopen it and reapply your edits to avoid overwriting newer work.".into());
                 }
@@ -373,7 +373,7 @@ impl WorkspaceManager {
         Ok(WorkspaceWriteResult {
             relative_path: relative_path.replace('\\', "/"),
             bytes_written: content.len(),
-            revision: format!("{:x}", Sha256::digest(content.as_bytes())),
+            revision: sha256_hex(content.as_bytes()),
         })
     }
 

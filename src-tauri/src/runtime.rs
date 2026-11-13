@@ -1,7 +1,7 @@
 use crate::domain::ModelConfiguration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+use crate::hash::sha256_hex;
 use std::{
     collections::VecDeque,
     fs::{self, File},
@@ -346,7 +346,7 @@ pub async fn install(
         bytes.extend_from_slice(&chunk);
     }
 
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = sha256_hex(&bytes);
     if digest != backend.sha256() {
         runtime.push_log("Runtime archive checksum verification failed.");
         return Err(
