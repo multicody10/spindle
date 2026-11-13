@@ -246,7 +246,7 @@ async fn run_inner(
         PermissionOperation::WorkspaceRead,
         "agent_task:run",
     )?;
-    permissions.authorize(
+    services.permissions.authorize(
         &task.session_id,
         PermissionOperation::FileChangePropose,
         "agent_task:run",
@@ -464,7 +464,7 @@ async fn loop_agent(
         .await?;
         let response = tokio::select! {
             biased;
-            _ = run.signal.notified() => {
+            _ = context.run.signal.notified() => {
                 cancellation.notify_one();
                 Err("Agent run cancelled.".to_string())
             }
@@ -584,8 +584,8 @@ async fn loop_agent(
                         });
                         save_message(context.database, &task.id, "user", &content).await?;
                         event(
-                            app,
-                            database,
+                            context.app,
+                            context.database,
                             &task.id,
                             "repeated_read_blocked",
                             json!({
@@ -626,8 +626,8 @@ async fn loop_agent(
                             diff_reviewed_after_last_change = true;
                         }
                         event(
-                            app,
-                            database,
+                            context.app,
+                            context.database,
                             &task.id,
                             "tool_finished",
                             json!({
@@ -639,8 +639,8 @@ async fn loop_agent(
                     }
                     Err(error) => {
                         event(
-                            app,
-                            database,
+                            context.app,
+                            context.database,
                             &task.id,
                             "tool_failed",
                             json!({
