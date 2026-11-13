@@ -222,15 +222,14 @@ fn run_validation_windows(
         rustfmt.parent().ok_or("rustfmt executable path has no parent.")?.to_path_buf(),
         system32.clone(),
     ];
-    if matches!(command, ValidationCommand::Check | ValidationCommand::Test) {
-        if let Ok(linker) = find_executable("link.exe") {
-            if let Some(parent) = linker.parent() {
-                let parent = parent.to_path_buf();
-                grant_to_package(
-                    ResourcePath::Directory(parent.clone()), &profile.sid, AccessMask::FILE_GENERIC_READ,
-                ).map_err(|error| format!("Could not grant read-only access to the linker: {error}"))?;
-                path_entries.push(parent);
-            }
+    let linker = if matches!(command, ValidationCommand::Check | ValidationCommand::Test) {
+        Some(find_msvc_linker()?)
+    } else {
+        None
+    };
+    if let Some(linker) = linker.as_ref() {
+        if let Some(parent) = linker.parent() {
+            path_entries.push(parent.to_path_buf());
         }
     }
     path_entries.sort();
@@ -547,6 +546,98 @@ fn find_executable(name: &str) -> Result<PathBuf, String> {
         }
     }
     Err(format!("{name} was not found on PATH. Install the Rust toolchain and restart Spindle."))
+}
+
+#[cfg(windows)]
+fn find_msvc_linker() -> Result<PathBuf, String> {
+    use std::process::Command;
+
+    fn linker_in_tools_directory(tools_directory: &Path) -> Option<PathBuf> {
+        for host in ["Hostx64", "Hostx86"] {
+            let candidate = tools_directory
+                .join("bin")
+                .join(host)
+                .join("x64")
+                .join("link.exe");
+            if candidate.is_file() {
+                if let Ok(path) = candidate.canonicalize() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    fn newest_toolchain_linker(tools_root: &Path) -> Option<PathBuf> {
+        let mut versions = std::fs::read_dir(tools_root)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .collect::<Vec<_>>();
+        versions.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        versions
+            .iter()
+            .find_map(|entry| linker_in_tools_directory(&entry.path()))
+    }
+
+    // Prefer the exact MSVC toolchain configured by the host environment.
+    if let Some(tools_directory) = std::env::var_os("VCToolsInstallDir").map(PathBuf::from) {
+        if let Some(linker) = linker_in_tools_directory(&tools_directory) {
+            return Ok(linker);
+        }
+    }
+
+    // If the developer command prompt is not active, ask Visual Studio Installer
+    // for the installed C++ toolchain. Never fall back to an arbitrary link.exe
+    // from PATH: Git for Windows also ships an unrelated executable with that name.
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+    let vswhere = program_files_x86
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    if vswhere.is_file() {
+        let output = Command::new(&vswhere)
+            .args([
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ])
+            .output()
+            .map_err(|error| format!("Could not query Visual Studio for its installed C++ toolchain: {error}"))?;
+        if output.status.success() {
+            let installation = String::from_utf8_lossy(&output.stdout);
+            let installation = installation.trim();
+            if !installation.is_empty() {
+                let tools_root = PathBuf::from(installation)
+                    .join("VC")
+                    .join("Tools")
+                    .join("MSVC");
+                if let Some(linker) = newest_toolchain_linker(&tools_root) {
+                    return Ok(linker);
+                }
+            }
+        }
+    }
+
+    // Some Visual Studio developer environments expose the installation root
+    // directly even when vswhere.exe is unavailable.
+    if let Some(installation) = std::env::var_os("VSINSTALLDIR").map(PathBuf::from) {
+        let tools_root = installation.join("VC").join("Tools").join("MSVC");
+        if let Some(linker) = newest_toolchain_linker(&tools_root) {
+            return Ok(linker);
+        }
+    }
+
+    Err(
+        "The Microsoft MSVC linker was not found. Install Visual Studio Build Tools with the C++ x64/x86 workload; an arbitrary link.exe on PATH is not accepted."
+            .into(),
+    )
 }
 
 #[cfg(windows)]
