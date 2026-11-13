@@ -8,7 +8,8 @@ import type {
   ChatProviderId,
   ChatResult,
   GenerationSettings,
-  LocalProviderStatus
+  LocalProviderStatus,
+  ProjectSession
 } from "../lib/types";
 
 const MAX_CHAT_MESSAGES = 64;
@@ -65,6 +66,7 @@ interface ChatViewProps {
   onRefreshProviders: () => void;
   contextTokens: number;
   generation: GenerationSettings;
+  session?: ProjectSession | null;
 }
 
 function ChatView({
@@ -73,7 +75,8 @@ function ChatView({
   providersError,
   onRefreshProviders,
   contextTokens,
-  generation
+  generation,
+  session = null
 }: ChatViewProps) {
   const [providerId, setProviderId] = useState<ChatProviderId>("ollama");
   const [modelId, setModelId] = useState("");
@@ -86,6 +89,8 @@ function ChatView({
   const endOfMessages = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const cancelRequested = useRef(false);
+  const assistantDraft = useRef("");
+  const assistantPersisted = useRef(false);
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
@@ -109,6 +114,27 @@ function ChatView({
     endOfMessages.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
+  useEffect(() => {
+    let disposed = false;
+    setMessages([]);
+    setLastResult(null);
+    setError(null);
+    setStatus(session ? "Restoring saved session…" : "Select a running local provider and a loaded model.");
+    if (session?.providerId) setProviderId(session.providerId);
+    if (session?.modelId) setModelId(session.modelId);
+    if (session) {
+      void api.listSessionMessages(session.id).then((stored) => {
+        if (disposed) return;
+        setMessages(stored.map(({ role, content }) => ({ role, content })));
+        setStatus("Session restored.");
+      }).catch((reason) => {
+        if (!disposed) setError("Could not restore session history: " + String(reason));
+      });
+    }
+    return () => { disposed = true; };
+  }, [session?.id]);
+
+
   useEffect(() => () => {
     const current = activeRequest.current;
     if (current) void api.cancelChat(current);
@@ -116,6 +142,7 @@ function ChatView({
 
   const appendDelta = (delta: ChatDelta, id: string) => {
     if (delta.requestId !== id || !delta.delta) return;
+    assistantDraft.current += delta.delta;
     setMessages((current) => {
       const lastIndex = current.length - 1;
       const last = current[lastIndex];
@@ -138,6 +165,8 @@ function ChatView({
       return;
     }
     setMessages([...transcript, { role: "assistant", content: "" }]);
+    assistantDraft.current = "";
+    assistantPersisted.current = false;
     setDraft("");
     setSending(true);
     activeRequest.current = id;
@@ -148,6 +177,10 @@ function ChatView({
 
     let unlisten: (() => void) | undefined;
     try {
+      if (session) {
+        await api.updateSessionModel(session.id, providerId, modelId);
+        await api.appendSessionMessage(session.id, "user", text);
+      }
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
       const result = await api.startChat({
         requestId: id,
@@ -158,8 +191,24 @@ function ChatView({
         generation
       });
       setLastResult(result);
+      if (session && result.content.trim()) {
+        try {
+          await api.appendSessionMessage(session.id, "assistant", result.content);
+          assistantPersisted.current = true;
+        } catch (reason) {
+          setError("The response completed but could not be saved to this session: " + String(reason));
+        }
+      }
       setStatus("Response complete.");
     } catch (reason) {
+      if (session && !assistantPersisted.current && assistantDraft.current.trim()) {
+        try {
+          await api.appendSessionMessage(session.id, "assistant", assistantDraft.current);
+          assistantPersisted.current = true;
+        } catch (persistReason) {
+          setError("The partial response could not be saved: " + String(persistReason));
+        }
+      }
       const message = String(reason);
       if (cancelRequested.current || message.includes("Generation cancelled")) {
         setStatus("Generation stopped. The partial response has been kept.");
@@ -188,7 +237,7 @@ function ChatView({
   };
 
   const clear = () => {
-    if (sending) return;
+    if (sending || session) return;
     setMessages([]);
     setLastResult(null);
     setError(null);
@@ -212,7 +261,7 @@ function ChatView({
         </div>
         <div className="chat-heading-actions">
           <span className="local-chip"><span /> LOOPBACK ONLY</span>
-          <button className="button subtle" onClick={clear} disabled={sending || messages.length === 0}>Clear chat</button>
+          <button className="button subtle" onClick={clear} disabled={sending || !!session || messages.length === 0}>{session ? "Persistent session" : "Clear chat"}</button>
         </div>
       </div>
 

@@ -26,31 +26,33 @@ This roadmap records implementation status rather than implying the full product
 - [x] Discovery of local Ollama and LM Studio endpoints and model inventories.
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
-- [ ] Provider capability registry.
+- [x] Provider capability registry for features implemented by the current adapters; tool calling and structured output remain unavailable.
 - [x] Pinned Windows x64 llama.cpp CPU, Vulkan, and CUDA 12.4 runtime installation with size and SHA-256 verification.
 - [ ] Shared inference runtime manager.
 - [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
 - [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.
-- [ ] Calibration benchmarks with user consent.
+- [x] Explicit opt-in sequential local benchmarks with persisted duration, output token, and provider-reported throughput samples.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
 
 ## Core developer workflow
 
-- [ ] Projects and independent sessions.
+- [x] Persistent projects and independent sessions in SQLite.
 - [x] Temporary project workspace grants with read-only defaults and separately granted write access.
 - [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and file writes.
-- [ ] SQLite migrations for project/session/task state.
-- [ ] Agent planner and execution state machine.
-- [ ] Read-only planning mode.
+- [x] Versioned SQLite schema for projects, sessions, messages, tasks, task steps, events, and memory.
+- [x] Read-only agent planner with persisted task lifecycle and approval states; no execution worker is enabled.
+- [x] Read-only project snapshot planning with bounded source inventory and structured plan validation.
+- [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
 - [ ] Diff-aware file tools, undo, and conflict detection.
 - [ ] Git status/history and isolated worktrees.
-- [ ] Persistent project memory and retrieval.
-- [ ] Agent Skills and MCP extension host.
+- [x] Project-scoped memory records with bounded lexical retrieval; embedding and source-revision freshness ranking remain future work.
+- [x] Standard SKILL.md discovery and bounded manifest loading; MCP extension host remains deferred.
 
 ## Security and reliability
 
 - [x] Revocable in-memory workspace read/write grants.
+- [x] Per-session permission broker with read-only defaults, explicit scope grants, revocation, and process-restart expiry.
 - [ ] General permission broker for agent tools, execution, network, and extensions.
 - [ ] Windows AppContainer/LPAC execution worker feasibility validation.
 - [ ] Restricted token, Job Object and process mitigation policies.

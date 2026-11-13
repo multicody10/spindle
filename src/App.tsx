@@ -4,6 +4,8 @@ import { api } from "./lib/api";
 import ChatView from "./components/ChatView";
 import RuntimeView from "./components/RuntimeView";
 import WorkspaceView from "./components/WorkspaceView";
+import ProjectsView from "./components/ProjectsView";
+import BenchmarkView from "./components/BenchmarkView";
 import spindleLogo from "./assets/brand/spindle-logo.webp";
 import {
   DEFAULT_CONFIGURATION,
@@ -14,7 +16,9 @@ import {
   type ModelMetadata,
   type ModelLibrary,
   type OptimizationProfile,
-  type SavedPreset
+  type SavedPreset,
+  type Project,
+  type ProjectSession
 } from "./lib/types";
 
 const PROFILES: { value: OptimizationProfile; label: string; detail: string }[] = [
@@ -42,7 +46,8 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace">("model-lab");
+  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("model-lab");
+  const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
@@ -279,6 +284,11 @@ function App() {
     generation: { ...current.generation, [key]: value }
   }));
 
+  const openProjectSession = (_project: Project, session: ProjectSession) => {
+    setActiveSession(session);
+    setActiveView("chat");
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -286,13 +296,14 @@ function App() {
           <img className="brand-logo" src={spindleLogo} alt="Spindle" />
         </div>
         <div className="nav-caption">WORKSPACE</div>
-        <button className="nav-item muted" disabled><span className="nav-icon">⌘</span> Projects <em>planned</em></button>
-        <button className="nav-item muted" disabled><span className="nav-icon">◫</span> Sessions <em>planned</em></button>
+        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">⌘</span> Projects</button>
+        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">◫</span> Sessions</button>
         <div className="nav-caption section-gap">TOOLS</div>
         <button className={"nav-item " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}><span className="nav-icon">◈</span> Model Lab</button>
         <button className={"nav-item " + (activeView === "chat" ? "active" : "")} onClick={() => setActiveView("chat")}><span className="nav-icon">◉</span> Chat</button>
         <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
         <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
+        <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmark</button>
         <div className="sidebar-bottom">
           <div className="runtime-state"><span className="status-dot" /> Configuration core online</div>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
@@ -302,8 +313,8 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
-            <h1>{activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
+            <div className="eyebrow">{activeView === "projects" ? "PROJECT MANAGEMENT" : activeView === "benchmark" ? "MODEL PERFORMANCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL MANAGEMENT"}</div>
+            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Model benchmarks" : activeView === "chat" ? "Chat with a model" : activeView === "runtime" ? "Runtime manager" : activeView === "workspace" ? "Workspace" : "Model Lab"}</h1>
           </div>
           <div className="top-actions">
             <span className="local-chip"><span /> LOCAL FIRST</span>
@@ -312,14 +323,20 @@ function App() {
         </header>
 
         <div className="content">
-          {activeView === "chat" ? (
+          {activeView === "projects" ? (
+            <ProjectsView providers={localProviders} configuration={configuration} onOpenSession={openProjectSession} />
+          ) : activeView === "benchmark" ? (
+            <BenchmarkView providers={localProviders} configuration={configuration} />
+          ) : activeView === "chat" ? (
             <ChatView
+              key={activeSession?.id ?? "ephemeral-chat"}
               providers={localProviders}
               providersBusy={providersBusy}
               providersError={providersError}
               onRefreshProviders={() => void refreshLocalProviders()}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
+              session={activeSession}
             />
           ) : activeView === "runtime" ? (
             <RuntimeView
@@ -333,8 +350,8 @@ function App() {
           ) : (
             <>
           <section className="notice warning">
-            <strong>Foundation build</strong>
-            <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, local configuration storage, and a managed llama.cpp runtime are implemented. llama.cpp applies load-time settings and reports the values exposed by its API; some hardware and load-time settings remain unverified. Agent execution and persistent project sessions are still in development.</span>
+            <strong>Project Core preview</strong>
+            <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, local configuration storage, and a managed llama.cpp runtime are implemented. llama.cpp applies load-time settings and reports the values exposed by its API; some hardware and load-time settings remain unverified. Persistent projects and sessions, read-only project planning, reviewable task plans, Skill discovery, and task history are available in this preview. Agent execution, MCP tool dispatch, and the OS-isolated worker remain disabled.</span>
           </section>
 
           <section className="section-heading">

@@ -71,6 +71,7 @@ pub struct ChatResult {
     pub prompt_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub tokens_per_second: Option<f64>,
+    pub content: String,
 }
 
 #[derive(Default)]
@@ -377,10 +378,11 @@ async fn stream_chat(
     provider: ChatProvider,
     mut response: Response,
     cancellation: &Notify,
-) -> Result<StreamMetrics, String> {
+) -> Result<(StreamMetrics, String), String> {
     let mut buffer = Vec::<u8>::new();
     let mut total_bytes = 0usize;
     let mut metrics = StreamMetrics::default();
+    let mut content = String::new();
     let mut finished = false;
 
     loop {
@@ -417,6 +419,7 @@ async fn stream_chat(
             };
             if let Some(frame) = frame {
                 if let Some(delta) = frame.delta {
+                    content.push_str(&delta);
                     app.emit(
                         "chat-delta",
                         ChatDelta {
@@ -456,6 +459,7 @@ async fn stream_chat(
         };
         if let Some(frame) = frame {
             if let Some(delta) = frame.delta {
+                content.push_str(&delta);
                 app.emit(
                     "chat-delta",
                     ChatDelta {
@@ -482,7 +486,7 @@ async fn stream_chat(
         return Err("The local provider stream ended before it sent a completion marker.".into());
     }
 
-    Ok(metrics)
+    Ok((metrics, content))
 }
 
 async fn read_error_body(mut response: Response) -> String {
@@ -539,7 +543,7 @@ pub async fn run(
     }
 
     let request_id = request.request_id.clone();
-    let metrics = stream_chat(
+    let (metrics, content) = stream_chat(
         &app,
         &request_id,
         request.provider_id,
@@ -566,6 +570,7 @@ pub async fn run(
         prompt_tokens: metrics.prompt_tokens,
         output_tokens: metrics.output_tokens,
         tokens_per_second,
+        content,
     })
 }
 
