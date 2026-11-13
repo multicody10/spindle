@@ -146,7 +146,7 @@ pub fn optimize(
         _ if hardware.ram_total_bytes < 16 * GIB => (128, 32),
         _ => (256, 64),
     };
-    let threads = (logical_threads / 2).max(1).min(16);
+    let threads = (logical_threads / 2).clamp(1, 16);
     let batch_threads = logical_threads.max(threads).min(32);
 
     if model.file_size_bytes > hardware.ram_total_bytes.saturating_add(
