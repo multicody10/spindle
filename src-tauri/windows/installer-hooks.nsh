@@ -12,3 +12,20 @@
 spindle_desktop_shortcut_done:
   SetShellVarContext current
 !macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ; Remove the application shortcuts explicitly. This also cleans up links left by
+  ; older per-user installs when the current installation is per-machine.
+  SetShellVarContext all
+  Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+  Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+
+  SetShellVarContext current
+  Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+  Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+
+  ; Restore the machine-wide context expected by Tauri's remaining uninstall steps.
+  SetShellVarContext all
+  ; Refresh Explorer's desktop and Start Menu views after shortcut cleanup.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
