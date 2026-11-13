@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 const MAX_OUTPUT_BYTES: usize = 96 * 1024;
 const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_WORKER_PROCESSES: u32 = 64;
+const MAX_WORKER_PROCESS_MEMORY_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_WORKER_JOB_MEMORY_BYTES: usize = 4 * 1024 * 1024 * 1024;
 const EXECUTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -270,9 +273,12 @@ fn run_validation_windows(
         cwd: Some(worktree.clone()),
         env: Some(env),
         stdio: StdioConfig::Pipe,
-        suspended: false,
+        // rappct assigns the still-suspended process to its Job Object before
+        // returning. We apply and read back the complete job policy before the
+        // primary thread is resumed.
+        suspended: true,
         join_job: Some(JobLimits {
-            memory_bytes: Some(2 * 1024 * 1024 * 1024usize),
+            memory_bytes: Some(MAX_WORKER_PROCESS_MEMORY_BYTES),
             cpu_rate_percent: Some(80),
             kill_on_job_close: true,
         }),
@@ -282,10 +288,18 @@ fn run_validation_windows(
     let started = Instant::now();
     let mut child = launch_in_container_with_io(&capabilities, &options)
         .map_err(|error| format!("The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"))?;
+    let job_handle = match child.job_guard.as_ref() {
+        Some(guard) => guard.as_handle(),
+        None => {
+            terminate_worker_process(child.pid);
+            return Err("The AppContainer launcher did not return its required Job Object guard; the suspended worker was terminated.".into());
+        }
+    };
+    configure_worker_job(job_handle)?;
+    resume_suspended_worker(child.pid)?;
     drop(child.stdin.take());
     let stdout = child.stdout.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
     let stderr = child.stderr.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
-    let job_handle = child.job_guard.as_ref().map(|guard| guard.as_handle().0);
     let wait_thread = thread::spawn(move || child.wait(Some(EXECUTION_TIMEOUT)));
     let wait_started = Instant::now();
     let exit_code = loop {
@@ -295,23 +309,18 @@ fn run_validation_windows(
                 .map_err(|error| format!("The restricted worker timed out or failed; its Job Object was closed: {error}"))?;
         }
         if cancellation.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle, 1223) };
-                if terminated {
-                    let _ = wait_thread.join();
-                    return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
-                }
-                return Err("Restricted validation cancellation was requested, but Windows refused to terminate the worker Job Object. The configured ten-minute worker timeout remains active.".into());
+            let terminated = unsafe { terminate_job_object(job_handle, 1223) };
+            if terminated {
+                let _ = wait_thread.join();
+                return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
             }
-            return Err("Restricted validation cancellation was requested, but no Job Object handle was available. The configured worker timeout remains active.".into());
+            return Err("Restricted validation cancellation was requested, but Windows refused to terminate the worker Job Object. The configured ten-minute worker timeout remains active.".into());
         }
         if wait_started.elapsed() >= EXECUTION_TIMEOUT + Duration::from_secs(2) {
-            if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle, 1460) };
-                if terminated {
-                    let _ = wait_thread.join();
-                    return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());
-                }
+            let terminated = unsafe { terminate_job_object(job_handle, 1460) };
+            if terminated {
+                let _ = wait_thread.join();
+                return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());
             }
             return Err("Restricted validation exceeded its ten-minute timeout; worker termination could not be confirmed.".into());
         }
@@ -327,8 +336,146 @@ fn run_validation_windows(
         stdout: redact_output(&String::from_utf8_lossy(&stdout)),
         stderr: redact_output(&String::from_utf8_lossy(&stderr)),
         output_truncated: stdout_truncated || stderr_truncated,
-        isolation: "Windows AppContainer + LPAC; no network capabilities; 2 GiB memory limit; 80% CPU cap; kill-on-job-close".into(),
+        isolation: "Windows AppContainer + LPAC; no network capabilities; suspended launch; 64-process Job Object cap; 2 GiB per-process and 4 GiB aggregate memory caps; 80% CPU cap; no breakaway; kill-on-job-close".into(),
     })
+}
+
+#[cfg(windows)]
+fn configure_worker_job(job: windows::Win32::Foundation::HANDLE) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use windows::Win32::System::JobObjects::{
+        QueryInformationJobObject, SetInformationJobObject,
+        JobObjectExtendedLimitInformation,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+
+    let required = JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | JOB_OBJECT_LIMIT_JOB_MEMORY
+        | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let mut requested = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    requested.BasicLimitInformation.LimitFlags = required;
+    requested.BasicLimitInformation.ActiveProcessLimit = MAX_WORKER_PROCESSES;
+    requested.ProcessMemoryLimit = MAX_WORKER_PROCESS_MEMORY_BYTES;
+    requested.JobMemoryLimit = MAX_WORKER_JOB_MEMORY_BYTES;
+
+    unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &requested as *const _ as *const c_void,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    }
+    .map_err(|error| format!("Could not enforce the restricted worker Job Object policy: {error}"))?;
+
+    let mut effective = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    let mut returned_length = 0u32;
+    unsafe {
+        QueryInformationJobObject(
+            Some(job),
+            JobObjectExtendedLimitInformation,
+            &mut effective as *mut _ as *mut c_void,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            Some(&mut returned_length),
+        )
+    }
+    .map_err(|error| format!("Could not verify the restricted worker Job Object policy: {error}"))?;
+
+    let flags = effective.BasicLimitInformation.LimitFlags;
+    let required_bits = required.0;
+    let breakaway_bits =
+        (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK).0;
+    if flags.0 & required_bits != required_bits
+        || flags.0 & breakaway_bits != 0
+        || effective.BasicLimitInformation.ActiveProcessLimit != MAX_WORKER_PROCESSES
+        || effective.ProcessMemoryLimit != MAX_WORKER_PROCESS_MEMORY_BYTES
+        || effective.JobMemoryLimit != MAX_WORKER_JOB_MEMORY_BYTES
+        || returned_length < size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32
+    {
+        return Err("Windows did not retain the complete worker Job Object policy. The worker remains suspended and will be terminated.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn resume_suspended_worker(process_id: u32) -> Result<(), String> {
+    use std::mem::size_of;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_NO_MORE_FILES, HANDLE,
+    };
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
+    };
+    use windows::Win32::System::Threading::{
+        OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    };
+
+    struct OwnedHandle(HANDLE);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+
+    let snapshot = OwnedHandle(
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+            .map_err(|error| format!("Could not inspect suspended worker threads: {error}"))?,
+    );
+    let mut entry = THREADENTRY32::default();
+    entry.dwSize = size_of::<THREADENTRY32>() as u32;
+    unsafe { Thread32First(snapshot.0, &mut entry) }
+        .map_err(|error| format!("Could not enumerate suspended worker threads: {error}"))?;
+
+    let mut primary_thread_id = None;
+    loop {
+        if entry.th32OwnerProcessID == process_id {
+            if primary_thread_id.replace(entry.th32ThreadID).is_some() {
+                return Err("The suspended worker unexpectedly has multiple threads before initialization; refusing to resume it.".into());
+            }
+        }
+        match unsafe { Thread32Next(snapshot.0, &mut entry) } {
+            Ok(()) => {}
+            Err(error) => {
+                let last_error = unsafe { GetLastError() };
+                if last_error == ERROR_NO_MORE_FILES {
+                    break;
+                }
+                return Err(format!("Could not complete suspended worker thread enumeration: {error}"));
+            }
+        }
+    }
+
+    let thread_id = primary_thread_id
+        .ok_or_else(|| "The suspended worker's primary thread could not be identified.".to_string())?;
+    let thread = OwnedHandle(
+        unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, thread_id) }
+            .map_err(|error| format!("Could not open the suspended worker's primary thread: {error}"))?,
+    );
+    let previous_suspend_count = unsafe { ResumeThread(thread.0) };
+    if previous_suspend_count != 1 {
+        return Err(format!(
+            "The worker primary thread had an unexpected suspend count ({previous_suspend_count}); the Job Object will terminate it instead of running with an unverified startup state."
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn terminate_worker_process(process_id: u32) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    if let Ok(process) = unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) } {
+        let _ = unsafe { TerminateProcess(process, 1) };
+        let _ = unsafe { CloseHandle(process) };
+    }
 }
 
 #[cfg(windows)]
