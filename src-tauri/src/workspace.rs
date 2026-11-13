@@ -401,7 +401,7 @@ impl WorkspaceManager {
                 }
 
                 files_scanned += 1;
-                let bytes = match fs::read(&path) {
+                let bytes = match fs::read(&canonical) {
                     Ok(bytes) if bytes.len() <= MAX_SEARCH_FILE_BYTES => bytes,
                     _ => continue,
                 };
@@ -473,6 +473,9 @@ fn validate_relative_path(value: &str, allow_root: bool) -> Result<PathBuf, Stri
 }
 
 fn resolve_directory(session: &WorkspaceSession, relative: &str) -> Result<PathBuf, String> {
+    if is_sensitive_path(Path::new(relative)) {
+        return Err("Sensitive credential directories are not exposed to workspace tools.".into());
+    }
     let clean = validate_relative_path(relative, true)?;
     let mut current = session.root.clone();
     for component in clean.components() {
