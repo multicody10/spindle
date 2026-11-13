@@ -48,12 +48,22 @@ async fn get_json(client: &reqwest::Client, endpoint: &str) -> Result<Value, Str
         return Err("Local provider response exceeded the 1 MiB discovery limit.".into());
     }
 
-    let body = response
-        .bytes()
+    let mut response = response;
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(0)
+            .min(MAX_RESPONSE_BYTES) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| "Could not read the local provider response.".to_string())?;
-    if body.len() as u64 > MAX_RESPONSE_BYTES {
-        return Err("Local provider response exceeded the 1 MiB discovery limit.".into());
+        .map_err(|_| "Could not read the local provider response.".to_string())?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES as usize {
+            return Err("Local provider response exceeded the 1 MiB discovery limit.".into());
+        }
+        body.extend_from_slice(&chunk);
     }
 
     serde_json::from_slice(&body)
