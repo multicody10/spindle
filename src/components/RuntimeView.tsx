@@ -14,7 +14,7 @@ interface RuntimeViewProps {
   onRuntimeChange: () => void;
 }
 
-const backendLabel = (backend: RuntimeBackend) => backend === "vulkan" ? "Vulkan GPU" : "CPU";
+const backendLabel = (backend: RuntimeBackend) => backend === "cpu" ? "CPU" : backend === "cuda" ? "CUDA GPU" : "Vulkan GPU";
 
 function formatBytes(value: number): string {
   if (!value) return "Unknown";
@@ -29,18 +29,21 @@ function formatBytes(value: number): string {
 }
 
 function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: RuntimeViewProps) {
-  const [backend, setBackend] = useState<RuntimeBackend>("vulkan");
+  const [backendSelection, setBackendSelection] = useState<RuntimeBackend | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("Checking the managed runtime…");
+  const backend = backendSelection ?? (
+    hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ? "cuda" : "vulkan"
+  );
 
   const refresh = useCallback(async () => {
     try {
       const current = await api.runtimeStatus();
       setStatus(current);
       if (current.running) {
-        if (current.backend) setBackend(current.backend);
+        if (current.backend) setBackendSelection(current.backend);
         setMessage("llama.cpp is running and accepting local requests.");
       } else {
         setMessage("Runtime is stopped.");
@@ -156,7 +159,8 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
         <div className="runtime-controls">
           <label className="runtime-backend-select">
             <span>BACKEND</span>
-            <select value={backend} onChange={(event) => setBackend(event.target.value as RuntimeBackend)} disabled={busy || status?.running}>
+            <select value={backend} onChange={(event) => setBackendSelection(event.target.value as RuntimeBackend)} disabled={busy || status?.running}>
+              <option value="cuda">NVIDIA CUDA 12.4 GPU</option>
               <option value="vulkan">Vulkan GPU</option>
               <option value="cpu">CPU fallback</option>
             </select>
@@ -169,7 +173,7 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
             {busy ? "Working…" : selectedInstall?.installed ? "Installed" : "Install " + backendLabel(backend)}
           </button>
         </div>
-        <p className="footnote">Downloads come only from the official ggml-org/llama.cpp GitHub release. Spindle verifies the archive checksum before extraction and rejects unsafe archive paths.</p>
+        <p className="footnote">Downloads come only from the official ggml-org/llama.cpp GitHub release. Spindle follows only GitHub’s release asset redirect, then verifies each archive’s exact size and SHA-256 before extraction. CUDA installs its matching 12.4 runtime DLL bundle too.</p>
         <div className="runtime-installed-list">
           {(status?.installedBackends ?? []).map((item) => (
             <div key={item.backend}>

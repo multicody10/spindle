@@ -4,8 +4,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
-    fs::{self, File},
-    io::{self, Cursor, Read, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -18,32 +18,68 @@ use zip::ZipArchive;
 const VERSION: &str = "b12347";
 const PORT: u16 = 12345;
 const BASE_URL: &str = "http://127.0.0.1:12345";
-const MAX_DOWNLOAD_BYTES: usize = 80 * 1024 * 1024;
-const MAX_EXTRACTED_BYTES: u64 = 180 * 1024 * 1024;
-const MAX_ARCHIVE_ENTRIES: usize = 256;
+const MAX_DOWNLOAD_BYTES: u64 = 450 * 1024 * 1024;
+const MAX_TOTAL_DOWNLOAD_BYTES: u64 = 800 * 1024 * 1024;
+const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 2_048;
 const MAX_LOG_LINES: usize = 400;
 const MAX_LOG_LINE_BYTES: usize = 8 * 1024;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeAsset {
+    name: &'static str,
+    sha256: &'static str,
+    size_bytes: u64,
+}
+
+static CPU_ASSETS: [RuntimeAsset; 1] = [RuntimeAsset {
+    name: "llama-b12347-bin-win-cpu-x64.zip",
+    sha256: "476a30ac458f4881051a26c541707440de4aa744d878c739669289cbe137aa09",
+    size_bytes: 25_097_360,
+}];
+
+static VULKAN_ASSETS: [RuntimeAsset; 1] = [RuntimeAsset {
+    name: "llama-b12347-bin-win-vulkan-x64.zip",
+    sha256: "7dccbc28c03dc929687df80894d736c9fd91c71b88537f7f1a7d2eefb85a86c5",
+    size_bytes: 38_089_944,
+}];
+
+static CUDA_ASSETS: [RuntimeAsset; 2] = [
+    RuntimeAsset {
+        name: "llama-b12347-bin-win-cuda-12.4-x64.zip",
+        sha256: "990e0bb9519e26c8bbd2c0de6e01e59ec596c2f3fe7309376ec416c2be56ca3d",
+        size_bytes: 318_975_553,
+    },
+    RuntimeAsset {
+        name: "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        sha256: "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+        size_bytes: 391_443_627,
+    },
+];
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeBackend {
     Cpu,
     Vulkan,
+    Cuda,
 }
 
 impl RuntimeBackend {
+    fn assets(self) -> &'static [RuntimeAsset] {
+        match self {
+            Self::Cpu => &CPU_ASSETS,
+            Self::Vulkan => &VULKAN_ASSETS,
+            Self::Cuda => &CUDA_ASSETS,
+        }
+    }
+
     fn asset(self) -> &'static str {
         match self {
             Self::Cpu => "llama-b12347-bin-win-cpu-x64.zip",
             Self::Vulkan => "llama-b12347-bin-win-vulkan-x64.zip",
-        }
-    }
-
-    fn sha256(self) -> &'static str {
-        match self {
-            Self::Cpu => "476a30ac458f4881051a26c541707440de4aa744d878c739669289cbe137aa09",
-            Self::Vulkan => "7dccbc28c03dc929687df80894d736c9fd91c71b88537f7f1a7d2eefb85a86c5",
+            Self::Cuda => "llama-b12347-bin-win-cuda-12.4-x64.zip + cudart-llama-bin-win-cuda-12.4-x64.zip",
         }
     }
 
@@ -51,6 +87,7 @@ impl RuntimeBackend {
         match self {
             Self::Cpu => "cpu",
             Self::Vulkan => "vulkan",
+            Self::Cuda => "cuda",
         }
     }
 }
@@ -275,6 +312,7 @@ pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<Runtime
         installed_backends: vec![
             backend_status(app, RuntimeBackend::Cpu)?,
             backend_status(app, RuntimeBackend::Vulkan)?,
+            backend_status(app, RuntimeBackend::Cuda)?,
         ],
         logs,
         applied_settings,
@@ -295,66 +333,19 @@ pub async fn install(
         return backend_status(&app, backend);
     }
 
-    let url = format!(
-        "https://github.com/ggml-org/llama.cpp/releases/download/{VERSION}/{}",
-        backend.asset()
-    );
-    runtime.push_log(format!(
-        "Downloading pinned llama.cpp {VERSION} ({})…",
-        backend.id()
-    ));
-
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(180))
+        .timeout(Duration::from_secs(900))
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if is_allowed_release_asset_redirect(attempt.previous(), attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
         .build()
         .map_err(|_| "Could not initialize the runtime download client.".to_string())?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("Could not download llama.cpp: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "The llama.cpp download returned HTTP {}.",
-            response.status().as_u16()
-        ));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_DOWNLOAD_BYTES as u64)
-    {
-        return Err("The llama.cpp archive exceeded the download size limit.".into());
-    }
-    let mut response = response;
-    let mut bytes = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or(0)
-            .min(MAX_DOWNLOAD_BYTES as u64) as usize,
-    );
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "Could not read the llama.cpp download.".to_string())?
-    {
-        if bytes.len().saturating_add(chunk.len()) > MAX_DOWNLOAD_BYTES {
-            return Err("The llama.cpp archive exceeded the download size limit.".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    let digest = format!("{:x}", Sha256::digest(&bytes));
-    if digest != backend.sha256() {
-        runtime.push_log("Runtime archive checksum verification failed.");
-        return Err(
-            "The downloaded llama.cpp archive failed SHA-256 verification. Nothing was installed."
-                .into(),
-        );
-    }
-    runtime.push_log("Runtime archive checksum verified. Extracting files…");
 
     let root = runtime_root(&app)?;
     fs::create_dir_all(&root)
@@ -367,11 +358,17 @@ pub async fn install(
     fs::create_dir(&staging)
         .map_err(|error| format!("Could not create the runtime staging directory: {error}"))?;
 
-    let extraction = extract_archive(&bytes, &staging);
-    if let Err(error) = extraction {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
+    runtime.push_log(format!(
+        "Downloading and verifying pinned llama.cpp {VERSION} ({})…",
+        backend.id()
+    ));
+    let verified_assets = match download_and_extract_assets(&client, runtime, backend, &staging).await {
+        Ok(assets) => assets,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
 
     let server = find_server(&staging).ok_or_else(|| {
         let _ = fs::remove_dir_all(&staging);
@@ -382,8 +379,7 @@ pub async fn install(
         "provider": "llama.cpp",
         "version": VERSION,
         "backend": backend.id(),
-        "asset": backend.asset(),
-        "sha256": digest
+        "assets": verified_assets
     });
     fs::write(
         marker,
@@ -419,14 +415,152 @@ pub async fn install(
     backend_status(&app, backend)
 }
 
-fn extract_archive(bytes: &[u8], destination: &Path) -> Result<(), String> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
+fn is_allowed_release_asset_redirect(previous: &[reqwest::Url], target: &reqwest::Url) -> bool {
+    previous.len() == 1
+        && previous[0].scheme() == "https"
+        && previous[0].host_str() == Some("github.com")
+        && previous[0].port_or_known_default() == Some(443)
+        && target.scheme() == "https"
+        && target.host_str() == Some("release-assets.githubusercontent.com")
+        && target.port_or_known_default() == Some(443)
+}
+
+async fn download_asset(
+    client: &reqwest::Client,
+    asset: &RuntimeAsset,
+    destination: &Path,
+) -> Result<(), String> {
+    let url = format!(
+        "https://github.com/ggml-org/llama.cpp/releases/download/{VERSION}/{}",
+        asset.name
+    );
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Could not download {}: {error}", asset.name))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "The llama.cpp download for {} returned HTTP {}.",
+            asset.name,
+            response.status().as_u16()
+        ));
+    }
+    let final_url = response.url();
+    if final_url.scheme() != "https"
+        || !matches!(
+            final_url.host_str(),
+            Some("github.com" | "release-assets.githubusercontent.com")
+        )
+    {
+        return Err("The llama.cpp download resolved to an unexpected host.".into());
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_DOWNLOAD_BYTES || length != asset.size_bytes)
+    {
+        return Err(format!(
+            "The {} download had an unexpected size.",
+            asset.name
+        ));
+    }
+
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| format!("Could not create a temporary download file: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0u64;
+    let mut response = response;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| format!("Could not read the {} download.", asset.name))?
+    {
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_DOWNLOAD_BYTES || downloaded > asset.size_bytes {
+            return Err(format!(
+                "The {} archive exceeded its pinned download size.",
+                asset.name
+            ));
+        }
+        hasher.update(&chunk);
+        output
+            .write_all(&chunk)
+            .map_err(|_| format!("Could not write the {} download to disk.", asset.name))?;
+    }
+    if downloaded != asset.size_bytes {
+        return Err(format!(
+            "The {} download was incomplete: expected {} bytes, received {}.",
+            asset.name, asset.size_bytes, downloaded
+        ));
+    }
+    output
+        .flush()
+        .and_then(|_| output.sync_all())
+        .map_err(|_| format!("Could not finalize the {} download.", asset.name))?;
+    let digest = format!("{:x}", hasher.finalize());
+    if digest != asset.sha256 {
+        return Err(format!(
+            "The {} archive failed SHA-256 verification. Nothing was installed.",
+            asset.name
+        ));
+    }
+    Ok(())
+}
+
+async fn download_and_extract_assets(
+    client: &reqwest::Client,
+    runtime: &ManagedRuntime,
+    backend: RuntimeBackend,
+    staging: &Path,
+) -> Result<Vec<Value>, String> {
+    let assets = backend.assets();
+    let total_download_bytes = assets.iter().map(|asset| asset.size_bytes).sum::<u64>();
+    if total_download_bytes > MAX_TOTAL_DOWNLOAD_BYTES {
+        return Err("The selected runtime exceeds the total download size limit.".into());
+    }
+
+    let mut extracted_bytes = 0u64;
+    let mut verified_assets = Vec::with_capacity(assets.len());
+    for (index, asset) in assets.iter().enumerate() {
+        runtime.push_log(format!(
+            "Downloading {} ({}/{})…",
+            asset.name,
+            index + 1,
+            assets.len()
+        ));
+        let archive_path = staging.join(format!(".spindle-download-{index}.zip"));
+        download_asset(client, asset, &archive_path).await?;
+        runtime.push_log(format!("Verified SHA-256 for {}.", asset.name));
+
+        let archive = File::open(&archive_path)
+            .map_err(|_| format!("Could not open the verified {} archive.", asset.name))?;
+        extract_archive(archive, staging, &mut extracted_bytes)?;
+        fs::remove_file(&archive_path)
+            .map_err(|_| format!("Could not remove the temporary {} archive.", asset.name))?;
+        verified_assets.push(serde_json::json!({
+            "name": asset.name,
+            "sha256": asset.sha256,
+            "sizeBytes": asset.size_bytes
+        }));
+    }
+    runtime.push_log("All runtime archives were verified and extracted.");
+    Ok(verified_assets)
+}
+
+fn extract_archive<R: Read + Seek>(
+    reader: R,
+    destination: &Path,
+    extracted: &mut u64,
+) -> Result<(), String> {
+    let mut archive = ZipArchive::new(reader)
         .map_err(|_| "The downloaded runtime archive is not a valid ZIP file.".to_string())?;
     if archive.len() > MAX_ARCHIVE_ENTRIES {
         return Err("The runtime archive contains too many entries.".into());
     }
 
-    let mut extracted = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive
             .by_index(index)
@@ -448,8 +582,8 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<(), String> {
             return Err("The runtime archive contains an unsafe file path.".into());
         }
         let size = entry.size();
-        extracted = extracted.saturating_add(size);
-        if size > MAX_DOWNLOAD_BYTES as u64 || extracted > MAX_EXTRACTED_BYTES {
+        *extracted = extracted.saturating_add(size);
+        if size > MAX_EXTRACTED_BYTES || *extracted > MAX_EXTRACTED_BYTES {
             return Err("The extracted runtime exceeded the uncompressed size limit.".into());
         }
         let output = destination.join(relative);
@@ -458,8 +592,11 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<(), String> {
             .ok_or_else(|| "The runtime archive contains an invalid path.".to_string())?;
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create a runtime directory: {error}"))?;
-        let mut file = File::create(&output)
-            .map_err(|error| format!("Could not extract a runtime file: {error}"))?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output)
+            .map_err(|_| "The runtime archive contains a duplicate or unwritable file path.".to_string())?;
         let copied = io::copy(&mut entry, &mut file)
             .map_err(|error| format!("Could not extract a runtime file: {error}"))?;
         if copied != size {
@@ -603,7 +740,7 @@ pub async fn start(
         .arg("--cache-type-v")
         .arg(&configuration.runtime.kv_cache_v_type)
         .arg(
-            if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu {
+            if backend != RuntimeBackend::Cpu && configuration.runtime.kv_cache_on_gpu {
                 "--kv-offload"
             } else {
                 "--no-kv-offload"
@@ -783,14 +920,46 @@ mod tests {
 
     #[test]
     fn runtime_assets_are_pinned_and_distinct() {
-        assert_ne!(
-            RuntimeBackend::Cpu.sha256(),
-            RuntimeBackend::Vulkan.sha256()
-        );
+        let backends = [
+            RuntimeBackend::Cpu,
+            RuntimeBackend::Vulkan,
+            RuntimeBackend::Cuda,
+        ];
+        let mut names = std::collections::HashSet::new();
+        for backend in backends {
+            assert!(!backend.assets().is_empty());
+            for asset in backend.assets() {
+                assert!(asset.sha256.len() == 64);
+                assert!(asset.size_bytes > 0 && asset.size_bytes <= MAX_DOWNLOAD_BYTES);
+                assert!(names.insert(asset.name));
+            }
+        }
         assert!(RuntimeBackend::Cpu.asset().contains(VERSION));
         assert!(RuntimeBackend::Vulkan.asset().contains(VERSION));
-        assert_eq!(RuntimeBackend::Cpu.sha256().len(), 64);
-        assert_eq!(RuntimeBackend::Vulkan.sha256().len(), 64);
+        assert!(RuntimeBackend::Cuda.asset().contains(VERSION));
+        assert_eq!(RuntimeBackend::Cuda.assets().len(), 2);
+        assert_eq!(RuntimeBackend::Cuda.id(), "cuda");
+    }
+
+    #[test]
+    fn release_download_redirect_is_limited_to_github_asset_host() {
+        let source = reqwest::Url::parse(
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12347/archive.zip",
+        )
+        .unwrap();
+        let target = reqwest::Url::parse(
+            "https://release-assets.githubusercontent.com/asset.zip?token=opaque",
+        )
+        .unwrap();
+        let external = reqwest::Url::parse("https://example.com/archive.zip").unwrap();
+        let http_target = reqwest::Url::parse(
+            "http://release-assets.githubusercontent.com/asset.zip",
+        )
+        .unwrap();
+        assert!(is_allowed_release_asset_redirect(&[source.clone()], &target));
+        assert!(!is_allowed_release_asset_redirect(&[source.clone()], &external));
+        assert!(!is_allowed_release_asset_redirect(&[source.clone()], &http_target));
+        assert!(!is_allowed_release_asset_redirect(&[source.clone(), target.clone()], &external));
     }
 
     #[test]
@@ -806,7 +975,8 @@ mod tests {
         }
         let root = std::env::temp_dir().join(format!("spindle-zip-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        assert!(extract_archive(bytes.get_ref(), &root).is_err());
+        let mut extracted = 0;
+        assert!(extract_archive(Cursor::new(bytes.into_inner()), &root, &mut extracted).is_err());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -823,7 +993,8 @@ mod tests {
         }
         let root = std::env::temp_dir().join(format!("spindle-zip-empty-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        assert!(extract_archive(bytes.get_ref(), &root).is_ok());
+        let mut extracted = 0;
+        assert!(extract_archive(Cursor::new(bytes.into_inner()), &root, &mut extracted).is_ok());
         assert!(find_server(&root).is_none());
         let _ = fs::remove_dir_all(root);
     }

@@ -8,7 +8,7 @@ Spindle discovers and chats with Ollama, LM Studio, and its managed llama.cpp ru
 | LM Studio | `http://127.0.0.1:1234` | `GET /v1/models` | `POST /v1/chat/completions` (SSE) |
 | llama.cpp (managed) | `http://127.0.0.1:12345` | `GET /v1/models` | `POST /v1/chat/completions` (SSE) |
 
-Start Ollama or LM Studio yourself and load a model before selecting it in **Chat**. For llama.cpp, use the **Runtime** workspace to install a pinned CPU or Vulkan build, select an inspected GGUF file, and start the managed server. Spindle binds that server only to 127.0.0.1:12345.
+Start Ollama or LM Studio yourself and load a model before selecting it in **Chat**. For llama.cpp, use the **Runtime** workspace to install a pinned CPU, Vulkan, or NVIDIA CUDA 12.4 build, select an inspected GGUF file, and start the managed server. The CUDA installer also installs its matching runtime DLL bundle. Spindle binds the server only to 127.0.0.1:12345.
 
 ## Chat behavior
 
@@ -21,7 +21,7 @@ Start Ollama or LM Studio yourself and load a model before selecting it in **Cha
 ## Network and parsing boundaries
 
 - Requests are sent only to fixed IPv4 loopback endpoints above. There is no user-configurable URL.
-- llama.cpp binaries are pinned to build b12347 and the downloaded ZIP is verified against the expected SHA-256 digest before extraction.
+- llama.cpp binaries are pinned to build b12347. Downloads follow only the expected GitHub release asset redirect and are checked against pinned sizes and SHA-256 digests before extraction.
 - ZIP entries are bounded by count and uncompressed size; path traversal and symbolic links are rejected.
 - The process manager launches the verified executable directly with a fixed argument allowlist, a local GGUF path, and a loopback-only bind address. It never invokes a shell.
 - Proxy configuration is disabled and redirects are not followed.

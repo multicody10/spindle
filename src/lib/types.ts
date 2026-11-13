@@ -33,7 +33,7 @@ export interface LocalProviderModel {
 
 export type ChatProviderId = "ollama" | "lm-studio" | "llama-cpp";
 
-export type RuntimeBackend = "cpu" | "vulkan";
+export type RuntimeBackend = "cpu" | "vulkan" | "cuda";
 
 export interface BackendInstallStatus {
   backend: RuntimeBackend;
