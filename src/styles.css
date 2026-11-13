@@ -133,3 +133,16 @@ footer { display: flex; justify-content: space-between; color: #566579; font-siz
   border-left: 2px solid #8b6537;
   padding-left: 22px;
 }
+
+.preset-name {
+  width: 125px;
+  min-width: 0;
+  padding: 8px;
+  color: #dce5ef;
+  background: #0b1017;
+  border: 1px solid #2a394a;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 9px;
+}
+.preset-name:focus { border-color: #528bc1; outline: none; }

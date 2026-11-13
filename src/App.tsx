@@ -42,6 +42,7 @@ function App() {
   const [model, setModel] = useState<ModelMetadata | null>(null);
   const [configuration, setConfiguration] = useState<ModelConfiguration>(DEFAULT_CONFIGURATION);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Detecting hardware…");
@@ -165,15 +166,19 @@ function App() {
   };
 
   const savePreset = async () => {
-    if (!model) return;
-    const name = window.prompt("Name this configuration preset:");
-    if (!name?.trim()) return;
+    const name = presetName.trim();
+    if (!model || !name || busy) return;
+    setBusy(true);
+    setError(null);
     try {
-      await api.savePreset(name.trim(), { ...configuration, modelPath: model.path });
+      await api.savePreset(name, { ...configuration, modelPath: model.path });
       setPresets(await api.listPresets());
+      setPresetName("");
       setMessage("Preset saved.");
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -398,7 +403,17 @@ function App() {
               <div><strong>Per-model configuration</strong><small>Stored locally in Spindle's SQLite database. It does not modify the model file.</small></div>
               <div className="save-actions">
                 <select aria-label="Load saved preset" defaultValue="" onChange={(event) => loadPreset(event.target.value)}><option value="">Load preset…</option>{presets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}</select>
-                <button className="button subtle" onClick={() => void savePreset()} disabled={!model}>Save preset</button>
+                <input
+                  aria-label="Preset name"
+                  className="preset-name"
+                  value={presetName}
+                  onChange={(event) => setPresetName(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") void savePreset(); }}
+                  placeholder="Preset name"
+                  maxLength={80}
+                  disabled={!model || busy}
+                />
+                <button className="button subtle" onClick={() => void savePreset()} disabled={!model || !presetName.trim() || busy}>Save preset</button>
                 <button className="button primary" onClick={() => void save()} disabled={!model || busy}>Save model settings</button>
               </div>
             </div>
