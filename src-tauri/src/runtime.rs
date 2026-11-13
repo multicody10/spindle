@@ -452,6 +452,7 @@ pub async fn start(
         .arg("--flash-attn").arg(if configuration.runtime.flash_attention { "on" } else { "off" })
         .arg("--cache-type-k").arg(&configuration.runtime.kv_cache_k_type)
         .arg("--cache-type-v").arg(&configuration.runtime.kv_cache_v_type)
+        .arg(if configuration.runtime.kv_cache_on_gpu { "--kv-offload" } else { "--no-kv-offload" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -464,13 +465,17 @@ pub async fn start(
     };
     command.arg("--load-mode").arg(load_mode);
 
+    command.env_clear();
     #[cfg(windows)]
     {
-        for key in ["SYSTEMROOT", "WINDIR", "TEMP", "TMP"] {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
-            }
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            let system_directory = PathBuf::from(&system_root).join("System32");
+            command.env("SystemRoot", &system_root)
+                .env("WINDIR", &system_root)
+                .env("PATH", system_directory);
         }
+        let temporary_directory = std::env::temp_dir();
+        command.env("TEMP", &temporary_directory).env("TMP", temporary_directory);
     }
 
     let mut child = command.spawn().map_err(|error| format!("Could not launch the verified llama-server executable: {error}"))?;
