@@ -31,7 +31,40 @@ export interface LocalProviderModel {
   quantization: string | null;
 }
 
-export type ChatProviderId = "ollama" | "lm-studio";
+export type ChatProviderId = "ollama" | "lm-studio" | "llama-cpp";
+
+export type RuntimeBackend = "cpu" | "vulkan";
+
+export interface BackendInstallStatus {
+  backend: RuntimeBackend;
+  installed: boolean;
+  version: string;
+  asset: string;
+}
+
+export interface AppliedRuntimeSettings {
+  modelPath: string | null;
+  contextTokens: number | null;
+  temperature: number | null;
+  topP: number | null;
+  topK: number | null;
+  minP: number | null;
+  repeatPenalty: number | null;
+  buildInfo: string | null;
+  note: string;
+}
+
+export interface RuntimeStatus {
+  version: string;
+  running: boolean;
+  processId: number | null;
+  backend: RuntimeBackend | null;
+  modelPath: string | null;
+  installedBackends: BackendInstallStatus[];
+  logs: string[];
+  appliedSettings: AppliedRuntimeSettings | null;
+}
+
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export interface ChatMessage {
