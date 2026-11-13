@@ -46,8 +46,8 @@ fn fixed_value_size(kind: u32) -> Option<u64> {
     match kind {
         0 | 1 | 7 => Some(1),
         2 | 3 => Some(2),
-        4 | 5 | 6 => Some(4),
-        10 | 11 | 12 => Some(8),
+        4..=6 => Some(4),
+        10..=12 => Some(8),
         _ => None,
     }
 }
@@ -235,7 +235,7 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
     let attention_heads = as_usize(get("attention.head_count"));
     let key_value_heads = as_usize(get("attention.head_count_kv")).or(attention_heads);
     let key_length = as_usize(get("attention.key_length")).or_else(|| {
-        embedding_length.zip(attention_heads).and_then(|(embedding, heads)| if heads > 0 { Some(embedding / heads) } else { None })
+        embedding_length.zip(attention_heads).and_then(|(embedding, heads)| embedding.checked_div(heads))
     });
     let value_length = as_usize(get("attention.value_length")).or(key_length);
     let file_type = metadata.get("general.file_type").and_then(Value::as_u64).and_then(|number| u32::try_from(number).ok());
