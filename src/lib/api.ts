@@ -5,6 +5,9 @@ import type {
   LocalProviderStatus,
   ChatRequest,
   ChatResult,
+  RuntimeBackend,
+  RuntimeStatus,
+  BackendInstallStatus,
   ModelConfiguration,
   ModelMetadata,
   OptimizationProfile,
@@ -18,6 +21,12 @@ export const api = {
   localProviders: () => invoke<LocalProviderStatus[]>("local_provider_statuses"),
   startChat: (request: ChatRequest) => invoke<ChatResult>("start_chat", { request }),
   cancelChat: (requestId: string) => invoke<boolean>("cancel_chat", { requestId }),
+  runtimeStatus: () => invoke<RuntimeStatus>("managed_runtime_status"),
+  installRuntime: (backend: RuntimeBackend) =>
+    invoke<BackendInstallStatus>("install_llama_runtime", { backend }),
+  startRuntime: (modelPath: string, configuration: ModelConfiguration, backend: RuntimeBackend) =>
+    invoke<RuntimeStatus>("start_llama_runtime", { modelPath, configuration, backend }),
+  stopRuntime: () => invoke<RuntimeStatus>("stop_llama_runtime"),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),
   optimizeModel: (path: string, profile: OptimizationProfile) =>
     invoke<OptimizationResult>("optimize_model", { path, profile }),
