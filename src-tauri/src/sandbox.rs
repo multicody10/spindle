@@ -236,6 +236,11 @@ fn run_validation_windows(
         (OsString::from("PATH"), path_value),
         (OsString::from("USERPROFILE"), profile_home.as_os_str().to_owned()),
         (OsString::from("HOME"), profile_home.as_os_str().to_owned()),
+        (
+            OsString::from("LOCALAPPDATA"),
+            std::env::var_os("LOCALAPPDATA")
+                .ok_or_else(|| "Could not resolve LOCALAPPDATA required for AppContainer process creation.".to_string())?,
+        ),
         (OsString::from("TEMP"), temp.as_os_str().to_owned()),
         (OsString::from("TMP"), temp.as_os_str().to_owned()),
         (OsString::from("CARGO_HOME"), cargo_home.into_os_string()),
