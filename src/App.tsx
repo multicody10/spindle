@@ -20,7 +20,8 @@ import {
   type OptimizationProfile,
   type SavedPreset,
   type Project,
-  type ProjectSession
+  type ProjectSession,
+  type RuntimeStatus
 } from "./lib/types";
 
 const PROFILES: { value: OptimizationProfile; label: string; detail: string }[] = [
@@ -54,6 +55,7 @@ function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [modelPath, setModelPath] = useState("");
@@ -82,13 +84,39 @@ function App() {
     setMessage("New GGUF selected. Inspect it before configuring or loading the model.");
   }, [modelPath]);
 
+  const prepareChatModel = useCallback(async (path: string) => {
+    const candidatePath = path.trim();
+    if (!candidatePath) throw new Error("Select a local GGUF model first.");
+    setModelPath(candidatePath);
+    setModel(null);
+    setOptimizationWarnings([]);
+    setError(null);
+    try {
+      const inspected = await api.inspectModel(candidatePath);
+      const saved = await api.loadConfiguration(inspected.path, configuration.profile);
+      if (saved) {
+        setConfiguration(saved);
+        setOptimizationWarnings([]);
+      } else {
+        const optimized = await api.optimizeModel(inspected.path, configuration.profile);
+        setHardware(optimized.hardware);
+        setConfiguration(optimized.configuration);
+        setOptimizationWarnings(optimized.warnings);
+      }
+      setModelPath(inspected.path);
+      setModel(inspected);
+    } catch (reason) {
+      setError(String(reason));
+      throw reason;
+    }
+  }, [configuration.profile]);
+
   const refreshModelLibrary = useCallback(async () => {
     setModelLibraryBusy(true);
     setModelLibraryError(null);
     try {
       const library = await api.modelLibrary();
       setModelLibrary(library);
-      setModelPath((current) => current || library.models[0]?.path || "");
     } catch (reason) {
       setModelLibraryError(String(reason));
     } finally {
@@ -100,7 +128,12 @@ function App() {
     setProvidersBusy(true);
     setProvidersError(null);
     try {
-      setLocalProviders(await api.localProviders());
+      const [discoveredProviders, managedRuntime] = await Promise.all([
+        api.localProviders(),
+        api.runtimeStatus()
+      ]);
+      setLocalProviders(discoveredProviders);
+      setRuntimeStatus(managedRuntime);
     } catch (reason) {
       setProvidersError(String(reason));
     } finally {
@@ -393,6 +426,11 @@ function App() {
               providersBusy={providersBusy}
               providersError={providersError}
               onRefreshProviders={() => void refreshLocalProviders()}
+              modelLibrary={modelLibrary?.models ?? []}
+              modelLibraryBusy={modelLibraryBusy}
+              managedModelPath={modelPath}
+              runtimeStatus={runtimeStatus}
+              onSelectManagedModel={prepareChatModel}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
               session={activeSession}
