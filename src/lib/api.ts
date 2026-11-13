@@ -41,8 +41,8 @@ export const api = {
     invoke<WorkspaceListing>("list_workspace_directory", { sessionId, relativePath }),
   readWorkspaceFile: (sessionId: string, relativePath: string) =>
     invoke<WorkspaceFile>("read_workspace_file", { sessionId, relativePath }),
-  writeWorkspaceFile: (sessionId: string, relativePath: string, content: string) =>
-    invoke<WorkspaceWriteResult>("write_workspace_file", { sessionId, relativePath, content }),
+  writeWorkspaceFile: (sessionId: string, relativePath: string, content: string, expectedRevision: string) =>
+    invoke<WorkspaceWriteResult>("write_workspace_file", { sessionId, relativePath, content, expectedRevision }),
   searchWorkspace: (sessionId: string, query: string) =>
     invoke<WorkspaceSearchResult>("search_workspace", { sessionId, query }),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),
