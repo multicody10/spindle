@@ -148,9 +148,9 @@ jobs:
           @(
             "## Windows NSIS package"
             ""
-            "- Installer: `$($installer.Name)`"
+            "- Installer: $($installer.Name)"
             "- Size: $($installer.Length) bytes"
-            "- SHA-256: `$sha256`"
+            "- SHA-256: $sha256"
             "- Updater signing: intentionally disabled for this packaging-only validation"
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
