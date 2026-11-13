@@ -33,7 +33,6 @@ function ChatView({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [requestId, setRequestId] = useState<string | null>(null);
   const [status, setStatus] = useState("Select a running local provider and a loaded model.");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ChatResult | null>(null);
@@ -89,7 +88,6 @@ function ChatView({
     setMessages([...history, { role: "assistant", content: "" }]);
     setDraft("");
     setSending(true);
-    setRequestId(id);
     activeRequest.current = id;
     cancelRequested.current = false;
     setError(null);
@@ -120,7 +118,6 @@ function ChatView({
     } finally {
       unlisten?.();
       activeRequest.current = null;
-      setRequestId(null);
       setSending(false);
     }
   };
