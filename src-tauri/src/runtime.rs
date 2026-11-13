@@ -103,6 +103,17 @@ pub struct ManagedRuntime {
     logs: Arc<Mutex<VecDeque<String>>>,
 }
 
+impl Drop for ManagedRuntime {
+    fn drop(&mut self) {
+        if let Ok(state) = self.process.get_mut() {
+            if let Some(process) = state.as_mut() {
+                let _ = process.child.kill();
+                let _ = process.child.wait();
+            }
+        }
+    }
+}
+
 impl ManagedRuntime {
     fn push_log(&self, line: impl Into<String>) {
         push_log_to(&self.logs, line.into());
@@ -427,6 +438,9 @@ pub async fn start(
     command.current_dir(executable.parent().unwrap_or(Path::new(".")))
         .arg("--host").arg("127.0.0.1")
         .arg("--port").arg(PORT.to_string())
+        .arg("--no-webui")
+        .arg("--no-agent")
+        .arg("--offline")
         .arg("--model").arg(&model)
         .arg("--ctx-size").arg(configuration.runtime.context_tokens.to_string())
         .arg("--threads").arg(configuration.runtime.threads.to_string())
