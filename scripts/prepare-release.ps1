@@ -230,7 +230,7 @@ else {
 # Re-read the final worktree after any checkout of an existing tag. Every manifest and
 # lockfile must describe the same version before a release build is allowed to start.
 $finalPackage = Get-Content "package.json" -Raw | ConvertFrom-Json
-$finalNpmLock = Get-Content "package-lock.json" -Raw | ConvertFrom-Json
+$finalNpmLock = Get-Content "package-lock.json" -Raw | ConvertFrom-Json -AsHashtable
 $finalTauri = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
 $finalCargoToml = Get-Content "src-tauri/Cargo.toml" -Raw
 $finalCargoLock = Get-Content "src-tauri/Cargo.lock" -Raw
