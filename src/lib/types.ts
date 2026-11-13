@@ -31,7 +31,87 @@ export interface LocalProviderModel {
   quantization: string | null;
 }
 
-export type ChatProviderId = "ollama" | "lm-studio";
+export type ChatProviderId = "ollama" | "lm-studio" | "llama-cpp";
+
+export type RuntimeBackend = "cpu" | "vulkan";
+
+export interface BackendInstallStatus {
+  backend: RuntimeBackend;
+  installed: boolean;
+  version: string;
+  asset: string;
+}
+
+export interface AppliedRuntimeSettings {
+  modelPath: string | null;
+  contextTokens: number | null;
+  temperature: number | null;
+  topP: number | null;
+  topK: number | null;
+  minP: number | null;
+  repeatPenalty: number | null;
+  buildInfo: string | null;
+  note: string;
+}
+
+export interface RuntimeStatus {
+  version: string;
+  running: boolean;
+  processId: number | null;
+  backend: RuntimeBackend | null;
+  modelPath: string | null;
+  installedBackends: BackendInstallStatus[];
+  logs: string[];
+  appliedSettings: AppliedRuntimeSettings | null;
+}
+
+export interface WorkspaceGrant {
+  sessionId: string;
+  rootPath: string;
+  canRead: boolean;
+  canWrite: boolean;
+  temporary: boolean;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  relativePath: string;
+  kind: "directory" | "file";
+  sizeBytes: number | null;
+  modifiedUnixMs: number | null;
+}
+
+export interface WorkspaceListing {
+  relativePath: string;
+  entries: WorkspaceEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspaceFile {
+  relativePath: string;
+  content: string;
+  sizeBytes: number;
+  revision: string;
+}
+
+export interface WorkspaceWriteResult {
+  relativePath: string;
+  bytesWritten: number;
+  revision: string;
+}
+
+export interface WorkspaceSearchMatch {
+  relativePath: string;
+  lineNumber: number;
+  preview: string;
+}
+
+export interface WorkspaceSearchResult {
+  matches: WorkspaceSearchMatch[];
+  filesScanned: number;
+  bytesScanned: number;
+  truncated: boolean;
+}
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export interface ChatMessage {

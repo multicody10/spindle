@@ -27,10 +27,10 @@ This roadmap records implementation status rather than implying the full product
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
 - [ ] Provider capability registry.
-- [ ] Managed llama.cpp installation and version pinning.
+- [x] Pinned Windows x64 llama.cpp CPU and Vulkan runtime installation with SHA-256 verification.
 - [ ] Shared inference runtime manager.
-- [ ] Model load/unload lifecycle.
-- [ ] Real applied-settings readback.
+- [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
+- [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.
 - [ ] Calibration benchmarks with user consent.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
@@ -38,6 +38,8 @@ This roadmap records implementation status rather than implying the full product
 ## Core developer workflow
 
 - [ ] Projects and independent sessions.
+- [x] Temporary project workspace grants with read-only defaults and separately granted write access.
+- [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and file writes.
 - [ ] SQLite migrations for project/session/task state.
 - [ ] Agent planner and execution state machine.
 - [ ] Read-only planning mode.
@@ -48,10 +50,11 @@ This roadmap records implementation status rather than implying the full product
 
 ## Security and reliability
 
-- [ ] Permission broker and revocable permission grants.
+- [x] Revocable in-memory workspace read/write grants.
+- [ ] General permission broker for agent tools, execution, network, and extensions.
 - [ ] Windows AppContainer/LPAC execution worker feasibility validation.
 - [ ] Restricted token, Job Object and process mitigation policies.
-- [ ] Reparse-point-safe file service and race-resistant operations.
+- [ ] Handle-relative, reparse-point-safe file service and race-resistant operations.
 - [ ] Network restrictions and controlled egress.
 - [ ] Environment/secret redaction.
 - [ ] Threat-driven integration tests on Windows.

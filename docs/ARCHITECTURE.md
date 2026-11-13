@@ -6,7 +6,7 @@ Spindle uses a native Rust/Tauri 2 core and a React/TypeScript/Vite interface. R
 
 Current request path:
 
-React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, and SQLite persistence.
+React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, verified llama.cpp runtime installer/process manager, temporary workspace permission manager and bounded project file service, and SQLite persistence.
 
 ## Trust boundaries
 
@@ -14,10 +14,15 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - The model file is treated as untrusted binary input. The GGUF parser bounds metadata counts, string lengths, and array lengths.
 - The model configuration is validated again in Rust before persistence.
 - SQLite lives in the operating system application data directory, not in the project folder.
-- Provider discovery and chat use fixed IPv4 loopback endpoints only, disable proxies and redirects, bound request and response sizes, and never launch or control provider processes.
+- Ollama and LM Studio discovery/chat use fixed IPv4 loopback endpoints and never launch or control those external provider processes.
+- The managed llama.cpp installer uses fixed official release URLs, pinned SHA-256 digests, bounded downloads, safe ZIP path checks, and per-user application-data storage.
+- The process manager launches only the installed, verified llama-server.exe with typed settings and fixed 127.0.0.1 binding; it does not invoke a shell or accept arbitrary executable paths.
 - Chat streams provider tokens back to the UI through scoped Tauri events; each request can be cancelled independently.
 - Chat history exists only in the active window and is not persisted.
-- No shell execution, workspace file editing, MCP tool hosting, or agent loop is exposed in this milestone.
+- Workspace access is granted explicitly for one project root and one application session. Read access is automatic within that grant; writes require a separate user-selected permission.
+- Workspace file tools accept relative paths only, reject parent traversal and links, exclude common secret-file names, limit text reads/writes to 1 MiB, cap directory listings at 500 entries, and bound recursive text search.
+- Workspace grants are an application-level IPC gate, not an OS sandbox. Operations are not yet handle-relative and do not claim full race-resistant protection against every Windows reparse-point/TOCTOU attack.
+- No shell execution, autonomous file edits, MCP tool hosting, or agent loop is exposed in this milestone. The llama.cpp server is not started with its agent, tools, MCP, or filesystem features.
 
 ## Planned architecture
 
@@ -26,9 +31,9 @@ The next architecture layers are:
 1. Provider capability registry and managed runtime adapters, extending the existing Ollama and LM Studio streaming chat boundary.
 2. Central inference runtime manager, with explicit weight sharing and per-session context ownership.
 3. Session coordinator and project-scoped persistence.
-4. Permission broker with policy evaluation independent of model output.
+4. General permission broker with policy evaluation independent of model output; the current workspace grant manager is the initial file-access slice.
 5. Restricted execution worker with Windows AppContainer/LPAC where compatible, plus resource and process-tree controls.
-6. File operation service using handle-relative/reparse-aware operations and atomic writes.
+6. Complete the file operation service with handle-relative/reparse-aware operations, atomic writes, previews, and undo.
 7. Agent orchestration and verifiable tool-result state machine.
 8. Secure updater and release verification.
 
