@@ -1,18 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OptimizationProfile {
+    #[default]
     Automatic,
     MaximumPerformance,
     Balanced,
     MemoryEfficient,
     MaximumContext,
     Custom,
-}
-
-impl Default for OptimizationProfile {
-    fn default() -> Self { Self::Automatic }
 }
 
 impl OptimizationProfile {
