@@ -376,7 +376,11 @@ fn nvml_devices() -> Vec<GpuDevice> {
 
 #[cfg(target_os = "windows")]
 fn is_nvidia_adapter(description: &str, matching_device_id: &str) -> bool {
-    description.to_ascii_lowercase().contains("nvidia")
+    let description = description.to_ascii_lowercase();
+    description.contains("nvidia")
+        || description.contains("geforce")
+        || description.contains("quadro")
+        || description.contains("tesla")
         || matching_device_id.to_ascii_lowercase().contains("ven_10de")
 }
 
