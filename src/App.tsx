@@ -466,7 +466,7 @@ function App() {
             <div className="model-library-heading">
               <div>
                 <strong>Model library</strong>
-                <span>Spindle scans its library and common LM Studio, GPT4All, and Jan folders. You can also drop any GGUF file from File Explorer. Files stay where they are.</span>
+                <span>Spindle scans its library, LM Studio, GPT4All, Jan, and Hugging Face model folders. KoboldCpp's selected Download Dir can be configured. You can also drop any GGUF file from File Explorer. Files stay where they are.</span>
               </div>
               <button className="button subtle" onClick={() => void refreshModelLibrary()} disabled={modelLibraryBusy}>
                 {modelLibraryBusy ? "Scanning…" : "Refresh library"}
