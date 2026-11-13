@@ -738,6 +738,7 @@ pub async fn start(
     runtime.push_log(format!("Starting llama.cpp {VERSION} ({})…", backend.id()));
 
     let mut command = Command::new(&executable);
+    crate::child_process::hide_console_window(&mut command);
     command
         .current_dir(executable.parent().unwrap_or(Path::new(".")))
         .arg("--host")

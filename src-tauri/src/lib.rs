@@ -2,6 +2,7 @@ mod agent_planner;
 mod benchmark;
 mod capabilities;
 mod chat;
+mod child_process;
 mod domain;
 mod gguf;
 mod hardware;
