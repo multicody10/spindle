@@ -420,7 +420,7 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend(b"GGUF");
         put_u32(&mut bytes, 3);
-        put_u64(&mut bytes, 0);
+        put_u64(&mut bytes, 1);
         put_u64(&mut bytes, 1);
         put_string(&mut bytes, "general.description");
         put_u32(&mut bytes, 8);
