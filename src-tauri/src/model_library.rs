@@ -148,48 +148,44 @@ fn default_model_roots(
     home_directory: Option<&Path>,
     local_app_data_directory: Option<&Path>,
     roaming_app_data_directory: Option<&Path>,
+    lm_studio_override: Option<PathBuf>,
+    gpt4all_override: Option<PathBuf>,
+    jan_override: Option<PathBuf>,
+    koboldcpp_override: Option<PathBuf>,
 ) -> Vec<(String, PathBuf)> {
     let mut roots = Vec::new();
 
-    let lm_studio = env::var_os("LMSTUDIO_MODELS_DIR")
-        .map(PathBuf::from)
+    let lm_studio = lm_studio_override
+        .clone()
         .or_else(|| home_directory.map(|home| home.join(".lmstudio").join("models")));
     if let Some(path) = lm_studio {
-        let name = if env::var_os("LMSTUDIO_MODELS_DIR").is_some() {
-            "LM Studio (configured)"
-        } else {
-            "LM Studio"
-        };
-        roots.push((name.to_owned(), path));
+        roots.push((
+            if lm_studio_override.is_some() { "LM Studio (configured)" } else { "LM Studio" }.into(),
+            path,
+        ));
     }
 
-    let gpt4all = env::var_os("GPT4ALL_MODELS_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            local_app_data_directory.map(|base| base.join("nomic.ai").join("GPT4All"))
-        });
+    let gpt4all = gpt4all_override
+        .clone()
+        .or_else(|| local_app_data_directory.map(|base| base.join("nomic.ai").join("GPT4All")));
     if let Some(path) = gpt4all {
-        let name = if env::var_os("GPT4ALL_MODELS_DIR").is_some() {
-            "GPT4All (configured)"
-        } else {
-            "GPT4All"
-        };
-        roots.push((name.to_owned(), path));
+        roots.push((
+            if gpt4all_override.is_some() { "GPT4All (configured)" } else { "GPT4All" }.into(),
+            path,
+        ));
     }
 
-    let jan = env::var_os("JAN_MODELS_DIR")
-        .map(PathBuf::from)
+    let jan = jan_override
+        .clone()
         .or_else(|| roaming_app_data_directory.map(|base| base.join("Jan").join("data").join("models")));
     if let Some(path) = jan {
-        let name = if env::var_os("JAN_MODELS_DIR").is_some() {
-            "Jan (configured)"
-        } else {
-            "Jan"
-        };
-        roots.push((name.to_owned(), path));
+        roots.push((
+            if jan_override.is_some() { "Jan (configured)" } else { "Jan" }.into(),
+            path,
+        ));
     }
 
-    if let Some(path) = env::var_os("KOBOLDCPP_MODELS_DIR").map(PathBuf::from) {
+    if let Some(path) = koboldcpp_override {
         roots.push(("KoboldCpp (configured)".to_owned(), path));
     }
 
@@ -263,6 +259,10 @@ pub fn discover(documents_directory: PathBuf) -> Result<ModelLibrary, String> {
         home.as_deref(),
         local_app_data.as_deref(),
         roaming_app_data.as_deref(),
+        env::var_os("LMSTUDIO_MODELS_DIR").map(PathBuf::from),
+        env::var_os("GPT4ALL_MODELS_DIR").map(PathBuf::from),
+        env::var_os("JAN_MODELS_DIR").map(PathBuf::from),
+        env::var_os("KOBOLDCPP_MODELS_DIR").map(PathBuf::from),
     );
 
     discover_from_roots(&documents_directory, roots)
@@ -301,6 +301,10 @@ mod tests {
             Some(&home),
             Some(&local_app_data),
             Some(&roaming_app_data),
+            None,
+            None,
+            None,
+            None,
         );
         let result = discover_from_roots(&documents, roots).unwrap();
 
@@ -336,7 +340,7 @@ mod tests {
         fs::create_dir_all(&custom).unwrap();
         fs::write(custom.join("custom.gguf"), b"model").unwrap();
 
-        let roots = vec![("LM Studio (configured)".to_owned(), custom.clone())];
+        let roots = default_model_roots(None, None, None, Some(custom.clone()), None, None, None);
         let result = discover_from_roots(&documents, roots).unwrap();
         assert!(result.models.iter().any(|model| {
             model.file_name == "custom.gguf" && model.source == "LM Studio (configured)"
