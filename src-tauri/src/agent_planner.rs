@@ -123,7 +123,7 @@ fn parse_plan(raw: &str) -> Result<projects::AgentPlan, String> {
     for step in &plan.steps {
         if step.title.trim().is_empty() || step.title.len() > 160 ||
             step.description.trim().is_empty() || step.description.len() > 4_000 ||
-            step.validation.len() > 1_000 || step.risk.len() > 160 || step.target_paths.len() > 24
+            step.validation.trim().is_empty() || step.validation.len() > 1_000 || !matches!(step.risk.as_str(), "low" | "medium" | "high") || step.target_paths.len() > 24
         { return Err("A plan step exceeded the supported size limits.".into()); }
         for value in &step.target_paths {
             let path = value.trim().replace('\\', "/");
@@ -244,4 +244,33 @@ Make the plan specific to the observed repository. Do not invent files, dependen
         }
     };
     projects::save_task_plan(database, task.id, plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID_JSON: &str = r#"{"summary":"Inspect the project","steps":[{"title":"Read the entry points","description":"Trace the application startup flow.","targetPaths":["src/main.rs"],"validation":"Identify the relevant tests.","risk":"low"}]}"#;
+
+    #[test]
+    fn parses_structured_plans_with_markdown_json_fences() {
+        let fenced = format!("{}\n{}\n{}", "\u{60}\u{60}\u{60}json", VALID_JSON, "\u{60}\u{60}\u{60}");
+        let plan = parse_plan(&fenced).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].target_paths, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn rejects_parent_traversal_and_drive_paths() {
+        let traversal = VALID_JSON.replace("src/main.rs", "../outside.txt");
+        assert!(parse_plan(&traversal).is_err());
+        let drive_path = VALID_JSON.replace("src/main.rs", "C:\\Users\\secret.txt");
+        assert!(parse_plan(&drive_path).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_risk_labels() {
+        let invalid = VALID_JSON.replace("\"low\"", "\"critical\"");
+        assert!(parse_plan(&invalid).is_err());
+    }
 }
