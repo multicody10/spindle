@@ -15,12 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  windows:
-    name: Windows x64 validation
+  frontend:
+    name: Windows x64 frontend validation
     runs-on: windows-latest
-    env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_TERM_COLOR: always
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -32,25 +29,35 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Install frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Type-check and build frontend
+        run: npm run check
+
+  rust:
+    name: Windows x64 Rust validation
+    runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Cache Rust build artifacts and tools
+      - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: |
             src-tauri -> target
-          shared-key: windows-x64-stable
+          shared-key: windows-x64-build
           cache-on-failure: true
-
-      - name: Install frontend dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Type-check and build frontend
-        run: npm run check
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
