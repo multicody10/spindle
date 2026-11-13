@@ -12,7 +12,7 @@ Read access is enabled by a grant. File writes are disabled by default and requi
 |---|---|
 | Directory listing | Direct children only; at most 500 entries per call; symbolic links and secret paths are omitted. |
 | Read text file | UTF-8 only; 1 MiB maximum. |
-| Write text file | Requires write grant; UTF-8 text only; 1 MiB maximum; writes use a temporary sibling file followed by rename. |
+| Write text file | Requires write grant; UTF-8 text only; 1 MiB maximum; writes use a temporary sibling file followed by rename. A SHA-256 revision captured at open is checked before save to reject edits made externally after the file was opened. |
 | Search | Literal case-insensitive text search; 2,000 files, 16 MiB total scanned bytes, 512 KiB per file, 100 matches, and 16 directory levels maximum. |
 
 Paths are relative to the canonicalized grant root. Absolute paths, parent traversal, link traversal, and special files are rejected. Directory search skips common generated folders such as `.git`, `node_modules`, `target`, `dist`, and `build`.
@@ -20,6 +20,8 @@ Paths are relative to the canonicalized grant root. Absolute paths, parent trave
 ## Secret-file exclusions
 
 Common environment and credential material is excluded from listing, reading, searching, and writing. Current name filters include `.env*`, `.npmrc`, `.pypirc`, SSH private key names, common cloud credential files/directories, and `.pem`, `.key`, `.p12`, `.pfx`, and `.asc` files.
+
+Before saving, Spindle compares the currently stored file with the SHA-256 revision captured when the editor opened it. A mismatch rejects the save and asks the user to reopen the file. This reduces accidental lost updates but is not a complete atomic compare-and-swap and does not eliminate every filesystem race.
 
 These name filters are a defensive default, not a complete secret scanner. Projects can store credentials under arbitrary names; users should not grant an untrusted agent access to a directory containing secrets.
 
