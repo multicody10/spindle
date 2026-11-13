@@ -34,7 +34,9 @@
 
 ## Known gaps
 
-- A Windows AppContainer/LPAC worker exists for fixed user-triggered Cargo validation only. It has no network capabilities, a sanitized environment, bounded output, and Job Object memory/CPU/time limits. It has not passed the full Windows adversarial integration suite and does not support arbitrary commands.
+- A Windows AppContainer/LPAC worker now serves fixed user-triggered and agent-requested Cargo validation. It has no network capabilities, a sanitized environment, bounded output, and Job Object memory/CPU/time limits. It has not passed the full Windows adversarial integration suite and does not support arbitrary commands.
+- Task edits are confined to detached worktrees. Transcripts, task events, state transitions, and patch-application journals persist; startup recovery inspects in-flight effects rather than replaying model operations. Applying changes to the primary project remains a separate permission-checked action with guarded undo.
+- Tool budgets and output are bounded. Skills and project memories are untrusted advisory context and cannot grant capabilities.
 - The in-process broker provides session scopes and operation-aware auditing, but does not yet enforce resource-specific ACLs. Explicit process mitigation policies and process-count limits remain outstanding.
 - The workspace file service is not yet handle-relative and has not been proven race-resistant against all Windows reparse-point/TOCTOU conditions.
 - Spindle can send chat to already-running Ollama or LM Studio processes over loopback. Those provider processes remain externally managed.

@@ -1,10 +1,14 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const MAX_GIT_OUTPUT: usize = 2 * 1024 * 1024;
+const MAX_GIT_OUTPUT: usize = 16 * 1024 * 1024;
+const MAX_REVIEW_DIFF: usize = 2 * 1024 * 1024;
+const MAX_APPLY_PATCH: usize = 8 * 1024 * 1024;
 const MAX_HISTORY: usize = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +75,20 @@ fn open_database(path: &Path) -> Result<Connection, String> {
            base_commit TEXT NOT NULL,
            created_at INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_task_worktrees_project ON task_worktrees(project_id);"
+         CREATE INDEX IF NOT EXISTS idx_task_worktrees_project ON task_worktrees(project_id);
+         CREATE TABLE IF NOT EXISTS task_worktree_applications (
+           task_id TEXT PRIMARY KEY,
+           project_id TEXT NOT NULL,
+           root_path TEXT NOT NULL,
+           base_commit TEXT NOT NULL,
+           patch TEXT NOT NULL,
+           patch_sha256 TEXT NOT NULL,
+           status TEXT NOT NULL,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_task_worktree_applications_status
+           ON task_worktree_applications(status, updated_at);"
     ).map_err(|error| format!("Could not initialize task worktree storage: {error}"))?;
     Ok(connection)
 }
@@ -117,6 +134,45 @@ fn run_git(root: &Path, args: &[&str]) -> Result<Output, String> {
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Git operation failed: {}", detail.chars().take(1_000).collect::<String>()));
+    }
+    Ok(output)
+}
+
+fn run_git_input(root: &Path, args: &[&str], input: &[u8]) -> Result<Output, String> {
+    let hooks_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let hooks_config = format!("core.hooksPath={hooks_path}");
+    let mut command = Command::new(git_executable()?);
+    command.current_dir(root)
+        .args([
+            "-c", hooks_config.as_str(), "-c", "core.pager=cat",
+            "-c", "credential.helper=", "-c", "core.fsmonitor=false",
+            "--no-optional-locks",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::child_process::hide_console_window(&mut command);
+    let mut child = command.spawn()
+        .map_err(|error| format!("Could not start Git: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input)
+            .map_err(|error| format!("Could not send the reviewed patch to Git: {error}"))?;
+    }
+    let output = child.wait_with_output()
+        .map_err(|error| format!("Could not collect Git's patch result: {error}"))?;
+    if output.stdout.len().saturating_add(output.stderr.len()) > MAX_GIT_OUTPUT {
+        return Err("Git produced more than the permitted 16 MiB output limit.".into());
+    }
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Git patch operation failed: {}", detail.chars().take(1_000).collect::<String>()));
     }
     Ok(output)
 }
@@ -305,15 +361,45 @@ pub fn get_worktree(database_path: &Path, task_id: &str) -> Result<TaskWorktree,
 
 pub fn worktree_diff(database_path: &Path, task_id: &str) -> Result<TaskWorktreeDiff, String> {
     let worktree = get_worktree(database_path, task_id)?;
-    let status = status(&worktree.path)?;
     let root = repository_root(Path::new(&worktree.path))?;
+    reject_configured_filters(&root)?;
+
+    let untracked = git_text(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    for relative in untracked.split('\0').filter(|path| !path.is_empty()) {
+        validate_review_path(relative)?;
+        let path = root.join(relative);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("Could not inspect an untracked task file: {error}"))?;
+        if is_reparse_or_symlink(&metadata) || !metadata.is_file() || metadata.len() > 1024 * 1024 {
+            return Err(format!("Untracked task file '{relative}' is a link, special file, or exceeds the 1 MiB review limit."));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("Could not read untracked task file '{relative}': {error}"))?;
+        std::str::from_utf8(&bytes)
+            .map_err(|_| format!("Untracked task file '{relative}' is not UTF-8 text and cannot be reviewed."))?;
+        run_git(&root, &["add", "-N", "--", relative])?;
+    }
+
+    let raw_paths = git_text(&root, &["diff", "--name-only", "-z", &worktree.base_commit, "--"])?;
+    let mut paths = 0usize;
+    for path in raw_paths.split('\0').filter(|path| !path.is_empty()) {
+        validate_changed_file(&root, path)?;
+        paths += 1;
+        if paths > 500 {
+            return Err("The task contains more than 500 changed paths. Review is capped at 500 files.".into());
+        }
+    }
+    let status = status(&worktree.path)?;
     let output = run_git(&root, &[
         "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary",
         "--unified=3", &worktree.base_commit, "--",
     ])?;
-    let truncated = output.stdout.len() > MAX_GIT_OUTPUT;
-    let diff = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(MAX_GIT_OUTPUT)])
+    let truncated = output.stdout.len() > MAX_REVIEW_DIFF;
+    let diff = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(MAX_REVIEW_DIFF)])
         .into_owned();
+    if diff.contains("GIT binary patch") || diff.contains("Binary files ") {
+        return Err("Binary file changes are not supported by the text based review and apply workflow.".into());
+    }
     Ok(TaskWorktreeDiff { worktree, status, diff, diff_truncated: truncated })
 }
 
@@ -345,6 +431,271 @@ pub fn remove_worktree(
     Ok(())
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskApplicationResult {
+    pub task_id: String,
+    pub status: String,
+    pub changed_files: usize,
+    pub patch_sha256: String,
+    pub applied_at: i64,
+}
+
+fn validate_changed_file(root: &Path, relative: &str) -> Result<(), String> {
+    validate_review_path(relative)?;
+    let target = root.join(relative);
+    match std::fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if is_reparse_or_symlink(&metadata) || !metadata.is_file() || metadata.len() > 1024 * 1024 {
+                return Err(format!("Changed file '{relative}' is a link, special file, or exceeds the 1 MiB review limit."));
+            }
+            let canonical = target.canonicalize()
+                .map_err(|error| format!("Could not resolve changed task file '{relative}': {error}"))?;
+            if !canonical.starts_with(root) {
+                return Err(format!("Changed file '{relative}' resolves outside the task worktree."));
+            }
+            let bytes = std::fs::read(&canonical)
+                .map_err(|error| format!("Could not read changed task file '{relative}': {error}"))?;
+            std::str::from_utf8(&bytes)
+                .map_err(|_| format!("Changed file '{relative}' is not UTF-8 text and cannot be applied."))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = target.parent()
+                .ok_or_else(|| format!("Deleted file '{relative}' has no parent directory."))?;
+            let canonical_parent = parent.canonicalize()
+                .map_err(|error| format!("Could not resolve parent of deleted file '{relative}': {error}"))?;
+            if !canonical_parent.starts_with(root) {
+                return Err(format!("Deleted file '{relative}' resolves outside the task worktree."));
+            }
+        }
+        Err(error) => return Err(format!("Could not inspect changed task file '{relative}': {error}")),
+    }
+    Ok(())
+}
+
+fn validate_review_path(value: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if value.is_empty() || value.len() > 4096 || path.is_absolute() || value.chars().any(char::is_control) {
+        return Err("A changed file path is invalid for review.".into());
+    }
+    let mut count = 0usize;
+    for component in path.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err("Changed file paths may not contain traversal, roots, or prefixes.".into());
+        };
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        if name == ".git" || name.starts_with(".env") || matches!(
+            name.as_str(), ".ssh" | ".aws" | ".azure" | ".kube" | ".gnupg" | ".npmrc" |
+            ".pypirc" | "id_rsa" | "id_ed25519" | "credentials" | "credentials.json" |
+            "service-account.json" | "secrets.json"
+        ) || [".pem", ".key", ".p12", ".pfx", ".asc"].iter().any(|suffix| name.ends_with(suffix)) {
+            return Err("Secret or Git metadata paths are excluded from task review and apply.".into());
+        }
+        count += 1;
+    }
+    if count == 0 { return Err("A changed file path is required.".into()); }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_reparse_or_symlink(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_or_symlink(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+pub fn apply_worktree_changes(
+    database_path: &Path,
+    project_root: &str,
+    task_id: &str,
+) -> Result<TaskApplicationResult, String> {
+    validate_task_id(task_id)?;
+    let worktree = get_worktree(database_path, task_id)?;
+    let root = repository_root(Path::new(project_root))?;
+    let state_db = open_database(database_path)?;
+    let task_state: String = state_db.query_row(
+        "SELECT state FROM agent_tasks WHERE id=?1 AND project_id=?2",
+        params![task_id, worktree.project_id],
+        |row| row.get(0),
+    ).optional().map_err(|error| error.to_string())?
+        .ok_or_else(|| "The selected task no longer exists.".to_string())?;
+    if task_state != "completed" {
+        return Err("Only a completed agent task can be applied to the project working tree.".into());
+    }
+    let primary = status(project_root)?;
+    if !primary.clean || primary.head != worktree.base_commit {
+        return Err("The registered project must remain clean at the task's base commit. Commit or stash project changes, then recreate the task from the current HEAD before applying.".into());
+    }
+    let reviewed = worktree_diff(database_path, task_id)?;
+    if reviewed.diff_truncated {
+        return Err("The task diff exceeds the 2 MiB review limit. Reduce the change set before applying.".into());
+    }
+    if reviewed.diff.trim().is_empty() {
+        return Err("The task has no changes to apply.".into());
+    }
+    if reviewed.diff.len() > MAX_APPLY_PATCH {
+        return Err("The task patch exceeds the 8 MiB application limit.".into());
+    }
+    let changed_paths = git_text(Path::new(&worktree.path), &[
+        "diff", "--name-only", "-z", &worktree.base_commit, "--",
+    ])?;
+    let mut path_count = 0usize;
+    for path in changed_paths.split('\0').filter(|path| !path.is_empty()) {
+        validate_review_path(path)?;
+        path_count += 1;
+        if path_count > 500 { return Err("The task contains more than 500 changed files.".into()); }
+    }
+    if path_count == 0 { return Err("No supported text file changes were found.".into()); }
+    if reviewed.diff.contains("GIT binary patch") || reviewed.diff.contains("Binary files ") {
+        return Err("Binary changes cannot be applied through the reviewed text workflow.".into());
+    }
+
+    let patch_sha256 = format!("{:x}", sha2::Sha256::digest(reviewed.diff.as_bytes()));
+    let existing: Option<String> = state_db.query_row(
+        "SELECT status FROM task_worktree_applications WHERE task_id=?1",
+        params![task_id],
+        |row| row.get(0),
+    ).optional().map_err(|error| error.to_string())?;
+    if matches!(existing.as_deref(), Some("applied" | "applying")) {
+        return Err("This task already has an active application record. Undo it or inspect the project before applying again.".into());
+    }
+
+    run_git_input(&root, &["apply", "--check", "--binary", "--"], reviewed.diff.as_bytes())?;
+    let timestamp = now();
+    state_db.execute(
+        "INSERT INTO task_worktree_applications(task_id,project_id,root_path,base_commit,patch,patch_sha256,status,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,'applying',?7,?7)
+         ON CONFLICT(task_id) DO UPDATE SET project_id=excluded.project_id,root_path=excluded.root_path,
+         base_commit=excluded.base_commit,patch=excluded.patch,patch_sha256=excluded.patch_sha256,
+         status='applying',created_at=excluded.created_at,updated_at=excluded.updated_at",
+        params![task_id, worktree.project_id, root.to_string_lossy(), worktree.base_commit, reviewed.diff, patch_sha256, timestamp],
+    ).map_err(|error| format!("Could not persist the task application journal: {error}"))?;
+
+    if let Err(error) = run_git_input(&root, &["apply", "--binary", "--"], reviewed.diff.as_bytes()) {
+        let _ = state_db.execute(
+            "UPDATE task_worktree_applications SET status='failed',updated_at=?1 WHERE task_id=?2 AND status='applying'",
+            params![now(), task_id],
+        );
+        return Err(error);
+    }
+    state_db.execute(
+        "UPDATE task_worktree_applications SET status='applied',updated_at=?1 WHERE task_id=?2 AND patch_sha256=?3",
+        params![now(), task_id, patch_sha256],
+    ).map_err(|error| format!("The patch was applied, but its application journal could not be finalized: {error}"))?;
+    Ok(TaskApplicationResult {
+        task_id: task_id.to_owned(),
+        status: "applied".into(),
+        changed_files: path_count,
+        patch_sha256,
+        applied_at: now(),
+    })
+}
+
+pub fn worktree_application_status(
+    database_path: &Path,
+    task_id: &str,
+) -> Result<Option<TaskApplicationResult>, String> {
+    let connection = open_database(database_path)?;
+    connection.query_row(
+        "SELECT task_id,status,patch_sha256,updated_at,patch
+         FROM task_worktree_applications WHERE task_id=?1",
+        params![task_id],
+        |row| {
+            let patch: String = row.get(4)?;
+            Ok(TaskApplicationResult {
+                task_id: row.get(0)?,
+                status: row.get(1)?,
+                patch_sha256: row.get(2)?,
+                applied_at: row.get(3)?,
+                changed_files: patch.matches("diff --git ").count(),
+            })
+        },
+    ).optional().map_err(|error| error.to_string())
+}
+
+pub fn undo_worktree_application(
+    database_path: &Path,
+    task_id: &str,
+) -> Result<TaskApplicationResult, String> {
+    validate_task_id(task_id)?;
+    let connection = open_database(database_path)?;
+    let (root_path, patch, patch_sha, status_value): (String, String, String, String) = connection.query_row(
+        "SELECT root_path,patch,patch_sha256,status FROM task_worktree_applications WHERE task_id=?1",
+        params![task_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(|error| error.to_string())?
+      .ok_or_else(|| "This task has no recorded project application to undo.".to_string())?;
+    if status_value != "applied" {
+        return Err("Only a completed task application can be undone.".into());
+    }
+    if format!("{:x}", sha2::Sha256::digest(patch.as_bytes())) != patch_sha {
+        return Err("The stored application patch failed its integrity check. Undo was refused.".into());
+    }
+    let root = repository_root(Path::new(&root_path))?;
+    run_git_input(&root, &["apply", "--reverse", "--check", "--binary", "--"], patch.as_bytes())?;
+    run_git_input(&root, &["apply", "--reverse", "--binary", "--"], patch.as_bytes())?;
+    connection.execute(
+        "UPDATE task_worktree_applications SET status='undone',updated_at=?1 WHERE task_id=?2 AND status='applied'",
+        params![now(), task_id],
+    ).map_err(|error| format!("The reverse patch was applied, but the application journal could not be updated: {error}"))?;
+    Ok(TaskApplicationResult {
+        task_id: task_id.to_owned(),
+        status: "undone".into(),
+        changed_files: 0,
+        patch_sha256: patch_sha,
+        applied_at: now(),
+    })
+}
+
+pub fn recover_worktree_applications(database_path: &Path) -> Result<usize, String> {
+    let connection = open_database(database_path)?;
+    let mut statement = connection.prepare(
+        "SELECT task_id,root_path,patch,patch_sha256 FROM task_worktree_applications WHERE status='applying'",
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((
+        row.get::<_, String>(0)?, row.get::<_, String>(1)?,
+        row.get::<_, String>(2)?, row.get::<_, String>(3)?
+    ))).map_err(|error| error.to_string())?;
+    let records = rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    drop(statement);
+    let mut recovered = 0usize;
+    for (task_id, root_path, patch, patch_sha) in records {
+        if format!("{:x}", sha2::Sha256::digest(patch.as_bytes())) != patch_sha {
+            connection.execute(
+                "UPDATE task_worktree_applications SET status='conflict',updated_at=?1 WHERE task_id=?2",
+                params![now(), task_id],
+            ).map_err(|error| error.to_string())?;
+            continue;
+        }
+        let root = match repository_root(Path::new(&root_path)) {
+            Ok(root) => root,
+            Err(_) => {
+                connection.execute(
+                    "UPDATE task_worktree_applications SET status='conflict',updated_at=?1 WHERE task_id=?2 AND status='applying'",
+                    params![now(), task_id],
+                ).map_err(|error| error.to_string())?;
+                recovered += 1;
+                continue;
+            }
+        };
+        let applied = run_git_input(&root, &["apply", "--reverse", "--check", "--binary", "--"], patch.as_bytes()).is_ok();
+        let not_applied = run_git_input(&root, &["apply", "--check", "--binary", "--"], patch.as_bytes()).is_ok();
+        let recovered_state = if applied { "applied" } else if not_applied { "failed" } else { "conflict" };
+        connection.execute(
+            "UPDATE task_worktree_applications SET status=?1,updated_at=?2 WHERE task_id=?3 AND status='applying'",
+            params![recovered_state, now(), task_id],
+        ).map_err(|error| error.to_string())?;
+        recovered += 1;
+    }
+    Ok(recovered)
+}
+
 fn validate_task_id(value: &str) -> Result<(), String> {
     if value.is_empty() || value.len() > 160 ||
         !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
@@ -364,6 +715,15 @@ mod tests {
         assert!(validate_task_id("../outside").is_err());
         assert!(validate_task_id("C:\\outside").is_err());
         assert!(validate_task_id("").is_err());
+    }
+
+    #[test]
+    fn review_paths_reject_traversal_and_secrets() {
+        assert!(validate_review_path("src/main.rs").is_ok());
+        assert!(validate_review_path("../outside").is_err());
+        assert!(validate_review_path(".env.production").is_err());
+        assert!(validate_review_path("config/credentials.json").is_err());
+        assert!(validate_review_path(".git/config").is_err());
     }
 
     #[test]

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
 import type {
-  AgentSkill, AgentTask, AgentTaskDetail, LocalProviderStatus, ModelConfiguration,
+  AgentSkill, AgentTask, AgentTaskDetail, AgentRunEvent, AgentRunSummary, LocalProviderStatus, ModelConfiguration,
   Project, ProjectMemory, ProjectSession, SessionPermissions, PermissionScope,
-  GitRepositoryStatus, GitCommitSummary, TaskWorktreeDiff, SandboxStatus, SandboxExecutionResult, ValidationCommand
+  GitRepositoryStatus, GitCommitSummary, TaskWorktreeDiff, SandboxStatus, SandboxExecutionResult, ValidationCommand, TaskApplicationResult
 } from "../lib/types";
 import "./ProjectsView.css";
 
@@ -30,6 +31,10 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
   const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
   const [validationResult, setValidationResult] = useState<SandboxExecutionResult | null>(null);
   const [validationBusy, setValidationBusy] = useState(false);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [agentEvents, setAgentEvents] = useState<AgentRunEvent[]>([]);
+  const [agentSummary, setAgentSummary] = useState<AgentRunSummary | null>(null);
+  const [applicationStatus, setApplicationStatus] = useState<TaskApplicationResult | null>(null);
   const [memoryQuery, setMemoryQuery] = useState("");
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryKind, setMemoryKind] = useState("architecture_decision");
@@ -98,6 +103,10 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     setTasks([]);
     setWorktreeDiff(null);
     setValidationResult(null);
+    setAgentEvents([]);
+    setAgentSummary(null);
+    setApplicationStatus(null);
+    setAgentRunning(false);
     const [git, history] = await Promise.allSettled([api.gitRepositoryStatus(project.id), api.gitRepositoryHistory(project.id, 8)]);
     setGitStatus(git.status === "fulfilled" ? git.value : null);
     setGitHistory(history.status === "fulfilled" ? history.value : []);
@@ -183,8 +192,22 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     setSelectedTask(null);
     setWorktreeDiff(null);
     setValidationResult(null);
+    setAgentEvents([]);
+    setAgentSummary(null);
+    setApplicationStatus(null);
+    setAgentRunning(task.state === "running");
     try {
-      setSelectedTask(await api.agentTaskDetail(task.id));
+      const [detail, events, application] = await Promise.all([
+        api.agentTaskDetail(task.id),
+        api.listAgentTaskEvents(task.id),
+        api.agentTaskApplicationStatus(task.id)
+      ]);
+      setSelectedTask(detail);
+      setAgentRunning(detail.task.state === "running");
+      setAgentEvents(events.map((item) => ({
+        taskId: item.taskId, kind: item.kind, payload: item.payload, createdAt: item.createdAt
+      })));
+      setApplicationStatus(application);
       try { setWorktreeDiff(await api.agentTaskWorktreeDiff(task.id)); } catch { setWorktreeDiff(null); }
     } catch (reason) { setError(String(reason)); }
   };
@@ -246,6 +269,101 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
     try { setWorktreeDiff(await api.agentTaskWorktreeDiff(selectedTask.task.id)); }
     catch (reason) { setError(String(reason)); }
   };
+
+  const runAgent = async () => {
+    if (!selectedTask || !activeSession || !selectedProvider || !modelId || !worktreeDiff || agentRunning) return;
+    setAgentRunning(true);
+    setAgentSummary(null);
+    setError(null);
+    setNotice("Agent running in its isolated task worktree. The project working tree remains untouched.");
+    try {
+      const result = await api.runAgentTask({
+        taskId: selectedTask.task.id,
+        providerId: selectedProvider.id,
+        model: modelId,
+        contextTokens: configuration.runtime.contextTokens,
+        generation: configuration.generation
+      });
+      setAgentSummary(result);
+      setSelectedTask(await api.agentTaskDetail(selectedTask.task.id));
+      setWorktreeDiff(await api.agentTaskWorktreeDiff(selectedTask.task.id));
+      setAgentEvents((await api.listAgentTaskEvents(selectedTask.task.id)).map((item) => ({
+        taskId: item.taskId, kind: item.kind, payload: item.payload, createdAt: item.createdAt
+      })));
+      setNotice("Agent completed its task. Review the full diff before applying it to the project.");
+    } catch (reason) {
+      setError(String(reason));
+      try {
+        setSelectedTask(await api.agentTaskDetail(selectedTask.task.id));
+        setWorktreeDiff(await api.agentTaskWorktreeDiff(selectedTask.task.id));
+      } catch { /* Preserve the original run error. */ }
+    } finally {
+      setAgentRunning(false);
+      await refreshTasks(activeSession);
+    }
+  };
+
+  const cancelAgent = async () => {
+    if (!selectedTask || !agentRunning) return;
+    try {
+      const cancelled = await api.cancelAgentTask(selectedTask.task.id);
+      setNotice(cancelled ? "Cancellation requested. The current model request or restricted validation worker is being stopped." : "No active run was found for this task.");
+    } catch (reason) { setError(String(reason)); }
+  };
+
+  const applyAgentChanges = async () => {
+    if (!selectedTask || !worktreeDiff || agentRunning || worktreeDiff.diffTruncated) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await api.applyAgentTaskChanges(selectedTask.task.id);
+      setApplicationStatus(result);
+      if (activeProject) setGitStatus(await api.gitRepositoryStatus(activeProject.id));
+      setNotice("Reviewed task changes applied to the project working tree. Git changes are still uncommitted.");
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const undoAgentChanges = async () => {
+    if (!selectedTask || applicationStatus?.status !== "applied" || agentRunning) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await api.undoAgentTaskApplication(selectedTask.task.id);
+      setApplicationStatus(result);
+      if (activeProject) setGitStatus(await api.gitRepositoryStatus(activeProject.id));
+      setNotice("The task patch was reversed. Any conflicting user edits prevented the undo.");
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    const taskId = selectedTask?.task.id;
+    if (!taskId) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen<AgentRunEvent>("agent-run-event", ({ payload }) => {
+      if (!active || payload.taskId !== taskId) return;
+      setAgentEvents((current) => [...current.slice(-199), payload]);
+      if (payload.kind === "run_started") {
+        setAgentRunning(true);
+        setSelectedTask((current) => current?.task.id === taskId
+          ? { ...current, task: { ...current.task, state: "running" } } : current);
+      }
+      if (["run_completed", "run_failed", "run_cancelled"].includes(payload.kind)) {
+        setAgentRunning(false);
+        void api.agentTaskDetail(taskId).then(setSelectedTask).catch((reason) => setError(String(reason)));
+        void api.agentTaskWorktreeDiff(taskId).then(setWorktreeDiff).catch(() => setWorktreeDiff(null));
+        void api.agentTaskApplicationStatus(taskId).then(setApplicationStatus).catch((reason) => setError(String(reason)));
+        if (activeSession) void refreshTasks(activeSession);
+      }
+      if (payload.kind === "tool_finished" && (payload.payload as { changed?: boolean })?.changed) {
+        void api.agentTaskWorktreeDiff(taskId).then(setWorktreeDiff).catch((reason) => setError(String(reason)));
+      }
+    }).then((dispose) => {
+      if (active) unlisten = dispose;
+      else dispose();
+    }).catch((reason) => setError(String(reason)));
+    return () => { active = false; unlisten?.(); };
+  }, [selectedTask?.task.id, activeSession, refreshTasks]);
 
   const runValidation = async (command: ValidationCommand) => {
     if (!selectedTask || validationBusy) return;
@@ -436,20 +554,58 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                       <button className="button primary" onClick={() => void approvePlan()} disabled={busy}>Approve plan</button>
                     </div>
                   )}
-                  {selectedTask.task.state === "approved" && <div className="task-execution-panel">
-                    <div className="projects-section-title"><div><strong>Isolated execution</strong><small>Changes stay in a detached Git worktree until reviewed.</small></div></div>
-                    {!worktreeDiff ? <button className="button primary" onClick={() => void createTaskWorktree()} disabled={busy || !permissionState?.scopes.includes("project_write") || !gitStatus?.clean}>Create task worktree</button> : <>
+                  {["approved", "running", "interrupted", "failed", "cancelled", "completed"].includes(selectedTask.task.state) && <div className="task-execution-panel">
+                    <div className="projects-section-title"><div><strong>Agent execution</strong><small>Model edits are restricted to this detached task worktree. Applying changes is a separate approval.</small></div>
+                      <span className={"task-state " + selectedTask.task.state}>{selectedTask.task.state.replaceAll("_", " ")}</span></div>
+                    {!worktreeDiff ? (
+                      <button className="button primary" onClick={() => void createTaskWorktree()}
+                        disabled={busy || selectedTask.task.state !== "approved" || !permissionState?.scopes.includes("project_write") || !gitStatus?.clean}>
+                        Create task worktree
+                      </button>
+                    ) : <>
                       <p className="projects-empty">{worktreeDiff.status.branch} · base {worktreeDiff.worktree.baseCommit.slice(0, 8)} · {worktreeDiff.status.changedFiles} changed · {worktreeDiff.status.untrackedFiles} untracked</p>
                       <p className="projects-empty">Worktree: {worktreeDiff.worktree.path}</p>
-                      <div className="planner-actions"><button className="button subtle" onClick={() => void refreshTaskWorktree()}>Refresh diff</button>
-                        <button className="button subtle" onClick={() => void removeTaskWorktree()} disabled={busy || !worktreeDiff.status.clean || worktreeDiff.status.head !== worktreeDiff.worktree.baseCommit}>Remove unchanged worktree</button></div>
-                      {worktreeDiff.diff ? <pre className="skill-content">{worktreeDiff.diff}{worktreeDiff.diffTruncated ? "\n[Diff truncated at 2 MiB]" : ""}</pre> : <p className="projects-empty">No tracked changes. Untracked files are counted separately and are not included in this preview.</p>}
                       <div className="planner-actions">
+                        <button className="button subtle" onClick={() => void refreshTaskWorktree()}>Refresh diff</button>
+                        {agentRunning
+                          ? <button className="button subtle" onClick={() => void cancelAgent()}>Cancel agent</button>
+                          : <button className="button primary" onClick={() => void runAgent()}
+                              disabled={busy || !permissionState?.scopes.includes("project_write") || !selectedProvider || !modelId || !["approved", "interrupted", "failed", "cancelled"].includes(selectedTask.task.state)}>
+                              {["interrupted", "failed", "cancelled"].includes(selectedTask.task.state) ? "Resume agent" : "Start agent"}
+                            </button>}
+                        <button className="button subtle" onClick={() => void removeTaskWorktree()}
+                          disabled={busy || agentRunning || !worktreeDiff.status.clean || worktreeDiff.status.head !== worktreeDiff.worktree.baseCommit}>
+                          Remove unchanged worktree
+                        </button>
+                      </div>
+                      {worktreeDiff.diff
+                        ? <pre className="skill-content">{worktreeDiff.diff}{worktreeDiff.diffTruncated ? "\n[Diff truncated at 2 MiB]" : ""}</pre>
+                        : <p className="projects-empty">No file changes are present in the task worktree.</p>}
+                      {selectedTask.task.state === "approved" && <div className="planner-actions">
                         <button className="button subtle" onClick={() => void runValidation("format")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run rustfmt check</button>
                         <button className="button subtle" onClick={() => void runValidation("check")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>Run cargo check</button>
-                        <button className="button primary" onClick={() => void runValidation("test")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>{validationBusy ? "Running…" : "Run tests"}</button>
-                      </div>
+                        <button className="button subtle" onClick={() => void runValidation("test")} disabled={validationBusy || !sandboxStatus?.supported || !permissionState?.scopes.includes("process_execution")}>{validationBusy ? "Running…" : "Run tests"}</button>
+                      </div>}
                     </>}
+                    {agentRunning && <p className="projects-empty">Agent active. Use Cancel to stop its current request or restricted validation process.</p>}
+                    {agentSummary && <div className="validation-result"><strong>Agent completed · {agentSummary.turns} turns · {agentSummary.toolCalls} tool calls</strong><p>{agentSummary.finalResponse}</p></div>}
+                    {applicationStatus && <p className="projects-empty">Project application: {applicationStatus.status} · {applicationStatus.patchSha256.slice(0, 12)}</p>}
+                    {selectedTask.task.state === "completed" && worktreeDiff && worktreeDiff.diff && <div className="planner-actions">
+                      <button className="button primary" onClick={() => void applyAgentChanges()}
+                        disabled={busy || agentRunning || worktreeDiff.diffTruncated || !permissionState?.scopes.includes("project_write") || applicationStatus?.status === "applied"}>
+                        Apply reviewed changes to project
+                      </button>
+                      {applicationStatus?.status === "applied" && <button className="button subtle" onClick={() => void undoAgentChanges()} disabled={busy || agentRunning || !permissionState?.scopes.includes("project_write")}>Undo applied changes</button>}
+                    </div>}
+                    {agentEvents.length > 0 && <div className="agent-event-list">
+                      <strong>Run activity</strong>
+                      {agentEvents.slice(-12).map((item, index) => (
+                        <div key={item.taskId + item.createdAt + item.kind + index}>
+                          <span>{item.kind.replaceAll("_", " ")}</span>
+                          <small>{new Date(item.createdAt * 1000).toLocaleTimeString()} · {JSON.stringify(item.payload).slice(0, 280)}</small>
+                        </div>
+                      ))}
+                    </div>}
                     {validationResult && <div className="validation-result"><strong>{validationResult.command} · {validationResult.success ? "passed" : "failed"} · exit {validationResult.exitCode} · {(validationResult.durationMs / 1000).toFixed(1)}s</strong>
                       <small>{validationResult.isolation}</small>
                       {validationResult.stdout && <pre className="skill-content">{validationResult.stdout}</pre>}

@@ -118,6 +118,15 @@ fn open(database: &Path) -> Result<Connection, String> {
            UNIQUE(task_id, sequence)
          );
          CREATE INDEX IF NOT EXISTS idx_agent_events_task ON agent_events(task_id, sequence);
+         CREATE TABLE IF NOT EXISTS agent_run_messages (
+           task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+           sequence INTEGER NOT NULL,
+           role TEXT NOT NULL CHECK(role IN ('system','user','assistant')),
+           content TEXT NOT NULL,
+           created_at INTEGER NOT NULL,
+           PRIMARY KEY(task_id, sequence)
+         );
+         CREATE INDEX IF NOT EXISTS idx_agent_run_messages_task ON agent_run_messages(task_id, sequence);
          CREATE TABLE IF NOT EXISTS project_memories (
            id TEXT PRIMARY KEY,
            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -136,7 +145,8 @@ fn open(database: &Path) -> Result<Connection, String> {
          );
          CREATE INDEX IF NOT EXISTS idx_project_memories_active
            ON project_memories(project_id, archived, importance DESC, updated_at DESC);
-         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, unixepoch());",
+         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, unixepoch());
+         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch());",
         )
         .map_err(|error| format!("Could not migrate project and agent storage: {error}"))?;
     Ok(connection)
@@ -803,6 +813,174 @@ pub fn append_task_event(
     }
     let connection = open(&database)?;
     append_event_inner(&connection, &task_id, &kind, &payload)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTranscriptMessage {
+    pub role: String,
+    pub content: String,
+}
+
+const MAX_AGENT_TRANSCRIPT_MESSAGES: usize = 128;
+const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_AGENT_TRANSCRIPT_MESSAGE_BYTES: usize = 1024 * 1024;
+
+pub fn set_agent_run_state(
+    database: PathBuf,
+    task_id: String,
+    next_state: String,
+    detail: Value,
+) -> Result<(), String> {
+    if !matches!(
+        next_state.as_str(),
+        "running" | "interrupted" | "completed" | "failed" | "cancelled"
+    ) {
+        return Err("The requested agent execution state is invalid.".into());
+    }
+    let mut connection = open(&database)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let current: String = transaction
+        .query_row(
+            "SELECT state FROM agent_tasks WHERE id=?1",
+            params![task_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "The selected agent task no longer exists.".to_string())?;
+
+    let allowed = match next_state.as_str() {
+        "running" => matches!(
+            current.as_str(),
+            "approved" | "interrupted" | "cancelled" | "failed"
+        ),
+        "interrupted" | "completed" | "failed" | "cancelled" => current == "running",
+        _ => false,
+    };
+    if !allowed {
+        return Err(format!(
+            "The agent task cannot transition from '{current}' to '{next_state}'."
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE agent_tasks SET state=?1,updated_at=?2 WHERE id=?3",
+            params![next_state, now(), task_id],
+        )
+        .map_err(|error| error.to_string())?;
+    append_event_inner(
+        &transaction,
+        &task_id,
+        &format!("agent_{next_state}"),
+        &detail,
+    )?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+pub fn save_agent_message(
+    database: PathBuf,
+    task_id: String,
+    role: String,
+    content: String,
+) -> Result<(), String> {
+    if !matches!(role.as_str(), "system" | "user" | "assistant") {
+        return Err("The agent transcript message role is invalid.".into());
+    }
+    if content.is_empty() || content.len() > MAX_AGENT_TRANSCRIPT_MESSAGE_BYTES {
+        return Err("Agent transcript messages must contain 1 byte to 1 MiB.".into());
+    }
+    let mut connection = open(&database)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let valid: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE id=?1)",
+            params![task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !valid {
+        return Err("The selected agent task no longer exists.".into());
+    }
+    let (count, bytes): (i64, i64) = transaction.query_row(
+        "SELECT COUNT(*),COALESCE(SUM(length(content)),0) FROM agent_run_messages WHERE task_id=?1",
+        params![task_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|error| error.to_string())?;
+    if count as usize >= MAX_AGENT_TRANSCRIPT_MESSAGES
+        || (bytes as usize).saturating_add(content.len()) > MAX_AGENT_TRANSCRIPT_BYTES
+    {
+        return Err("The durable agent transcript reached its configured size limit. The run must compact its context before continuing.".into());
+    }
+    let sequence: i64 = transaction
+        .query_row(
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM agent_run_messages WHERE task_id=?1",
+            params![task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.execute(
+        "INSERT INTO agent_run_messages(task_id,sequence,role,content,created_at) VALUES (?1,?2,?3,?4,?5)",
+        params![task_id, sequence, role, content, now()],
+    ).map_err(|error| format!("Could not persist the agent transcript: {error}"))?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+pub fn load_agent_messages(
+    database: PathBuf,
+    task_id: String,
+) -> Result<Vec<AgentTranscriptMessage>, String> {
+    let connection = open(&database)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT role,content FROM agent_run_messages WHERE task_id=?1 ORDER BY sequence ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![task_id], |row| {
+            Ok(AgentTranscriptMessage {
+                role: row.get(0)?,
+                content: row.get(1)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())
+}
+
+pub fn recover_agent_runs(database: PathBuf) -> Result<usize, String> {
+    let mut connection = open(&database)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let mut statement = transaction
+        .prepare("SELECT id FROM agent_tasks WHERE state='running' ORDER BY updated_at ASC")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    let ids = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    drop(statement);
+    for task_id in &ids {
+        transaction.execute(
+            "UPDATE agent_tasks SET state='interrupted',updated_at=?1 WHERE id=?2 AND state='running'",
+            params![now(), task_id],
+        ).map_err(|error| error.to_string())?;
+        append_event_inner(
+            &transaction,
+            task_id,
+            "agent_interrupted",
+            &serde_json::json!({"reason":"Spindle closed before this agent run reached a terminal state. The isolated worktree and transcript were preserved."}),
+        )?;
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(ids.len())
 }
 
 pub fn save_task_plan(

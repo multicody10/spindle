@@ -1,4 +1,5 @@
 mod agent_planner;
+mod agent_runtime;
 mod benchmark;
 mod capabilities;
 mod chat;
@@ -172,6 +173,136 @@ async fn run_agent_task_validation(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+async fn run_agent_task(
+    app: AppHandle,
+    input: agent_runtime::RunAgentTaskRequest,
+    runtime: State<'_, agent_runtime::AgentRuntime>,
+    chat_runtime: State<'_, chat::ChatRuntime>,
+    managed_runtime: State<'_, runtime::ManagedRuntime>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<agent_runtime::AgentRunSummary, String> {
+    let database = database_path(&app)?;
+    agent_runtime::run_task(
+        app,
+        database,
+        chat_runtime.inner(),
+        &managed_runtime.inference,
+        permissions.inner(),
+        runtime.inner(),
+        input,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn cancel_agent_task(
+    app: AppHandle,
+    task_id: String,
+    runtime: State<'_, agent_runtime::AgentRuntime>,
+) -> Result<bool, String> {
+    let lookup = task_id.clone();
+    let _task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    let cancelled = runtime.cancel(&task_id);
+    if cancelled {
+        with_project_database(&app, move |database| {
+            projects::append_task_event(
+                database,
+                task_id,
+                "cancellation_requested".into(),
+                serde_json::json!({}),
+            )
+        })
+        .await?;
+    }
+    Ok(cancelled)
+}
+
+#[tauri::command]
+async fn apply_agent_task_changes(
+    app: AppHandle,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<git::TaskApplicationResult, String> {
+    let lookup = task_id.clone();
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    if task.state != "completed" {
+        return Err("Only a completed agent task can be applied.".into());
+    }
+    permissions.authorize(
+        &task.session_id,
+        permissions::PermissionOperation::FileChangeApply,
+        "agent_task:apply_changes",
+    )?;
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, task.project_id)
+    })
+    .await?;
+    let database = database_path(&app)?;
+    let result = tokio::task::spawn_blocking(move || {
+        git::apply_worktree_changes(&database, &project.root_path, &task_id)
+    })
+    .await
+    .map_err(|error| format!("Task change application failed: {error}"))??;
+    let task_event_id = result.task_id.clone();
+    let payload = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    with_project_database(&app, move |database| {
+        projects::append_task_event(database, task_event_id, "changes_applied".into(), payload)
+    })
+    .await?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn undo_agent_task_application(
+    app: AppHandle,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<git::TaskApplicationResult, String> {
+    let lookup = task_id.clone();
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    permissions.authorize(
+        &task.session_id,
+        permissions::PermissionOperation::FileChangeUndo,
+        "agent_task:undo_application",
+    )?;
+    let database = database_path(&app)?;
+    let result =
+        tokio::task::spawn_blocking(move || git::undo_worktree_application(&database, &task_id))
+            .await
+            .map_err(|error| format!("Task application undo failed: {error}"))??;
+    let task_event_id = result.task_id.clone();
+    let payload = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    with_project_database(&app, move |database| {
+        projects::append_task_event(database, task_event_id, "changes_undone".into(), payload)
+    })
+    .await?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn agent_task_application_status(
+    app: AppHandle,
+    task_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<Option<git::TaskApplicationResult>, String> {
+    let lookup = task_id.clone();
+    let task =
+        with_project_database(&app, move |database| projects::get_task(database, lookup)).await?;
+    permissions.authorize(
+        &task.session_id,
+        permissions::PermissionOperation::WorkspaceRead,
+        "agent_task:application_status",
+    )?;
+    let database = database_path(&app)?;
+    tokio::task::spawn_blocking(move || git::worktree_application_status(&database, &task_id))
+        .await
+        .map_err(|error| format!("Task application status failed: {error}"))?
 }
 
 const TAURI_CONFIG: &str = include_str!("../tauri.conf.json");
@@ -1078,6 +1209,7 @@ fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), Stri
 pub fn run() {
     tauri::Builder::default()
         .manage(chat::ChatRuntime::default())
+        .manage(agent_runtime::AgentRuntime::default())
         .manage(runtime::ManagedRuntime::default())
         .manage(workspace::WorkspaceManager::default())
         .manage(permissions::PermissionBroker::default())
@@ -1088,8 +1220,15 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?
                 .join("spindle.sqlite3");
             app.state::<permissions::PermissionBroker>()
-                .set_audit_database(database)
+                .set_audit_database(database.clone())
                 .map_err(std::io::Error::other)?;
+            let interrupted = projects::recover_agent_runs(database.clone())
+                .map_err(std::io::Error::other)?;
+            let recovered = git::recover_worktree_applications(&database)
+                .map_err(std::io::Error::other)?;
+            if interrupted > 0 || recovered > 0 {
+                eprintln!("Spindle recovered {interrupted} interrupted agent run(s) and {recovered} task application journal(s).");
+            }
             Ok(())
         })
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1142,6 +1281,11 @@ pub fn run() {
             remove_agent_task_worktree,
             agent_sandbox_status,
             run_agent_task_validation,
+            run_agent_task,
+            cancel_agent_task,
+            apply_agent_task_changes,
+            undo_agent_task_application,
+            agent_task_application_status,
             search_workspace,
             managed_runtime_status,
             install_llama_runtime,

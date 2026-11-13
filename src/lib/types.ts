@@ -188,6 +188,33 @@ export interface AgentTask {
 export interface AgentTaskStep extends AgentPlanStep { id: string; taskId: string; sequence: number; status: string; }
 export interface AgentTaskDetail { task: AgentTask; steps: AgentTaskStep[]; }
 export interface AgentTaskEvent { id: string; taskId: string; sequence: number; kind: string; payload: unknown; createdAt: number; }
+export interface AgentRunRequest {
+  taskId: string;
+  providerId: string;
+  model: string;
+  contextTokens: number;
+  generation: GenerationSettings;
+}
+export interface AgentRunSummary {
+  taskId: string;
+  state: string;
+  finalResponse: string;
+  turns: number;
+  toolCalls: number;
+}
+export interface AgentRunEvent {
+  taskId: string;
+  kind: string;
+  payload: unknown;
+  createdAt: number;
+}
+export interface TaskApplicationResult {
+  taskId: string;
+  status: "applied" | "undone" | "failed" | "conflict" | "applying";
+  changedFiles: number;
+  patchSha256: string;
+  appliedAt: number;
+}
 export interface ProjectMemory {
   id: string; projectId: string; kind: string; memoryKey: string; content: string; sourcePath: string;
   sourceRevision: string; confidence: number; importance: number; updatedAt: number;

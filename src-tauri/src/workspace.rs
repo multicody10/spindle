@@ -134,7 +134,16 @@ impl WorkspaceManager {
             return Err("Choose a valid workspace directory path.".into());
         }
 
-        let root = fs::canonicalize(PathBuf::from(path.trim()))
+        let selected = PathBuf::from(path.trim());
+        let selected_metadata = fs::symlink_metadata(&selected)
+            .map_err(|error| format!("Could not inspect the workspace directory: {error}"))?;
+        if is_unsafe_link(&selected_metadata) || !selected_metadata.is_dir() {
+            return Err(
+                "The selected workspace must be a regular directory, not a link or reparse point."
+                    .into(),
+            );
+        }
+        let root = fs::canonicalize(&selected)
             .map_err(|error| format!("Could not resolve the workspace directory: {error}"))?;
         if !root.is_dir() {
             return Err("The selected workspace path is not a directory.".into());
@@ -241,7 +250,7 @@ impl WorkspaceManager {
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| format!("Could not inspect workspace entry: {error}"))?;
-            if metadata.file_type().is_symlink() || is_sensitive_name(&name) {
+            if is_unsafe_link(&metadata) || is_sensitive_name(&name) {
                 continue;
             }
             if name.starts_with(".spindle-tmp-") {
@@ -504,6 +513,109 @@ impl WorkspaceManager {
         Ok(())
     }
 
+    pub fn create_directory(&self, session_id: &str, relative_path: &str) -> Result<(), String> {
+        let session = self.session(session_id, true)?;
+        if is_sensitive_path(Path::new(relative_path)) {
+            return Err("Sensitive directories cannot be created through workspace tools.".into());
+        }
+        let clean = validate_relative_path(relative_path, false)?;
+        let mut current = session.root.clone();
+        for component in clean.components() {
+            let Component::Normal(part) = component else {
+                return Err("The workspace path contains an invalid component.".into());
+            };
+            current.push(part);
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if is_unsafe_link(&metadata) || !metadata.is_dir() => {
+                    return Err(
+                        "Workspace directories cannot traverse links or non-directory entries."
+                            .into(),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir(&current).map_err(|error| {
+                        format!("Could not create workspace directory: {error}")
+                    })?;
+                }
+                Err(error) => {
+                    return Err(format!("Could not inspect workspace directory: {error}"))
+                }
+            }
+            let canonical = fs::canonicalize(&current).map_err(|error| {
+                format!("Could not resolve created workspace directory: {error}")
+            })?;
+            ensure_inside_root(&session.root, &canonical)?;
+            current = canonical;
+        }
+        Ok(())
+    }
+
+    pub fn create_file(
+        &self,
+        session_id: &str,
+        relative_path: &str,
+        content: String,
+    ) -> Result<WorkspaceWriteResult, String> {
+        let session = self.session(session_id, true)?;
+        if content.len() > MAX_FILE_BYTES || content.contains('\0') {
+            return Err(
+                "New workspace files must be valid UTF-8 text no larger than 1 MiB.".into(),
+            );
+        }
+        if is_sensitive_path(Path::new(relative_path)) {
+            return Err("Secret material cannot be created through agent workspace tools.".into());
+        }
+        let (parent, target, clean) = resolve_new_file(&session, relative_path)?;
+        atomic_create(&session.root, &parent, &target, content.as_bytes())?;
+        Ok(WorkspaceWriteResult {
+            relative_path: clean.to_string_lossy().replace('\\', "/"),
+            bytes_written: content.len(),
+            revision: format!("{:x}", Sha256::digest(content.as_bytes())),
+        })
+    }
+
+    pub fn delete_file(
+        &self,
+        session_id: &str,
+        relative_path: &str,
+        expected_revision: &str,
+    ) -> Result<(), String> {
+        let session = self.session(session_id, true)?;
+        if is_sensitive_path(Path::new(relative_path)) {
+            return Err("Secret material cannot be deleted through agent workspace tools.".into());
+        }
+        validate_revision(expected_revision)?;
+        let path = resolve_file(&session, relative_path)?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Could not inspect file before deletion: {error}"))?;
+        if is_unsafe_link(&metadata)
+            || !metadata.is_file()
+            || metadata.len() > MAX_FILE_BYTES as u64
+        {
+            return Err("Deletion is limited to regular text files no larger than 1 MiB.".into());
+        }
+        let bytes = read_bounded(&path, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not read the current file revision: {error}"))?;
+        if format!("{:x}", Sha256::digest(&bytes)) != expected_revision {
+            return Err("The file changed after it was read. Reopen it before deleting.".into());
+        }
+        let current = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Could not revalidate the file before deletion: {error}"))?;
+        if is_unsafe_link(&current) || !current.is_file() {
+            return Err("The selected path is no longer a regular file.".into());
+        }
+        let latest = read_bounded(&path, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not recheck the file before deletion: {error}"))?;
+        if format!("{:x}", Sha256::digest(&latest)) != expected_revision {
+            return Err(
+                "The file changed immediately before deletion. The operation was aborted.".into(),
+            );
+        }
+        fs::remove_file(&path)
+            .map_err(|error| format!("Could not delete the selected task file: {error}"))
+    }
+
     pub fn search(&self, session_id: &str, query: &str) -> Result<WorkspaceSearchResult, String> {
         let session = self.session(session_id, false)?;
         let query = query.trim();
@@ -547,7 +659,7 @@ impl WorkspaceManager {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
-                if metadata.file_type().is_symlink() {
+                if is_unsafe_link(&metadata) {
                     continue;
                 }
                 let canonical = match fs::canonicalize(&path) {
@@ -742,7 +854,7 @@ fn atomic_replace(
 
         let metadata = fs::symlink_metadata(target)
             .map_err(|error| format!("Could not revalidate the target file: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+        if is_unsafe_link(&metadata) || !metadata.is_file() {
             return Err(
                 "Workspace replacement is limited to regular files, not links or special files."
                     .into(),
@@ -823,6 +935,86 @@ fn validate_relative_path(value: &str, allow_root: bool) -> Result<PathBuf, Stri
     Ok(clean)
 }
 
+fn resolve_new_file(
+    session: &WorkspaceSession,
+    relative: &str,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let clean = validate_relative_path(relative, false)?;
+    if is_sensitive_path(&clean) {
+        return Err("Sensitive file paths are not accessible through workspace tools.".into());
+    }
+    let file_name = clean
+        .file_name()
+        .ok_or_else(|| "A file name is required.".to_string())?;
+    let parent_relative = clean.parent().unwrap_or_else(|| Path::new(""));
+    let parent = resolve_directory(session, &parent_relative.to_string_lossy())?;
+    let target = parent.join(file_name);
+    match fs::symlink_metadata(&target) {
+        Ok(_) => {
+            return Err(
+                "The file already exists. Read it and use write_file or edit_file instead.".into(),
+            )
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not inspect the new file path: {error}")),
+    }
+    ensure_inside_root(&session.root, &parent)?;
+    Ok((parent, target, clean))
+}
+
+fn atomic_create(root: &Path, parent: &Path, target: &Path, content: &[u8]) -> Result<(), String> {
+    ensure_inside_root(root, parent)?;
+    let temporary = parent.join(format!(
+        ".spindle-tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("Could not create a temporary new file: {error}"))?;
+        file.write_all(content)
+            .map_err(|error| format!("Could not write the new file: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not flush the new file: {error}"))?;
+        drop(file);
+
+        let parent_now = fs::canonicalize(parent)
+            .map_err(|error| format!("Could not revalidate the new file parent: {error}"))?;
+        ensure_inside_root(root, &parent_now)?;
+        if fs::symlink_metadata(target).is_ok() {
+            return Err(
+                "A file appeared at the selected path before creation. No file was replaced."
+                    .into(),
+            );
+        }
+        fs::hard_link(&temporary, target).map_err(|error| {
+            format!("Could not atomically create the new workspace file: {error}")
+        })?;
+        fs::remove_file(&temporary).map_err(|error| {
+            format!("The file was created but its temporary link could not be removed: {error}")
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(windows)]
+fn is_unsafe_link(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_unsafe_link(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
 fn resolve_directory(session: &WorkspaceSession, relative: &str) -> Result<PathBuf, String> {
     if is_sensitive_path(Path::new(relative)) {
         return Err("Sensitive credential directories are not exposed to workspace tools.".into());
@@ -836,7 +1028,7 @@ fn resolve_directory(session: &WorkspaceSession, relative: &str) -> Result<PathB
         current.push(part);
         let metadata = fs::symlink_metadata(&current)
             .map_err(|error| format!("Could not resolve the workspace directory: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if is_unsafe_link(&metadata) || !metadata.is_dir() {
             return Err("Workspace paths may not traverse links or non-directory entries.".into());
         }
     }
@@ -1155,6 +1347,68 @@ mod tests {
         assert!(validate_relative_path("C:\\\\Windows\\\\win.ini", false).is_err());
         assert!(validate_relative_path("", false).is_err());
         assert!(validate_relative_path("", true).is_ok());
+    }
+
+    #[test]
+    fn task_workspace_can_create_edit_and_delete_new_files_safely() {
+        let (manager, root, _) = test_workspace();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        manager
+            .create_directory(&grant.session_id, "src/components")
+            .unwrap();
+        let created = manager
+            .create_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                "export function Counter() { return null; }\n".into(),
+            )
+            .unwrap();
+        assert_eq!(created.bytes_written, 43);
+        assert!(root.join("src/components/Counter.tsx").is_file());
+        assert!(manager
+            .create_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                "overwrite".into(),
+            )
+            .is_err());
+        assert!(manager
+            .delete_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                &"0".repeat(64),
+            )
+            .is_err());
+        assert!(root.join("src/components/Counter.tsx").is_file());
+        manager
+            .delete_file(
+                &grant.session_id,
+                "src/components/Counter.tsx",
+                &created.revision,
+            )
+            .unwrap();
+        assert!(!root.join("src/components/Counter.tsx").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn task_workspace_file_creation_rejects_traversal_and_secrets() {
+        let (manager, root, _) = test_workspace();
+        let grant = manager
+            .grant(root.to_string_lossy().into_owned(), true)
+            .unwrap();
+        assert!(manager
+            .create_file(&grant.session_id, "../outside.txt", "blocked".into(),)
+            .is_err());
+        assert!(manager
+            .create_file(&grant.session_id, ".env.local", "TOKEN=x".into(),)
+            .is_err());
+        assert!(manager
+            .create_directory(&grant.session_id, "../outside")
+            .is_err());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

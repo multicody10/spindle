@@ -1,6 +1,6 @@
 # Secure agent execution design
 
-Status: permission broker, manual reviewed-file-change flow, Git task worktrees, and a fixed user-triggered Windows validation worker are implemented. General model-driven tool execution remains disabled; the worker has not yet passed the full Windows adversarial acceptance suite.
+Status: permission broker, manual reviewed-file-change flow, Git task worktrees, and a fixed user-triggered Windows validation worker are implemented. The production-agent-workflow branch now implements bounded model-driven tool execution in detached task worktrees, durable transcripts and events, resumable run states, final diff review, and journaled patch apply/undo. This remains a draft pending CI and the full Windows adversarial acceptance suite. The file broker is path-based and is not yet proven race-resistant.
 
 ## Trust boundary
 
@@ -21,7 +21,7 @@ Before enabling command or autonomous file-write tools, implement and validate a
 5. **Network policy.** The current LPAC worker receives no network capabilities and Cargo runs offline. No egress broker exists; network-enabled tasks remain disabled.
 6. **MCP policy.** Launch MCP stdio servers only inside the worker boundary, with an explicit tool/schema allowlist. Do not pass user environment variables or secrets by default. Require separate approval for external side effects.
 7. **Permission policy.** Project read is the baseline. Project write and process execution are separately granted in the UI; external network, MCP, and parallel-agent scopes remain unused. Grants expire on application restart. The broker enforces operation-to-scope checks and records resource-tagged audit events durably in SQLite (10,000-event retention); it is not yet a path-level policy engine. An agent plan or Skill cannot elevate itself.
-8. **Audit and recovery.** Task events and permission audit history persist in SQLite. The current workflow records worktree creation and validation start/result/failure. Durable file-transaction checkpoints, interrupted-worker recovery, and idempotent cleanup still need implementation.
+8. **Audit and recovery.** Task events and permission audit history persist in SQLite. The current workflow records worktree creation and validation start/result/failure. Transcript messages, ordered task events, task state transitions, and patch-application journals persist. Startup recovery marks in-flight runs interrupted and classifies incomplete patch applications. Atomic multi-file replacement under every storage failure and idempotent worktree cleanup remain outstanding.
 
 A Windows Job Object controls process lifetime and resource usage; it is not sufficient by itself to provide AppContainer filesystem or network isolation.
 

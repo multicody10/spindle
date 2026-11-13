@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{path::{Path, PathBuf}, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use std::time::{Duration, Instant};
 
 const MAX_OUTPUT_BYTES: usize = 96 * 1024;
@@ -92,13 +92,21 @@ pub fn run_validation(
     worktree_path: &str,
     command: ValidationCommand,
 ) -> Result<SandboxExecutionResult, String> {
+    run_validation_cancellable(worktree_path, command, None)
+}
+
+pub fn run_validation_cancellable(
+    worktree_path: &str,
+    command: ValidationCommand,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> Result<SandboxExecutionResult, String> {
     #[cfg(windows)]
     {
-        run_validation_windows(worktree_path, command)
+        run_validation_windows(worktree_path, command, cancellation)
     }
     #[cfg(not(windows))]
     {
-        let _ = (worktree_path, command);
+        let _ = (worktree_path, command, cancellation);
         Err("The restricted execution worker is available only on Windows.".into())
     }
 }
@@ -107,6 +115,7 @@ pub fn run_validation(
 fn run_validation_windows(
     worktree_path: &str,
     command: ValidationCommand,
+    cancellation: Option<Arc<AtomicBool>>,
 ) -> Result<SandboxExecutionResult, String> {
     use rappct::{
         acl::{grant_to_package, AccessMask, ResourcePath},
@@ -276,8 +285,38 @@ fn run_validation_windows(
     drop(child.stdin.take());
     let stdout = child.stdout.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
     let stderr = child.stderr.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
-    let exit_code = child.wait(Some(EXECUTION_TIMEOUT))
-        .map_err(|error| format!("The restricted worker timed out or failed; its Job Object was closed: {error}"))?;
+    let job_handle = child.job_guard.as_ref().map(|guard| guard.as_handle().0);
+    let wait_thread = thread::spawn(move || child.wait(Some(EXECUTION_TIMEOUT)));
+    let wait_started = Instant::now();
+    let exit_code = loop {
+        if wait_thread.is_finished() {
+            break wait_thread.join()
+                .map_err(|_| "The restricted worker wait thread failed.".to_string())?
+                .map_err(|error| format!("The restricted worker timed out or failed; its Job Object was closed: {error}"))?;
+        }
+        if cancellation.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            if let Some(handle) = job_handle {
+                let terminated = unsafe { terminate_job_object(handle, 1223) };
+                if terminated {
+                    let _ = wait_thread.join();
+                    return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
+                }
+                return Err("Restricted validation cancellation was requested, but Windows refused to terminate the worker Job Object. The configured ten-minute worker timeout remains active.".into());
+            }
+            return Err("Restricted validation cancellation was requested, but no Job Object handle was available. The configured worker timeout remains active.".into());
+        }
+        if wait_started.elapsed() >= EXECUTION_TIMEOUT + Duration::from_secs(2) {
+            if let Some(handle) = job_handle {
+                let terminated = unsafe { terminate_job_object(handle, 1460) };
+                if terminated {
+                    let _ = wait_thread.join();
+                    return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());
+                }
+            }
+            return Err("Restricted validation exceeded its ten-minute timeout; worker termination could not be confirmed.".into());
+        }
+        thread::sleep(Duration::from_millis(40));
+    };
     let (stdout, stdout_truncated) = join_output(stdout)?;
     let (stderr, stderr_truncated) = join_output(stderr)?;
     Ok(SandboxExecutionResult {
@@ -290,6 +329,17 @@ fn run_validation_windows(
         output_truncated: stdout_truncated || stderr_truncated,
         isolation: "Windows AppContainer + LPAC; no network capabilities; 2 GiB memory limit; 80% CPU cap; kill-on-job-close".into(),
     })
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn TerminateJobObject(job: *mut std::ffi::c_void, exit_code: u32) -> i32;
+}
+
+#[cfg(windows)]
+unsafe fn terminate_job_object(job: *mut std::ffi::c_void, exit_code: u32) -> bool {
+    TerminateJobObject(job, exit_code) != 0
 }
 
 #[cfg(windows)]
