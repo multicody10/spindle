@@ -3,6 +3,7 @@ name = "spindle"
 version = "0.1.0"
 description = "Local-first AI development environment"
 authors = ["Spindle contributors"]
+license = "MIT"
 edition = "2021"
 
 [lib]
