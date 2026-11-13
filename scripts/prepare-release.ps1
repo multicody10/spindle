@@ -153,12 +153,12 @@ if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
     throw "TAURI_SIGNING_PRIVATE_KEY is missing. Signed updater artifacts are mandatory."
 }
 
-$null = Invoke-Git @("fetch", "--force", "--tags", "origin")
-$remoteTag = Invoke-Git @("ls-remote", "--tags", "origin", "refs/tags/$ReleaseTag")
+$null = Invoke-Git -GitArgs @("fetch", "--force", "--tags", "origin")
+$remoteTag = Invoke-Git -GitArgs @("ls-remote", "--tags", "origin", "refs/tags/$ReleaseTag")
 $remoteTagExists = -not [string]::IsNullOrWhiteSpace($remoteTag)
 
 if ($EventName -eq "workflow_dispatch") {
-    if ((Invoke-Git @("status", "--porcelain")) -ne "") {
+    if ((Invoke-Git -GitArgs @("status", "--porcelain")) -ne "") {
         throw "The release checkout is not clean. Refusing to modify a working tree with unexpected changes."
     }
 
@@ -200,23 +200,23 @@ if ($EventName -eq "workflow_dispatch") {
         [System.IO.File]::WriteAllText((Join-Path $repoRoot "src-tauri/Cargo.toml"), $cargoToml, $utf8NoBom)
         [System.IO.File]::WriteAllText((Join-Path $repoRoot "src-tauri/Cargo.lock"), $cargoLock, $utf8NoBom)
 
-        $null = Invoke-Git @("add", "--", "package.json", "package-lock.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock")
-        $null = Invoke-Git @("diff", "--cached", "--check")
-        $null = Invoke-Git @("config", "user.name", "github-actions[bot]")
-        $null = Invoke-Git @("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
-        $null = Invoke-Git @("commit", "-m", "chore(release): prepare $ReleaseTag")
-        $null = Invoke-Git @("push", "origin", "HEAD:refs/heads/main")
-        $releaseCommit = Invoke-Git @("rev-parse", "HEAD")
+        $null = Invoke-Git -GitArgs @("add", "--", "package.json", "package-lock.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock")
+        $null = Invoke-Git -GitArgs @("diff", "--cached", "--check")
+        $null = Invoke-Git -GitArgs @("config", "user.name", "github-actions[bot]")
+        $null = Invoke-Git -GitArgs @("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
+        $null = Invoke-Git -GitArgs @("commit", "-m", "chore(release): prepare $ReleaseTag")
+        $null = Invoke-Git -GitArgs @("push", "origin", "HEAD:refs/heads/main")
+        $releaseCommit = Invoke-Git -GitArgs @("rev-parse", "HEAD")
 
         Write-Host "::notice::Updated all Spindle version declarations to $releaseVersion and committed $releaseCommit to main."
     }
     elseif ($remoteTagExists) {
-        $releaseCommit = Invoke-Git @("rev-parse", "refs/tags/$ReleaseTag^{commit}")
-        $null = Invoke-Git @("checkout", "--detach", $releaseCommit)
+        $releaseCommit = Invoke-Git -GitArgs @("rev-parse", "refs/tags/$ReleaseTag^{commit}")
+        $null = Invoke-Git -GitArgs @("checkout", "--detach", $releaseCommit)
         Write-Host "::notice::Reusing the existing $ReleaseTag commit $releaseCommit for a release retry."
     }
     else {
-        $releaseCommit = Invoke-Git @("rev-parse", "HEAD")
+        $releaseCommit = Invoke-Git -GitArgs @("rev-parse", "HEAD")
         Write-Host "::notice::Version $releaseVersion is already committed; continuing without another version commit."
     }
 }
@@ -224,7 +224,7 @@ else {
     if ($releaseVersion -ne $currentVersion) {
         throw "Tag $ReleaseTag contains application version $currentVersion, not $releaseVersion."
     }
-    $releaseCommit = Invoke-Git @("rev-parse", "HEAD")
+    $releaseCommit = Invoke-Git -GitArgs @("rev-parse", "HEAD")
 }
 
 # Re-read the final worktree after any checkout of an existing tag. Every manifest and
