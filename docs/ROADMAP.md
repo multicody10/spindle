@@ -23,7 +23,9 @@ This roadmap records implementation status rather than implying the full product
 
 ## Model runtime
 
-- [x] Read-only discovery of local Ollama and LM Studio endpoints and model inventories.
+- [x] Discovery of local Ollama and LM Studio endpoints and model inventories.
+- [x] Streamed local chat adapters for Ollama and LM Studio.
+- [x] In-memory chat UI with request cancellation and provider-reported metrics.
 - [ ] Provider capability registry.
 - [ ] Managed llama.cpp installation and version pinning.
 - [ ] Shared inference runtime manager.
@@ -31,7 +33,7 @@ This roadmap records implementation status rather than implying the full product
 - [ ] Real applied-settings readback.
 - [ ] Runtime logs and memory telemetry.
 - [ ] Calibration benchmarks with user consent.
-- [ ] LM Studio and Ollama adapters.
+- [ ] Provider capability registry and applied-settings readback.
 - [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
 
 ## Core developer workflow
