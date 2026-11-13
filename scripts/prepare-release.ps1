@@ -227,10 +227,26 @@ else {
     $releaseCommit = Invoke-Git @("rev-parse", "HEAD")
 }
 
-$preparedPackageJson = Invoke-Git @("show", ($releaseCommit + ":package.json"))
-$preparedPackage = $preparedPackageJson | ConvertFrom-Json
-if ($preparedPackage.version -ne $releaseVersion) {
-    throw "The selected release commit does not contain package version $releaseVersion."
+# Re-read the final worktree after any checkout of an existing tag. Every manifest and
+# lockfile must describe the same version before a release build is allowed to start.
+$finalPackage = Get-Content "package.json" -Raw | ConvertFrom-Json
+$finalNpmLock = Get-Content "package-lock.json" -Raw | ConvertFrom-Json
+$finalTauri = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+$finalCargoToml = Get-Content "src-tauri/Cargo.toml" -Raw
+$finalCargoLock = Get-Content "src-tauri/Cargo.lock" -Raw
+$finalCargoVersion = [regex]::Match($finalCargoToml, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"')
+$finalCargoLockMatch = [regex]::Match($finalCargoLock, $cargoLockPattern)
+$finalVersions = @(
+    [string]$finalPackage.version,
+    [string]$finalNpmLock.version,
+    [string]$finalNpmLock.packages[""].version,
+    [string]$finalTauri.version,
+    [string]$finalCargoVersion.Groups[1].Value,
+    [string]([regex]::Match($finalCargoLockMatch.Value, 'version = "([^"]+)"').Groups[1].Value)
+)
+if (-not $finalCargoVersion.Success -or -not $finalCargoLockMatch.Success -or
+    ($finalVersions | Select-Object -Unique).Count -ne 1 -or $finalVersions[0] -ne $releaseVersion) {
+    throw "The selected release commit does not have consistent version $releaseVersion across all manifests and lockfiles."
 }
 
 "release_commit=$releaseCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
