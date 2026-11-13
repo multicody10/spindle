@@ -208,7 +208,7 @@ function ChatView({
         <div>
           <span className="eyebrow">LOCAL INFERENCE</span>
           <h2>Chat with a model</h2>
-          <p>Stream responses directly from Ollama or LM Studio running on this PC.</p>
+          <p>Stream responses from Ollama, LM Studio, or Spindle’s managed llama.cpp runtime.</p>
         </div>
         <div className="chat-heading-actions">
           <span className="local-chip"><span /> LOOPBACK ONLY</span>
@@ -231,6 +231,7 @@ function ChatView({
           >
             <option value="ollama">Ollama</option>
             <option value="lm-studio">LM Studio</option>
+            <option value="llama-cpp">llama.cpp (Spindle)</option>
           </select>
         </div>
         <div className="chat-select model-select">
@@ -264,6 +265,7 @@ function ChatView({
           <p>Start one of these providers, load a model in it, then refresh discovery.</p>
           <div><b>Ollama</b><span>Open Ollama and make sure its local service is running. Models installed with Ollama appear automatically.</span></div>
           <div><b>LM Studio</b><span>Open the Developer tab, start the local server, and load a model in the Chat or Developer view.</span></div>
+          <div><b>llama.cpp</b><span>Install a backend and load a GGUF model from the Runtime workspace.</span></div>
         </section>
       )}
 
@@ -304,7 +306,7 @@ function ChatView({
           <span className={"status-dot " + (error ? "red" : "")} />
           <span>{status}</span>
           <span className="chat-context">
-            {providerId === "ollama" ? "Context " + contextTokens.toLocaleString() : "Context managed by LM Studio"}
+            {providerId === "ollama" ? "Context " + contextTokens.toLocaleString() : providerId === "llama-cpp" ? "Context managed by Spindle" : "Context managed by LM Studio"}
             {" · Output " + generation.maxOutputTokens.toLocaleString()}
           </span>
         </div>
