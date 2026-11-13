@@ -1661,3 +1661,21 @@ footer { color: #626c78; font-size: 9px; }
   .chat-message-list { padding: 18px 14px 28px; }
   .chat-message.user, .chat-message.assistant { width: 100%; }
 }
+
+
+.chat-composer .chat-load-model {
+  min-height: 29px;
+  padding: 5px 9px;
+  border-color: #303741;
+  border-radius: 7px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.chat-composer .chat-load-model:hover:not(:disabled) {
+  border-color: #48525f;
+  background: #20252c;
+}
+.chat-composer .chat-load-model:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
