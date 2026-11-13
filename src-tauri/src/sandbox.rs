@@ -286,8 +286,17 @@ fn run_validation_windows(
     };
 
     let started = Instant::now();
-    let mut child = launch_in_container_with_io(&capabilities, &options)
-        .map_err(|error| format!("The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"))?;
+    let mut child = launch_in_container_with_io(&capabilities, &options).map_err(|error| {
+        let source = std::error::Error::source(&error).map(ToString::to_string);
+        match source {
+            Some(source) => format!(
+                "The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error} ({source})"
+            ),
+            None => format!(
+                "The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"
+            ),
+        }
+    })?;
     let job_handle = match child.job_guard.as_ref() {
         Some(guard) => guard.as_handle().0,
         None => {
@@ -434,17 +443,19 @@ fn resume_suspended_worker(process_id: u32) -> Result<(), String> {
         unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
             .map_err(|error| format!("Could not inspect suspended worker threads: {error}"))?,
     );
-    let mut entry = THREADENTRY32::default();
-    entry.dwSize = size_of::<THREADENTRY32>() as u32;
+    let mut entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
     unsafe { Thread32First(snapshot.0, &mut entry) }
         .map_err(|error| format!("Could not enumerate suspended worker threads: {error}"))?;
 
     let mut primary_thread_id = None;
     loop {
-        if entry.th32OwnerProcessID == process_id {
-            if primary_thread_id.replace(entry.th32ThreadID).is_some() {
-                return Err("The suspended worker unexpectedly has multiple threads before initialization; refusing to resume it.".into());
-            }
+        if entry.th32OwnerProcessID == process_id
+            && primary_thread_id.replace(entry.th32ThreadID).is_some()
+        {
+            return Err("The suspended worker unexpectedly has multiple threads before initialization; refusing to resume it.".into());
         }
         match unsafe { Thread32Next(snapshot.0, &mut entry) } {
             Ok(()) => {}
