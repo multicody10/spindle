@@ -385,10 +385,10 @@ fn capture_output<R: Read + Send + 'static>(reader: R, logs: Arc<Mutex<VecDeque<
                 }
             };
             for byte in &chunk[..count] {
-                if *byte == b'\\n' || line.len() >= MAX_LOG_LINE_BYTES {
+                if *byte == b'\n' || line.len() >= MAX_LOG_LINE_BYTES {
                     push_log_to(&logs, format!("{prefix} {}", String::from_utf8_lossy(&line)));
                     line.clear();
-                } else if *byte != b'\\r' {
+                } else if *byte != b'\r' {
                     line.push(*byte);
                 }
             }
