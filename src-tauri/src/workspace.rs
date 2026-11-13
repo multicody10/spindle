@@ -626,7 +626,7 @@ mod tests {
     fn read_only_grants_reject_writes() {
         let (manager, root, grant) = test_workspace();
         let error = manager
-            .write_file(&grant.session_id, "notes.txt", "hello".into())
+            .write_file(&grant.session_id, "notes.txt", "hello".into(), &"0".repeat(64))
             .unwrap_err();
         assert!(error.contains("not permitted"));
         let _ = fs::remove_dir_all(root);
@@ -652,7 +652,12 @@ mod tests {
         let updated = manager.read_file(&grant.session_id, "src-notes.txt").unwrap();
         assert_eq!(updated.content, "updated text");
         assert!(manager
-            .write_file(&grant.session_id, "../escape.txt", "no".into())
+            .write_file(
+                &grant.session_id,
+                "../escape.txt",
+                "no".into(),
+                &"0".repeat(64),
+            )
             .is_err());
         let _ = fs::remove_dir_all(root);
     }
@@ -691,7 +696,12 @@ mod tests {
         assert!(manager.read_file(&grant.session_id, ".env.local").is_err());
         assert!(manager.read_file(&grant.session_id, ".ssh/id_rsa").is_err());
         assert!(manager
-            .write_file(&grant.session_id, ".env.local", "changed".into())
+            .write_file(
+                &grant.session_id,
+                ".env.local",
+                "changed".into(),
+                &"0".repeat(64),
+            )
             .is_err());
         let listing = manager.list_directory(&grant.session_id, "").unwrap();
         assert!(listing.entries.is_empty());
