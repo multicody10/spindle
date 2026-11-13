@@ -19,7 +19,7 @@ jobs:
     name: Windows x64 validation
     runs-on: windows-latest
     env:
-      CARGO_INCREMENTAL: "1"
+      CARGO_INCREMENTAL: "0"
       CARGO_TERM_COLOR: always
     steps:
       - name: Check out source
@@ -29,20 +29,8 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
-
-      - name: Resolve npm cache location
-        id: npm-cache
-        shell: pwsh
-        run: |
-          "path=$(npm config get cache)" >> $env:GITHUB_OUTPUT
-
-      - name: Cache npm package downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ steps.npm-cache.outputs.path }}
-          key: npm-windows-node24-${{ hashFiles('package.json') }}
-          restore-keys: |
-            npm-windows-node24-
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
@@ -54,11 +42,12 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: |
-            src-tauri -> src-tauri/target
+            src-tauri -> target
+          shared-key: windows-x64-stable
           cache-on-failure: true
 
       - name: Install frontend dependencies
-        run: npm install --prefer-offline --no-audit --no-fund
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Type-check and build frontend
         run: npm run check
@@ -68,8 +57,8 @@ jobs:
 
       - name: Run Clippy
         if: ${{ !cancelled() }}
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Run Rust tests
         if: ${{ !cancelled() }}
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
