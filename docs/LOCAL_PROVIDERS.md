@@ -24,7 +24,7 @@ Start Ollama or LM Studio yourself and load a model before selecting it in **Cha
 - llama.cpp binaries are pinned to build b12347. Downloads follow only the expected GitHub release asset redirect and are checked against pinned sizes and SHA-256 digests before extraction.
 - ZIP entries are bounded by count and uncompressed size; path traversal and symbolic links are rejected.
 - The process manager launches the verified executable directly with a fixed argument allowlist, a local GGUF path, and a loopback-only bind address. It never invokes a shell.
-- Proxy configuration is disabled and redirects are not followed.
+- The Ollama and LM Studio loopback clients disable proxies and redirects. The separate llama.cpp installer follows only its single, allowlisted GitHub release asset redirect, as documented in the managed runtime guide.
 - Provider discovery JSON is limited to 1 MiB per response.
 - Chat request history is limited to 64 messages, 65,536 bytes per message, and 256 KiB combined.
 - The requested model is checked against the provider's current model inventory before generation.
