@@ -46,6 +46,22 @@ fn ignored_directory(name: &str) -> bool {
     )
 }
 
+#[cfg(windows)]
+fn is_reparse_or_symlink(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_attributes() & 0x0400 != 0)
+        .unwrap_or(true)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_or_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(true)
+}
+
 fn scan_root(
     root: &Path,
     source: &str,
@@ -88,12 +104,11 @@ fn scan_root(
                 Err(_) => continue,
             };
 
-            // Do not recurse through symlinks or other non-directory reparse entries.
-            if file_type.is_symlink() {
+            let path = entry.path();
+            // Do not recurse through symlinks, junctions, or other reparse points.
+            if file_type.is_symlink() || is_reparse_or_symlink(&path) {
                 continue;
             }
-
-            let path = entry.path();
             if file_type.is_dir() {
                 let name = entry.file_name();
                 if !ignored_directory(&name.to_string_lossy()) && depth < MAX_DEPTH {
@@ -103,9 +118,9 @@ fn scan_root(
             }
 
             if !file_type.is_file()
-                || !path
-                    .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
+                || !path.extension().is_some_and(|extension| {
+                    extension.to_string_lossy().eq_ignore_ascii_case("gguf")
+                })
             {
                 continue;
             }
@@ -129,24 +144,68 @@ fn scan_root(
     }
 }
 
-fn discover_from_paths(
-    documents_directory: &Path,
+fn default_model_roots(
     home_directory: Option<&Path>,
-    configured_lmstudio_directory: Option<&Path>,
+    local_app_data_directory: Option<&Path>,
+    roaming_app_data_directory: Option<&Path>,
+) -> Vec<(String, PathBuf)> {
+    let mut roots = Vec::new();
+
+    let lm_studio = env::var_os("LMSTUDIO_MODELS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| home_directory.map(|home| home.join(".lmstudio").join("models")));
+    if let Some(path) = lm_studio {
+        let name = if env::var_os("LMSTUDIO_MODELS_DIR").is_some() {
+            "LM Studio (configured)"
+        } else {
+            "LM Studio"
+        };
+        roots.push((name.to_owned(), path));
+    }
+
+    let gpt4all = env::var_os("GPT4ALL_MODELS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            local_app_data_directory.map(|base| base.join("nomic.ai").join("GPT4All"))
+        });
+    if let Some(path) = gpt4all {
+        let name = if env::var_os("GPT4ALL_MODELS_DIR").is_some() {
+            "GPT4All (configured)"
+        } else {
+            "GPT4All"
+        };
+        roots.push((name.to_owned(), path));
+    }
+
+    let jan = env::var_os("JAN_MODELS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| roaming_app_data_directory.map(|base| base.join("Jan").join("data").join("models")));
+    if let Some(path) = jan {
+        let name = if env::var_os("JAN_MODELS_DIR").is_some() {
+            "Jan (configured)"
+        } else {
+            "Jan"
+        };
+        roots.push((name.to_owned(), path));
+    }
+
+    if let Some(path) = env::var_os("KOBOLDCPP_MODELS_DIR").map(PathBuf::from) {
+        roots.push(("KoboldCpp (configured)".to_owned(), path));
+    }
+
+    roots
+}
+
+fn discover_from_roots(
+    documents_directory: &Path,
+    roots: Vec<(String, PathBuf)>,
 ) -> Result<ModelLibrary, String> {
     let managed_directory = documents_directory.join("Spindle").join("Models");
     fs::create_dir_all(&managed_directory)
         .map_err(|error| format!("Could not create the Spindle model directory: {error}"))?;
 
-    let mut roots = vec![("Spindle library".to_owned(), managed_directory.clone())];
-    if let Some(path) = configured_lmstudio_directory {
-        roots.push(("LM Studio (configured)".into(), path.to_path_buf()));
-    } else if let Some(home) = home_directory {
-        roots.push((
-            "LM Studio".into(),
-            home.join(".lmstudio").join("models"),
-        ));
-    }
+    let mut all_roots = vec![("Spindle library".to_owned(), managed_directory.clone())];
+    all_roots.extend(roots);
 
     let mut locations = Vec::new();
     let mut models = Vec::new();
@@ -155,7 +214,7 @@ fn discover_from_paths(
     let mut visited_entries = 0usize;
     let mut truncated = false;
 
-    for (name, root) in roots {
+    for (name, root) in all_roots {
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         let key = path_key(&canonical);
         let exists = root.is_dir();
@@ -198,13 +257,15 @@ pub fn discover(documents_directory: PathBuf) -> Result<ModelLibrary, String> {
     let home = env::var_os("USERPROFILE")
         .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from);
-    let configured_lmstudio = env::var_os("LMSTUDIO_MODELS_DIR").map(PathBuf::from);
-
-    discover_from_paths(
-        &documents_directory,
+    let local_app_data = env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let roaming_app_data = env::var_os("APPDATA").map(PathBuf::from);
+    let roots = default_model_roots(
         home.as_deref(),
-        configured_lmstudio.as_deref(),
-    )
+        local_app_data.as_deref(),
+        roaming_app_data.as_deref(),
+    );
+
+    discover_from_roots(&documents_directory, roots)
 }
 
 #[cfg(test)]
@@ -212,37 +273,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn creates_spindle_library_and_discovers_lm_studio_gguf_models() {
+    fn creates_spindle_library_and_discovers_common_gguf_locations() {
         let temporary = env::temp_dir().join(format!(
             "spindle-model-library-{}",
             std::process::id()
         ));
         let documents = temporary.join("Documents");
         let home = temporary.join("Home");
+        let local_app_data = temporary.join("Local");
+        let roaming_app_data = temporary.join("Roaming");
+
         let spindle_models = documents.join("Spindle").join("Models");
         let lmstudio_models = home.join(".lmstudio").join("models").join("publisher").join("model");
+        let gpt4all_models = local_app_data.join("nomic.ai").join("GPT4All");
+        let jan_models = roaming_app_data.join("Jan").join("data").join("models");
 
-        fs::create_dir_all(&spindle_models).unwrap();
-        fs::create_dir_all(&lmstudio_models).unwrap();
+        for directory in [&spindle_models, &lmstudio_models, &gpt4all_models, &jan_models] {
+            fs::create_dir_all(directory).unwrap();
+        }
         fs::write(spindle_models.join("spindle-model.gguf"), b"test").unwrap();
         fs::write(lmstudio_models.join("lmstudio-model.gguf"), b"test model").unwrap();
+        fs::write(gpt4all_models.join("gpt4all-model.gguf"), b"test model").unwrap();
+        fs::write(jan_models.join("jan-model.gguf"), b"test model").unwrap();
         fs::write(lmstudio_models.join("not-a-model.txt"), b"ignore").unwrap();
 
-        let result = discover_from_paths(&documents, Some(&home), None).unwrap();
-        assert_eq!(result.models.len(), 2);
-        assert!(result.managed_directory.ends_with("Spindle\\Models"));
-        assert!(result.models.iter().any(|model| {
-            model.file_name == "lmstudio-model.gguf" && model.source == "LM Studio"
-        }));
-        assert!(result.models.iter().any(|model| {
-            model.file_name == "spindle-model.gguf" && model.source == "Spindle library"
-        }));
+        let roots = default_model_roots(
+            Some(&home),
+            Some(&local_app_data),
+            Some(&roaming_app_data),
+        );
+        let result = discover_from_roots(&documents, roots).unwrap();
+
+        assert_eq!(result.models.len(), 4);
+        let managed = Path::new(&result.managed_directory);
+        assert_eq!(managed.file_name().and_then(|name| name.to_str()), Some("Models"));
+        assert_eq!(
+            managed.parent().and_then(Path::file_name).and_then(|name| name.to_str()),
+            Some("Spindle")
+        );
+        for (file_name, source) in [
+            ("lmstudio-model.gguf", "LM Studio"),
+            ("gpt4all-model.gguf", "GPT4All"),
+            ("jan-model.gguf", "Jan"),
+            ("spindle-model.gguf", "Spindle library"),
+        ] {
+            assert!(result.models.iter().any(|model| {
+                model.file_name == file_name && model.source == source
+            }));
+        }
 
         let _ = fs::remove_dir_all(temporary);
     }
 
     #[test]
-    fn uses_configured_lm_studio_directory_when_supplied() {
+    fn uses_configured_model_directories_when_supplied() {
         let temporary = env::temp_dir().join(format!(
             "spindle-model-library-custom-{}",
             std::process::id()
@@ -252,7 +336,8 @@ mod tests {
         fs::create_dir_all(&custom).unwrap();
         fs::write(custom.join("custom.gguf"), b"model").unwrap();
 
-        let result = discover_from_paths(&documents, None, Some(&custom)).unwrap();
+        let roots = vec![("LM Studio (configured)".to_owned(), custom.clone())];
+        let result = discover_from_roots(&documents, roots).unwrap();
         assert!(result.models.iter().any(|model| {
             model.file_name == "custom.gguf" && model.source == "LM Studio (configured)"
         }));
