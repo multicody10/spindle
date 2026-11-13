@@ -257,6 +257,9 @@ pub fn inspect(path: &str) -> Result<ModelMetadata, String> {
         ));
     }
     let tensor_count = read_u64(&mut reader).map_err(|error| error.to_string())?;
+    if tensor_count == 0 {
+        return Err("The GGUF file does not contain any model tensors.".into());
+    }
     let metadata_count = read_u64(&mut reader).map_err(|error| error.to_string())?;
     if metadata_count > MAX_METADATA_ENTRIES {
         return Err("GGUF metadata entry count exceeds the parser safety limit.".into());
@@ -434,6 +437,27 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert!(error.contains("beyond the file"));
+    }
+
+    #[test]
+    fn rejects_gguf_files_without_model_tensors() {
+        let mut bytes = Vec::new();
+        bytes.extend(b"GGUF");
+        put_u32(&mut bytes, 3);
+        put_u64(&mut bytes, 0);
+        put_u64(&mut bytes, 0);
+
+        let path = std::env::temp_dir().join(format!(
+            "spindle-gguf-no-tensors-{}.gguf",
+            std::process::id()
+        ));
+        let mut file = File::create(&path).unwrap();
+        file.write_all(&bytes).unwrap();
+        drop(file);
+        let error = inspect(path.to_str().unwrap()).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(error.contains("does not contain any model tensors"));
     }
 
     #[test]
