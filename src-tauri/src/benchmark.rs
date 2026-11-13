@@ -1,7 +1,7 @@
 use crate::chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime};
 use crate::domain::GenerationSettings;
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,21 +12,33 @@ const MAX_ITERATIONS: usize = 5;
 const MAX_OUTPUT_TOKENS: usize = 128;
 
 fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().min(i64::MAX as u64) as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .min(i64::MAX as u64) as i64
 }
 
 fn request_id() -> String {
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
-    let suffix = timestamp.wrapping_add(REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)) & 0x0000_ffff_ffff_ffff;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let suffix = timestamp.wrapping_add(REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed))
+        & 0x0000_ffff_ffff_ffff;
     format!("00000000-0000-4000-8000-{suffix:012x}")
 }
 
 fn open(database: &Path) -> Result<Connection, String> {
     if let Some(parent) = database.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("Could not create Spindle data directory: {error}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create Spindle data directory: {error}"))?;
     }
-    let connection = Connection::open(database).map_err(|error| format!("Could not open benchmark database: {error}"))?;
-    connection.busy_timeout(std::time::Duration::from_secs(3)).map_err(|error| error.to_string())?;
+    let connection = Connection::open(database)
+        .map_err(|error| format!("Could not open benchmark database: {error}"))?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(3))
+        .map_err(|error| error.to_string())?;
     connection.execute_batch(
         "PRAGMA foreign_keys=ON;
          CREATE TABLE IF NOT EXISTS benchmark_runs (
@@ -85,18 +97,29 @@ pub struct BenchmarkRun {
 }
 
 fn median_u64(mut values: Vec<u64>) -> Option<u64> {
-    if values.is_empty() { return None; }
+    if values.is_empty() {
+        return None;
+    }
     values.sort_unstable();
     Some(values[values.len() / 2])
 }
 
 fn median_f64(mut values: Vec<f64>) -> Option<f64> {
-    if values.is_empty() { return None; }
+    if values.is_empty() {
+        return None;
+    }
     values.sort_by(f64::total_cmp);
     Some(values[values.len() / 2])
 }
 
-fn begin_run(database: PathBuf, id: String, provider_id: String, model_id: String, context_tokens: usize, iterations: usize) -> Result<(), String> {
+fn begin_run(
+    database: PathBuf,
+    id: String,
+    provider_id: String,
+    model_id: String,
+    context_tokens: usize,
+    iterations: usize,
+) -> Result<(), String> {
     let connection = open(&database)?;
     connection.execute(
         "INSERT INTO benchmark_runs(id,provider_id,model_id,context_tokens,requested_iterations,status,started_at)
@@ -130,22 +153,40 @@ fn finish_run(database: PathBuf, run_id: String) -> Result<(), String> {
     let mut statement = connection.prepare(
         "SELECT duration_ms,tokens_per_second,error FROM benchmark_samples WHERE run_id=?1 ORDER BY sequence",
     ).map_err(|error| error.to_string())?;
-    let rows = statement.query_map(params![run_id], |row| Ok((
-        row.get::<_, Option<i64>>(0)?,
-        row.get::<_, Option<f64>>(1)?,
-        row.get::<_, Option<String>>(2)?,
-    ))).map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![run_id], |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?,
+                row.get::<_, Option<f64>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?;
     let mut durations = Vec::new();
     let mut rates = Vec::new();
     let mut completed = 0usize;
     let mut failed = 0usize;
     for item in rows {
         let (duration, rate, error) = item.map_err(|error| error.to_string())?;
-        if let Some(value) = duration { durations.push(value.max(0) as u64); }
-        if let Some(value) = rate.filter(|v| v.is_finite() && *v >= 0.0) { rates.push(value); }
-        if error.is_some() { failed += 1; } else { completed += 1; }
+        if let Some(value) = duration {
+            durations.push(value.max(0) as u64);
+        }
+        if let Some(value) = rate.filter(|v| v.is_finite() && *v >= 0.0) {
+            rates.push(value);
+        }
+        if error.is_some() {
+            failed += 1;
+        } else {
+            completed += 1;
+        }
     }
-    let status = if failed == 0 && completed > 0 { "completed" } else if completed > 0 { "partial" } else { "failed" };
+    let status = if failed == 0 && completed > 0 {
+        "completed"
+    } else if completed > 0 {
+        "partial"
+    } else {
+        "failed"
+    };
     connection.execute(
         "UPDATE benchmark_runs SET status=?1,median_duration_ms=?2,median_tokens_per_second=?3,completed_at=?4 WHERE id=?5",
         params![status, median_u64(durations).map(|v| v as i64), median_f64(rates), now(), run_id],
@@ -156,8 +197,12 @@ fn finish_run(database: PathBuf, run_id: String) -> Result<(), String> {
 fn sample_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchmarkSample> {
     Ok(BenchmarkSample {
         sequence: row.get::<_, i64>(0)?.max(0) as usize,
-        duration_ms: row.get::<_, Option<i64>>(1)?.map(|value| value.max(0) as u64),
-        output_tokens: row.get::<_, Option<i64>>(2)?.map(|value| value.max(0) as u64),
+        duration_ms: row
+            .get::<_, Option<i64>>(1)?
+            .map(|value| value.max(0) as u64),
+        output_tokens: row
+            .get::<_, Option<i64>>(2)?
+            .map(|value| value.max(0) as u64),
         tokens_per_second: row.get(3)?,
         error: row.get(4)?,
     })
@@ -169,27 +214,59 @@ pub fn list_runs(database: PathBuf, limit: usize) -> Result<Vec<BenchmarkRun>, S
         "SELECT id,provider_id,model_id,context_tokens,requested_iterations,status,median_duration_ms,median_tokens_per_second,started_at,completed_at
          FROM benchmark_runs ORDER BY started_at DESC LIMIT ?1",
     ).map_err(|error| error.to_string())?;
-    let rows = statement.query_map(params![limit.clamp(1, 50) as i64], |row| Ok((
-        row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
-        row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?,
-        row.get::<_, Option<i64>>(6)?, row.get::<_, Option<f64>>(7)?,
-        row.get::<_, i64>(8)?, row.get::<_, Option<i64>>(9)?,
-    ))).map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![limit.clamp(1, 50) as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<f64>>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?;
     let mut output = Vec::new();
     for item in rows {
-        let (id, provider_id, model_id, context_tokens, requested_iterations, status, median_duration_ms,
-            median_tokens_per_second, started_at, completed_at) = item.map_err(|error| error.to_string())?;
-        let mut samples_statement = connection.prepare(
-            "SELECT sequence,duration_ms,output_tokens,tokens_per_second,error
+        let (
+            id,
+            provider_id,
+            model_id,
+            context_tokens,
+            requested_iterations,
+            status,
+            median_duration_ms,
+            median_tokens_per_second,
+            started_at,
+            completed_at,
+        ) = item.map_err(|error| error.to_string())?;
+        let mut samples_statement = connection
+            .prepare(
+                "SELECT sequence,duration_ms,output_tokens,tokens_per_second,error
              FROM benchmark_samples WHERE run_id=?1 ORDER BY sequence",
-        ).map_err(|error| error.to_string())?;
-        let samples = samples_statement.query_map(params![id], sample_from_row).map_err(|error| error.to_string())?
-            .collect::<rusqlite::Result<Vec<_>>>().map_err(|error| error.to_string())?;
+            )
+            .map_err(|error| error.to_string())?;
+        let samples = samples_statement
+            .query_map(params![id], sample_from_row)
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
         output.push(BenchmarkRun {
-            id, provider_id, model_id, context_tokens: context_tokens.max(0) as usize,
-            requested_iterations: requested_iterations.max(0) as usize, status,
+            id,
+            provider_id,
+            model_id,
+            context_tokens: context_tokens.max(0) as usize,
+            requested_iterations: requested_iterations.max(0) as usize,
+            status,
             median_duration_ms: median_duration_ms.map(|v| v.max(0) as u64),
-            median_tokens_per_second, started_at, completed_at, samples,
+            median_tokens_per_second,
+            started_at,
+            completed_at,
+            samples,
         });
     }
     Ok(output)
@@ -204,16 +281,25 @@ fn parse_provider(value: &str) -> Result<ChatProvider, String> {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkRequest {
+    pub provider_id: String,
+    pub model_id: String,
+    pub context_tokens: usize,
+    pub generation: GenerationSettings,
+    pub iterations: usize,
+}
+
 pub async fn run(
     app: AppHandle,
     database: PathBuf,
     runtime: &ChatRuntime,
-    provider_id: String,
-    model_id: String,
-    context_tokens: usize,
-    mut generation: GenerationSettings,
-    iterations: usize,
+    input: BenchmarkRequest,
 ) -> Result<BenchmarkRun, String> {
+    let BenchmarkRequest {
+        provider_id, model_id, context_tokens, mut generation, iterations,
+    } = input;
     if iterations == 0 || iterations > MAX_ITERATIONS {
         return Err("Choose between 1 and 5 benchmark iterations.".into());
     }
@@ -231,8 +317,19 @@ pub async fn run(
         let database = database.clone();
         let provider_id = provider_id.clone();
         let model_id = model_id.clone();
-        move || begin_run(database, initial_run_id, provider_id, model_id, context_tokens, iterations)
-    }).await.map_err(|error| format!("Benchmark initialization task failed: {error}"))??;
+        move || {
+            begin_run(
+                database,
+                initial_run_id,
+                provider_id,
+                model_id,
+                context_tokens,
+                iterations,
+            )
+        }
+    })
+    .await
+    .map_err(|error| format!("Benchmark initialization task failed: {error}"))??;
 
     for sequence in 0..iterations {
         let id = request_id();
@@ -272,19 +369,24 @@ pub async fn run(
             let database = database.clone();
             let run_id = run_id.clone();
             move || save_sample(database, run_id, sample)
-        }).await.map_err(|error| format!("Benchmark sample task failed: {error}"))??;
-        if failed { break; }
+        })
+        .await
+        .map_err(|error| format!("Benchmark sample task failed: {error}"))??;
+        if failed {
+            break;
+        }
     }
     tokio::task::spawn_blocking({
         let database = database.clone();
         let run_id = run_id.clone();
         move || finish_run(database, run_id)
-    }).await.map_err(|error| format!("Benchmark finalization task failed: {error}"))??;
+    })
+    .await
+    .map_err(|error| format!("Benchmark finalization task failed: {error}"))??;
     let mut runs = list_runs(database, 50)?;
-    runs.drain(..).find(|run| run.id == run_id)
+    runs.into_iter().find(|run| run.id == run_id)
         .ok_or_else(|| "The benchmark completed but its result could not be reloaded.".into())
 }
-
 
 #[cfg(test)]
 mod tests {
