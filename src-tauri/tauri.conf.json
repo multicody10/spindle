@@ -44,7 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_GENERATED_TAURI_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBRjNBQUU5QkVGMDRCMzUKUldRMVMvQys2YXJ6S3B6Y1ltNEV4bXNZMnV2cXVTc0dQeVRtaUpTMVZTNHhrak1YY3A0SExUMXkK",
       "endpoints": [
         "https://github.com/multicody10/spindle/releases/latest/download/latest.json"
       ],
