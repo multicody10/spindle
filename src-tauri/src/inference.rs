@@ -147,7 +147,7 @@ impl InferenceRuntimeManager {
         Ok(())
     }
 
-    pub fn clear(&self) -> Result<(), String> {
+    pub fn begin_shutdown(&self) -> Result<(), String> {
         let mut state = self
             .inner
             .state
@@ -158,7 +158,33 @@ impl InferenceRuntimeManager {
             || state.queued_requests > 0
         {
             return Err(
-                "The shared inference runtime has active or queued requests and cannot be cleared."
+                "The shared inference runtime has active or queued requests. Finish or cancel them before stopping the model."
+                    .into(),
+            );
+        }
+        state.accepting_requests = false;
+        Ok(())
+    }
+
+    pub fn resume(&self) {
+        if let Ok(mut state) = self.inner.state.lock() {
+            state.accepting_requests = state.model.is_some();
+        }
+    }
+
+    pub fn clear(&self) -> Result<(), String> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "The inference scheduler state is unavailable.".to_string())?;
+        if state.accepting_requests
+            || !state.reserved_sessions.is_empty()
+            || !state.active_sessions.is_empty()
+            || state.queued_requests > 0
+        {
+            return Err(
+                "Stop the shared inference runtime before clearing it; active or queued requests must finish first."
                     .into(),
             );
         }
@@ -378,6 +404,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_closes_admission_until_the_model_is_reconfigured() {
+        let manager = manager_with_slots(1);
+        let cancelled = Notify::new();
+        manager.begin_shutdown().unwrap();
+        let error = match manager.acquire_session("session", "request", &cancelled).await {
+            Ok(_) => panic!("A request must not be admitted during runtime shutdown."),
+            Err(error) => error,
+        };
+        assert!(error.contains("Load a Spindle managed model"));
+        manager.resume();
+        let lease = manager.acquire_session("session", "request", &cancelled).await.unwrap();
+        drop(lease);
+    }
+
+    #[tokio::test]
     async fn runtime_cannot_be_cleared_while_a_session_lease_is_active() {
         let manager = manager_with_slots(1);
         let cancelled = Notify::new();
@@ -385,6 +426,7 @@ mod tests {
         assert!(manager.ensure_idle().is_err());
         drop(lease);
         assert!(manager.ensure_idle().is_ok());
+        manager.begin_shutdown().unwrap();
         manager.clear().unwrap();
         assert!(!manager.status().model_loaded);
     }

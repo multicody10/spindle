@@ -898,8 +898,11 @@ pub async fn start(
 }
 
 pub fn stop(runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
-    runtime.inference.ensure_idle()?;
-    runtime.stop_process()?;
+    runtime.inference.begin_shutdown()?;
+    if let Err(error) = runtime.stop_process() {
+        runtime.inference.resume();
+        return Err(error);
+    }
     runtime.inference.clear()?;
     Ok(RuntimeStatus {
         version: VERSION,
