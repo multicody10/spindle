@@ -1,0 +1,1 @@
+The default capability grants only Tauri core defaults and the updater plugin default permission set. Do not add broad filesystem, shell, process, or HTTP permissions as a shortcut. Each new IPC or plugin capability must have a documented justification and a narrow scope.

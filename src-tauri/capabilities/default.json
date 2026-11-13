@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal desktop capability for Spindle's model configuration shell.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "updater:default"
+  ]
+}
