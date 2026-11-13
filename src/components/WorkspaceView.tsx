@@ -30,6 +30,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
   const [listing, setListing] = useState<WorkspaceListing | null>(null);
   const [currentDirectory, setCurrentDirectory] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
+  const [selectedRevision, setSelectedRevision] = useState("");
   const [editorContent, setEditorContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -46,6 +47,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       setListing(result);
       setCurrentDirectory(path);
       setSelectedPath("");
+      setSelectedRevision("");
       setEditorContent("");
       setDirty(false);
     } catch (reason) {
@@ -113,6 +115,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       setGrant(null);
       setListing(null);
       setSelectedPath("");
+      setSelectedRevision("");
       setEditorContent("");
       setDirty(false);
       setSearchResults(null);
@@ -135,7 +138,9 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
     try {
       const file = await api.readWorkspaceFile(grant.sessionId, relativePath);
       setSelectedPath(file.relativePath);
+      setSelectedRevision(file.revision);
       setEditorContent(file.content);
+      setSelectedRevision(file.revision);
       setDirty(false);
       setNotice("Opened " + file.relativePath + " · " + formatBytes(file.sizeBytes));
     } catch (reason) {
@@ -165,11 +170,10 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
     setBusy(true);
     setError(null);
     try {
-      const saved = await api.writeWorkspaceFile(grant.sessionId, selectedPath, editorContent);
+      const saved = await api.writeWorkspaceFile(grant.sessionId, selectedPath, editorContent, selectedRevision);
+      setSelectedRevision(saved.revision);
       setDirty(false);
       setNotice("Saved " + saved.relativePath + " · " + formatBytes(saved.bytesWritten));
-      const updated = await api.readWorkspaceFile(grant.sessionId, selectedPath);
-      setEditorContent(updated.content);
     } catch (reason) {
       setError(String(reason));
     } finally {
