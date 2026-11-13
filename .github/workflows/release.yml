@@ -1,5 +1,5 @@
 name: Windows release
-run-name: Windows release \${{ inputs.release_tag || github.ref_name }}
+run-name: Windows release ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-\${{ github.event.inputs.release_tag || github.ref }}
+  group: release-${{ github.event.inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_TERM_COLOR: always
-      RELEASE_TAG: \${{ inputs.release_tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -38,7 +38,7 @@ jobs:
         id: prepare_release
         shell: pwsh
         env:
-          TAURI_SIGNING_PRIVATE_KEY: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           ./scripts/prepare-release.ps1 -ReleaseTag "$env:RELEASE_TAG" -EventName "$env:GITHUB_EVENT_NAME" -GitRef "$env:GITHUB_REF"
 
@@ -70,41 +70,41 @@ jobs:
         run: npm run typecheck
 
       - name: Check Rust formatting
-        if: \${{ success() }}
+        if: ${{ success() }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: Run Clippy
-        if: \${{ success() }}
+        if: ${{ success() }}
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Run Rust tests
-        if: \${{ success() }}
+        if: ${{ success() }}
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Build and publish signed release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: \${{ env.RELEASE_TAG }}
-          releaseName: Spindle \${{ env.RELEASE_TAG }}
-          releaseCommitish: \${{ steps.prepare_release.outputs.release_commit }}
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Spindle ${{ env.RELEASE_TAG }}
+          releaseCommitish: ${{ steps.prepare_release.outputs.release_commit }}
           releaseBody: |
             Windows x64 release of Spindle.
 
             Review the README and security documentation for current implementation status and known limitations.
           generateReleaseNotes: true
           releaseDraft: false
-          prerelease: \${{ contains(env.RELEASE_TAG, '-beta.') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-beta.') }}
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
 
       - name: Publish SHA-256 checksums
         shell: pwsh
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File | Select-Object -First 1
