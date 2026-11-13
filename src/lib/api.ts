@@ -32,6 +32,8 @@ import type {
   WorkspaceListing,
   WorkspaceFile,
   WorkspaceWriteResult,
+  WorkspaceChangeProposal,
+  PermissionAuditEvent,
   WorkspaceSearchResult
 } from "./types";
 
@@ -102,8 +104,16 @@ export const api = {
     invoke<WorkspaceListing>("list_workspace_directory", { sessionId, relativePath }),
   readWorkspaceFile: (sessionId: string, relativePath: string) =>
     invoke<WorkspaceFile>("read_workspace_file", { sessionId, relativePath }),
-  writeWorkspaceFile: (sessionId: string, relativePath: string, content: string, expectedRevision: string) =>
-    invoke<WorkspaceWriteResult>("write_workspace_file", { sessionId, relativePath, content, expectedRevision }),
+  stageWorkspaceFileChange: (sessionId: string, relativePath: string, content: string, expectedRevision: string) =>
+    invoke<WorkspaceChangeProposal>("stage_workspace_file_change", { sessionId, relativePath, content, expectedRevision }),
+  applyWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<WorkspaceWriteResult>("apply_workspace_file_change", { sessionId, proposalId }),
+  undoWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<WorkspaceWriteResult>("undo_workspace_file_change", { sessionId, proposalId }),
+  cancelWorkspaceFileChange: (sessionId: string, proposalId: string) =>
+    invoke<void>("cancel_workspace_file_change", { sessionId, proposalId }),
+  permissionAuditLog: (sessionId: string) =>
+    invoke<PermissionAuditEvent[]>("permission_audit_log", { sessionId }),
   searchWorkspace: (sessionId: string, query: string) =>
     invoke<WorkspaceSearchResult>("search_workspace", { sessionId, query }),
   inspectModel: (path: string) => invoke<ModelMetadata>("inspect_model", { path }),

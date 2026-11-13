@@ -44,7 +44,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] Read-only agent planner with persisted task lifecycle and approval states; no execution worker is enabled.
 - [x] Read-only project snapshot planning with bounded source inventory and structured plan validation.
 - [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
-- [ ] Diff-aware file tools, undo, and conflict detection.
+- [x] Manual workspace diff previews, explicit apply/discard, revision conflict checks, and guarded undo (bounded in-memory proposal history).
 - [ ] Git status/history and isolated worktrees.
 - [x] Project-scoped memory records with bounded lexical retrieval; embedding and source-revision freshness ranking remain future work.
 - [x] Standard SKILL.md discovery and bounded manifest loading; MCP extension host remains deferred.
@@ -53,7 +53,8 @@ This roadmap records implementation status rather than implying the full product
 
 - [x] Revocable in-memory workspace read/write grants.
 - [x] Per-session permission broker with read-only defaults, explicit scope grants, revocation, and process-restart expiry.
-- [ ] General permission broker for agent tools, execution, network, and extensions.
+- [x] General operation-aware scope broker with bounded resource-tagged audit decisions; path-specific policy remains enforced by owning services.
+- [ ] Durable audit/event persistence and resource-specific permission constraints.
 - [ ] Windows AppContainer/LPAC execution worker feasibility validation.
 - [ ] Restricted token, Job Object and process mitigation policies.
 - [ ] Handle-relative, reparse-point-safe file service and race-resistant operations.

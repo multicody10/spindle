@@ -113,6 +113,27 @@ export interface WorkspaceWriteResult {
   bytesWritten: number;
   revision: string;
 }
+export interface WorkspaceChangeProposal {
+  id: string;
+  relativePath: string;
+  baseRevision: string;
+  proposedRevision: string;
+  diff: string;
+  addedLines: number;
+  removedLines: number;
+  status: "pending" | "applied" | "undone" | "cancelled";
+  createdAtUnixMs: number;
+}
+export interface PermissionAuditEvent {
+  sessionId: string;
+  projectId: string;
+  operation: string;
+  scope: PermissionScope | null;
+  resource: string;
+  allowed: boolean;
+  reason: string | null;
+  timestampUnixMs: number;
+}
 
 export interface WorkspaceSearchMatch {
   relativePath: string;

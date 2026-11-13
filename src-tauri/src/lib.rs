@@ -422,16 +422,50 @@ fn grant_workspace_access(
     path: String,
     allow_write: bool,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceGrant, String> {
-    workspace.grant(path, allow_write)
+    let previous = workspace.status()?.map(|grant| grant.session_id);
+    let grant = workspace.grant(path, allow_write)?;
+    if let Some(previous_id) = previous {
+        if previous_id != grant.session_id {
+            let _ = permissions.revoke_all(&previous_id);
+        }
+    }
+    let registration = permissions
+        .register_session(grant.session_id.clone(), grant.root_path.clone())
+        .and_then(|_| {
+            if allow_write {
+                permissions.grant(
+                    &grant.session_id,
+                    &[permissions::PermissionScope::ProjectWrite],
+                )?;
+            }
+            Ok(())
+        });
+    if let Err(error) = registration {
+        let _ = workspace.revoke(&grant.session_id);
+        let _ = permissions.revoke_all(&grant.session_id);
+        return Err(error);
+    }
+    Ok(grant)
 }
 
 #[tauri::command]
 fn revoke_workspace_access(
     session_id: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
-    workspace.revoke(&session_id)
+    workspace.revoke(&session_id)?;
+    permissions.revoke_all(&session_id)
+}
+
+#[tauri::command]
+fn permission_audit_log(
+    session_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<Vec<permissions::PermissionAuditEvent>, String> {
+    permissions.audit_log(&session_id)
 }
 
 #[tauri::command]
@@ -439,7 +473,9 @@ async fn list_workspace_directory(
     session_id: String,
     relative_path: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceListing, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, &relative_path)?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.list_directory(&session_id, &relative_path))
         .await
@@ -451,7 +487,9 @@ async fn read_workspace_file(
     session_id: String,
     relative_path: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceFile, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, &relative_path)?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.read_file(&session_id, &relative_path))
         .await
@@ -459,19 +497,61 @@ async fn read_workspace_file(
 }
 
 #[tauri::command]
-async fn write_workspace_file(
+async fn stage_workspace_file_change(
     session_id: String,
     relative_path: String,
     content: String,
     expected_revision: String,
     workspace: State<'_, workspace::WorkspaceManager>,
-) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceChangeProposal, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangePropose, &relative_path)?;
     let manager = workspace.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        manager.write_file(&session_id, &relative_path, content, &expected_revision)
-    })
-    .await
-    .map_err(|error| format!("Workspace write task failed: {error}"))?
+    tokio::task::spawn_blocking(move || manager.stage_file_change(&session_id, &relative_path, content, &expected_revision))
+        .await
+        .map_err(|error| format!("Workspace change staging task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn apply_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangeApply, &proposal_id)?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.apply_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change apply task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn undo_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<workspace::WorkspaceWriteResult, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangeUndo, &proposal_id)?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.undo_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change undo task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn cancel_workspace_file_change(
+    session_id: String,
+    proposal_id: String,
+    workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<(), String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::FileChangePropose, &proposal_id)?;
+    let manager = workspace.inner().clone();
+    tokio::task::spawn_blocking(move || manager.cancel_file_change(&session_id, &proposal_id))
+        .await
+        .map_err(|error| format!("Workspace change discard task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -479,7 +559,9 @@ async fn search_workspace(
     session_id: String,
     query: String,
     workspace: State<'_, workspace::WorkspaceManager>,
+    permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<workspace::WorkspaceSearchResult, String> {
+    permissions.authorize(&session_id, permissions::PermissionOperation::WorkspaceRead, "")?;
     let manager = workspace.inner().clone();
     tokio::task::spawn_blocking(move || manager.search(&session_id, &query))
         .await
@@ -866,7 +948,11 @@ pub fn run() {
             revoke_workspace_access,
             list_workspace_directory,
             read_workspace_file,
-            write_workspace_file,
+            stage_workspace_file_change,
+            apply_workspace_file_change,
+            undo_workspace_file_change,
+            cancel_workspace_file_change,
+            permission_audit_log,
             search_workspace,
             managed_runtime_status,
             install_llama_runtime,

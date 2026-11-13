@@ -16,7 +16,8 @@ Spindle is the successor project to Rivet, designed around a Rust/Tauri applicat
 - Discover Ollama, LM Studio, and Spindle-managed llama.cpp endpoints, list available models, and stream local chat responses.
 - Install pinned Windows x64 llama.cpp CPU, Vulkan, or NVIDIA CUDA 12.4 builds after size and SHA-256 verification, then launch and stop a GGUF model through a managed loopback server.
 - Browse GGUF models from `Documents/Spindle/Models`, LM Studio's active download folder (including legacy `.cache/lm-studio/models` installs), GPT4All Desktop/Python folders, Jan's `data/llamacpp/models` folder, and the Hugging Face Hub cache. File symlinks in Hugging Face snapshots are supported without following linked directories.
-- Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded file browsing, text search, and editing.
+- Grant a project directory to a temporary workspace session with read-only access by default; optionally grant file writes and use bounded browsing/search plus diff preview, explicit apply/discard, and revision-guarded undo.
+- Route workspace operations through the shared permission broker, which records bounded resource-tagged decisions and expires grants on application restart.
 - Register projects and maintain independent sessions, saved messages, structured plans, task events, and approval state in SQLite.
 - Generate bounded read-only project plans through Ollama, LM Studio, or Spindle-managed llama.cpp; approvals record intent but never execute the plan.
 - Discover standard Agent Skills from project and global SKILL.md directories; explicitly referenced skills are added to planner context without adding permissions.

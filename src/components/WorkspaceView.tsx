@@ -3,7 +3,9 @@ import { api } from "../lib/api";
 import type {
   WorkspaceGrant,
   WorkspaceListing,
-  WorkspaceSearchResult
+  WorkspaceSearchResult,
+  WorkspaceChangeProposal,
+  PermissionAuditEvent
 } from "../lib/types";
 
 const formatBytes = (bytes: number | null): string => {
@@ -33,6 +35,9 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
   const [selectedRevision, setSelectedRevision] = useState("");
   const [editorContent, setEditorContent] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [proposal, setProposal] = useState<WorkspaceChangeProposal | null>(null);
+  const [lastApplied, setLastApplied] = useState<WorkspaceChangeProposal | null>(null);
+  const [audit, setAudit] = useState<PermissionAuditEvent[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<WorkspaceSearchResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,10 +69,14 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       if (active) {
         setRootPath(active.rootPath);
         setAllowWrite(active.canWrite);
+        setAudit(await api.permissionAuditLog(active.sessionId));
         await loadDirectory(active, "");
         setNotice("Temporary workspace grant is active for this application session.");
       } else {
         setListing(null);
+        setProposal(null);
+        setLastApplied(null);
+        setAudit([]);
         setSelectedPath("");
         setSelectedRevision("");
         setEditorContent("");
@@ -94,6 +103,9 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       setGrant(next);
       setRootPath(next.rootPath);
       setSearchResults(null);
+      setProposal(null);
+      setLastApplied(null);
+      setAudit(await api.permissionAuditLog(next.sessionId));
       await loadDirectory(next, "");
       setNotice(next.canWrite
         ? "Read and write access granted until this application session ends or access is revoked."
@@ -120,6 +132,9 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       setEditorContent("");
       setDirty(false);
       setSearchResults(null);
+      setProposal(null);
+      setLastApplied(null);
+      setAudit([]);
       setNotice("Workspace access revoked.");
       onAccessChange?.();
     } catch (reason) {
@@ -130,7 +145,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
   };
 
   const openFile = async (relativePath: string) => {
-    if (!grant || dirty) {
+    if (!grant || dirty || proposal) {
       if (dirty) setError("Save your edits or discard them before opening another file.");
       return;
     }
@@ -140,6 +155,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
       const file = await api.readWorkspaceFile(grant.sessionId, relativePath);
       setSelectedPath(file.relativePath);
       setEditorContent(file.content);
+      setProposal(null);
       setSelectedRevision(file.revision);
       setDirty(false);
       setNotice("Opened " + file.relativePath + " · " + formatBytes(file.sizeBytes));
@@ -166,16 +182,77 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
   };
 
   const saveFile = async () => {
-    if (!grant?.canWrite || !selectedPath || !dirty) return;
+    if (!grant?.canWrite || !selectedPath || !dirty || proposal) return;
     setBusy(true);
     setError(null);
     try {
-      const saved = await api.writeWorkspaceFile(grant.sessionId, selectedPath, editorContent, selectedRevision);
-      setSelectedRevision(saved.revision);
-      setDirty(false);
-      setNotice("Saved " + saved.relativePath + " · " + formatBytes(saved.bytesWritten));
+      const staged = await api.stageWorkspaceFileChange(
+        grant.sessionId, selectedPath, editorContent, selectedRevision
+      );
+      setProposal(staged);
+      setAudit(await api.permissionAuditLog(grant.sessionId));
+      setNotice("Review the diff before applying " + staged.relativePath + ".");
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyProposal = async () => {
+    if (!grant || !proposal || proposal.status !== "pending") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const applied = await api.applyWorkspaceFileChange(grant.sessionId, proposal.id);
+      setSelectedRevision(applied.revision);
+      setDirty(false);
+      setLastApplied({ ...proposal, status: "applied" });
+      setProposal(null);
+      setAudit(await api.permissionAuditLog(grant.sessionId));
+      setNotice("Applied reviewed change to " + applied.relativePath + ".");
+    } catch (reason) {
+      setError(String(reason));
+      setAudit(await api.permissionAuditLog(grant.sessionId));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const discardProposal = async () => {
+    if (!grant || !proposal) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cancelWorkspaceFileChange(grant.sessionId, proposal.id);
+      setProposal(null);
+      setAudit(await api.permissionAuditLog(grant.sessionId));
+      setNotice("Staged change discarded. No file was changed.");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const undoLastApplied = async () => {
+    if (!grant || !lastApplied) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const undone = await api.undoWorkspaceFileChange(grant.sessionId, lastApplied.id);
+      setLastApplied(null);
+      if (selectedPath === undone.relativePath) {
+        const file = await api.readWorkspaceFile(grant.sessionId, undone.relativePath);
+        setEditorContent(file.content);
+        setSelectedRevision(file.revision);
+        setDirty(false);
+      }
+      setAudit(await api.permissionAuditLog(grant.sessionId));
+      setNotice("Undid the most recent Spindle change to " + undone.relativePath + ".");
+    } catch (reason) {
+      setError(String(reason));
+      setAudit(await api.permissionAuditLog(grant.sessionId));
     } finally {
       setBusy(false);
     }
@@ -189,10 +266,15 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
     setBusy(true);
     setError(null);
     try {
+      if (proposal) {
+        await api.cancelWorkspaceFileChange(grant.sessionId, proposal.id);
+        setProposal(null);
+      }
       const file = await api.readWorkspaceFile(grant.sessionId, selectedPath);
       setEditorContent(file.content);
       setSelectedRevision(file.revision);
       setDirty(false);
+      setAudit(await api.permissionAuditLog(grant.sessionId));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -201,7 +283,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
   };
 
   const navigateUp = () => {
-    if (!currentDirectory || dirty) {
+    if (!currentDirectory || dirty || proposal) {
       if (dirty) setError("Save your edits or discard them before changing directories.");
       return;
     }
@@ -269,7 +351,7 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
           <section className="panel workspace-browser">
             <div className="workspace-pane-heading">
               <div><h3>Project files</h3><span>{listing?.entries.length ?? 0} entries</span></div>
-              <button className="button subtle" onClick={() => void loadDirectory(grant, currentDirectory)} disabled={busy || dirty}>Refresh</button>
+              <button className="button subtle" onClick={() => void loadDirectory(grant, currentDirectory)} disabled={busy || dirty || !!proposal}>Refresh</button>
             </div>
             <div className="workspace-breadcrumbs">
               <button onClick={() => void loadDirectory(grant, "")} disabled={busy || dirty}>ROOT</button>
@@ -313,16 +395,36 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
                   value={editorContent}
                   onChange={(event) => { setEditorContent(event.target.value); setDirty(true); }}
                   spellCheck={false}
-                  disabled={!grant.canWrite || busy}
+                  disabled={!grant.canWrite || busy || !!proposal}
                   aria-label={"Editor for " + selectedPath}
                 />
                 <div className="workspace-editor-actions">
-                  <span>{grant.canWrite ? "Changes are written only after Save." : "Read-only grant. Regrant with file writes enabled to edit."}</span>
+                  <span>{grant.canWrite ? "Review the diff before applying any file change." : "Read-only grant. Regrant with file writes enabled to edit."}</span>
                   <div>
-                    {dirty && <button className="button subtle" onClick={() => void discardChanges()} disabled={busy}>Discard</button>}
-                    <button className="button primary" onClick={() => void saveFile()} disabled={!grant.canWrite || !dirty || busy}>Save file</button>
+                    {(dirty || proposal) && <button className="button subtle" onClick={() => void discardChanges()} disabled={busy}>Discard</button>}
+                    <button className="button primary" onClick={() => void saveFile()} disabled={!grant.canWrite || !dirty || busy || !!proposal}>Review change</button>
                   </div>
                 </div>
+                {proposal && (
+                  <div className="workspace-change-review">
+                    <div className="workspace-change-heading">
+                      <strong>Review proposed change</strong>
+                      <span>{proposal.addedLines} additions · {proposal.removedLines} removals</span>
+                    </div>
+                    <pre>{proposal.diff}</pre>
+                    <div className="workspace-change-actions">
+                      <button className="button subtle" onClick={() => void discardProposal()} disabled={busy}>Discard preview</button>
+                      <button className="button primary" onClick={() => void applyProposal()} disabled={busy}>Apply reviewed change</button>
+                    </div>
+                    <p className="footnote">Nothing is written until you explicitly apply this preview. Applying requires the original file revision to remain unchanged.</p>
+                  </div>
+                )}
+                {lastApplied && (
+                  <div className="workspace-last-change">
+                    <span>Last applied: <strong>{lastApplied.relativePath}</strong></span>
+                    <button className="button subtle" onClick={() => void undoLastApplied()} disabled={busy}>Undo change</button>
+                  </div>
+                )}
               </>
             ) : (
               <div className="workspace-empty workspace-editor-empty">
@@ -358,6 +460,26 @@ function WorkspaceView({ onAccessChange }: WorkspaceViewProps) {
               ))}
               {searchResults.matches.length === 0 && <p className="workspace-empty">No matches found.</p>}
               <small>Scanned {searchResults.filesScanned.toLocaleString()} files · {formatBytes(searchResults.bytesScanned)}{searchResults.truncated ? " · Results capped" : ""}</small>
+            </div>
+          )}
+        </section>
+      )}
+
+      {grant && (
+        <section className="panel workspace-audit-panel">
+          <div className="workspace-pane-heading">
+            <div><h3>Permission audit</h3><span>Recent broker decisions for this temporary workspace session</span></div>
+          </div>
+          {audit.length === 0 ? <p className="workspace-empty">No permission decisions recorded yet.</p> : (
+            <div className="workspace-audit-list">
+              {audit.slice(-8).reverse().map((event, index) => (
+                <div key={event.timestampUnixMs + ":" + event.operation + ":" + index}>
+                  <span className={event.allowed ? "allowed" : "denied"}>{event.allowed ? "ALLOWED" : "DENIED"}</span>
+                  <strong>{event.operation.replaceAll("_", " ")}</strong>
+                  <code>{event.resource || event.scope || "session"}</code>
+                  <small>{new Date(event.timestampUnixMs).toLocaleTimeString()}</small>
+                </div>
+              ))}
             </div>
           )}
         </section>

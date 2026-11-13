@@ -21,8 +21,8 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - The shared inference manager admits at most one active generation per application session and bounds total concurrency to the configured llama.cpp parallel slots. Each session retains an assigned server slot while it remains in the in-memory LRU set; chat requests pin `id_slot` and enable `cache_prompt` for KV-prefix reuse. Slot eviction erases the old server cache before reuse. Excess requests wait in a bounded, cancellable queue; stopping or replacing the model is rejected while requests are active or queued.
 - Chat streams provider tokens back to the UI through scoped Tauri events; each request can be cancelled independently.
 - Chat history exists only in the active window and is not persisted.
-- Workspace access is granted explicitly for one project root and one application session. Read access is automatic within that grant; writes require a separate user-selected permission.
-- Workspace file tools accept relative paths only, reject parent traversal and links, exclude common secret-file names, limit text reads/writes to 1 MiB, cap directory listings at 500 entries, and bound recursive text search.
+- Workspace access is granted explicitly for one project root and one temporary application session. Its session is registered with the shared permission broker: ProjectRead is the baseline, and ProjectWrite is added only when the user enables file writes. Broker decisions are operation-aware and resource-tagged in a bounded in-memory audit log.
+- Workspace file tools accept relative paths only, reject parent traversal and links, exclude common secret-file names, limit text reads and proposed writes to 1 MiB, cap directory listings at 500 entries, and bound recursive text search. File changes are staged as bounded diff previews, then explicitly applied or discarded; an applied change can be undone only while its post-apply revision remains unchanged. Proposal history and original text are bounded process memory, not durable checkpoints.
 - Workspace grants are an application-level IPC gate, not an OS sandbox. Operations are not yet handle-relative and do not claim full race-resistant protection against every Windows reparse-point/TOCTOU attack.
 - No shell execution, autonomous file edits, MCP tool hosting, or agent loop is exposed in this milestone. The llama.cpp server is not started with its agent, tools, MCP, or filesystem features.
 
@@ -31,11 +31,11 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 The next architecture layers are:
 
 1. Provider capability registry and managed runtime adapters, extending the existing Ollama and LM Studio streaming chat boundary.
-2. [x] Central inference runtime manager for one shared loaded weight set, per-session request leases, a bounded queue, and configured parallel-slot admission. Persistent KV-cache reuse across turns remains future work.
+2. [x] Central inference runtime manager for one shared loaded weight set, per-session request leases, a bounded queue, and configured parallel-slot admission. Per-session KV-prefix reuse is implemented in server memory; disk-backed KV restoration across runtime restarts remains future work.
 3. Session coordinator and project-scoped persistence.
-4. General permission broker with policy evaluation independent of model output; the current workspace grant manager is the initial file-access slice.
+4. [x] General scope permission broker with operation-aware authorization and bounded audit events; path/resource restrictions remain enforced by each owning service.
 5. Restricted execution worker with Windows AppContainer/LPAC where compatible, plus resource and process-tree controls.
-6. Complete the file operation service with handle-relative/reparse-aware operations, atomic writes, previews, and undo.
+6. [x] Manual workspace stage/apply/discard and revision-guarded undo flow. [ ] Handle-relative/reparse-aware file service, durable checkpoints, and race resistance.
 7. Agent orchestration and verifiable tool-result state machine.
 8. Secure updater and release verification.
 

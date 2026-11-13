@@ -26,16 +26,16 @@
 - Model inspection is read-only and uses bounded GGUF metadata parsing.
 - Database inputs are parameterized SQL statements.
 - Settings are validated in Rust before being saved.
-- Workspace access is granted only by an explicit user action and is held in memory for the current application session; it can be revoked.
+- Workspace access is granted only by an explicit user action and is held in memory for the current application session; it can be revoked. The shared permission broker applies operation-to-scope checks and records bounded resource-tagged decisions.
 - Workspace reads and writes use relative paths under a canonicalized root, reject parent traversal and links, filter common secret files, and enforce per-operation size/count limits.
-- File writes require a separate `canWrite` grant; default grants are read-only.
+- File changes require a separate `canWrite` grant; default grants are read-only. Workspace edits are staged as diff previews and applied only after an explicit user action, with SHA-256 conflict checks and guarded undo. Proposal history and audit events are bounded process memory, not durable logs.
 - Release workflows require updater signing material and refuse to proceed when it is absent.
 - GitHub Actions use read-only permissions for validation, pinned action revisions, and a separate write-enabled tag release workflow.
 
 ## Known gaps
 
 - No AppContainer/LPAC execution worker exists.
-- A narrow in-process workspace read/write grant gate exists, but no general agent permission broker, network isolation, restricted token, or process Job Object policy exists.
+- The in-process broker provides session scopes and operation-aware auditing, but does not yet enforce resource-specific ACLs. No network isolation, restricted token, AppContainer/LPAC worker, or process Job Object policy exists.
 - The workspace file service is not yet handle-relative and has not been proven race-resistant against all Windows reparse-point/TOCTOU conditions.
 - Spindle can send chat to already-running Ollama or LM Studio processes over loopback. Those provider processes remain externally managed.
 - Spindle can install pinned llama.cpp Windows x64 CPU/Vulkan archives after SHA-256 verification, then launch one managed llama-server.exe with fixed arguments and a loopback-only bind address. It does not enable llama.cpp agent tools, MCP, or filesystem access.

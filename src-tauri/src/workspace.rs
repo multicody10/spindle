@@ -1,6 +1,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -21,6 +22,7 @@ const MAX_SEARCH_RESULTS: usize = 100;
 const MAX_SEARCH_DEPTH: usize = 16;
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
+static CHANGE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,9 +92,32 @@ struct WorkspaceSession {
     root: PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChangeProposal {
+    pub id: String,
+    pub relative_path: String,
+    pub base_revision: String,
+    pub proposed_revision: String,
+    pub diff: String,
+    pub added_lines: usize,
+    pub removed_lines: usize,
+    pub status: String,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone)]
+struct StoredFileChange {
+    session_id: String,
+    proposal: WorkspaceChangeProposal,
+    original_content: String,
+    proposed_content: String,
+}
+
 #[derive(Clone, Default)]
 pub struct WorkspaceManager {
     active: Arc<Mutex<Option<WorkspaceSession>>>,
+    changes: Arc<Mutex<BTreeMap<String, StoredFileChange>>>,
 }
 
 impl WorkspaceManager {
@@ -139,7 +164,15 @@ impl WorkspaceManager {
             .active
             .lock()
             .map_err(|_| "The workspace permission state is unavailable.".to_string())?;
+        let previous_id = active.as_ref().map(|value| value.grant.session_id.clone());
         *active = Some(session);
+        drop(active);
+        if let Some(previous_id) = previous_id {
+            self.changes
+                .lock()
+                .map_err(|_| "The workspace change store is unavailable.".to_string())?
+                .retain(|_, change| change.session_id != previous_id);
+        }
         Ok(grant)
     }
 
@@ -148,14 +181,23 @@ impl WorkspaceManager {
             .active
             .lock()
             .map_err(|_| "The workspace permission state is unavailable.".to_string())?;
-        match active.as_ref() {
-            Some(session) if session.grant.session_id == session_id => {
-                *active = None;
+        let matches = active
+            .as_ref()
+            .is_some_and(|session| session.grant.session_id == session_id);
+        if !matches {
+            return if active.is_some() {
+                Err("The workspace session identifier is stale.".into())
+            } else {
                 Ok(())
-            }
-            Some(_) => Err("The workspace session identifier is stale.".into()),
-            None => Ok(()),
+            };
         }
+        *active = None;
+        drop(active);
+        self.changes
+            .lock()
+            .map_err(|_| "The workspace change store is unavailable.".to_string())?
+            .retain(|_, change| change.session_id != session_id);
+        Ok(())
     }
 
     fn session(&self, session_id: &str, require_write: bool) -> Result<WorkspaceSession, String> {
@@ -279,102 +321,172 @@ impl WorkspaceManager {
         })
     }
 
-    pub fn write_file(
+    pub fn stage_file_change(
         &self,
         session_id: &str,
         relative_path: &str,
         content: String,
         expected_revision: &str,
-    ) -> Result<WorkspaceWriteResult, String> {
+    ) -> Result<WorkspaceChangeProposal, String> {
         let session = self.session(session_id, true)?;
-        if content.len() > MAX_FILE_BYTES {
-            return Err("Workspace file writes are limited to 1 MiB.".into());
-        }
-        if content.contains('\0') {
-            return Err("Binary content is not accepted by the workspace text editor.".into());
+        if content.len() > MAX_FILE_BYTES || content.contains('\0') {
+            return Err("Workspace changes must be valid UTF-8 text no larger than 1 MiB.".into());
         }
         if relative_path.trim().is_empty() || is_sensitive_path(Path::new(relative_path)) {
             return Err("A valid, non-sensitive project file path is required.".into());
         }
-
-        let relative = validate_relative_path(relative_path, false)?;
-        let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
-        let parent = resolve_directory(&session, &parent_relative.to_string_lossy())?;
-        let file_name = relative
-            .file_name()
-            .ok_or_else(|| "A file name is required.".to_string())?;
-        let target = parent.join(file_name);
-
-        if expected_revision.len() != 64
-            || !expected_revision
-                .chars()
-                .all(|character| character.is_ascii_hexdigit())
-        {
-            return Err(
-                "The file revision token is invalid. Reopen the file before saving.".into(),
-            );
+        validate_revision(expected_revision)?;
+        let path = resolve_file(&session, relative_path)?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Could not inspect the selected workspace file: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_FILE_BYTES as u64 {
+            return Err("Workspace changes are limited to regular text files no larger than 1 MiB.".into());
         }
-        match fs::symlink_metadata(&target) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err("Workspace writes are limited to regular files, not links or special files.".into());
-                }
-                if metadata.len() > MAX_FILE_BYTES as u64 {
-                    return Err("The selected file exceeds the 1 MiB workspace write limit.".into());
-                }
-                let canonical = fs::canonicalize(&target)
-                    .map_err(|error| format!("Could not resolve the target file: {error}"))?;
-                ensure_inside_root(&session.root, &canonical)?;
-                let current = read_bounded(&canonical, MAX_FILE_BYTES).map_err(|error| {
-                    format!("Could not verify the current file revision: {error}")
-                })?;
-                let current_revision = format!("{:x}", Sha256::digest(&current));
-                if current_revision != expected_revision {
-                    return Err("This file changed outside Spindle after it was opened. Reopen it and reapply your edits to avoid overwriting newer work.".into());
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(
-                    "The selected file no longer exists. Refresh the workspace before saving."
-                        .into(),
-                );
-            }
-            Err(error) => return Err(format!("Could not inspect the target file: {error}")),
+        let original_bytes = read_bounded(&path, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not read the current file revision: {error}"))?;
+        let base_revision = format!("{:x}", Sha256::digest(&original_bytes));
+        if base_revision != expected_revision {
+            return Err("This file changed outside Spindle after it was opened. Reopen it before staging a change.".into());
+        }
+        let original_content = String::from_utf8(original_bytes)
+            .map_err(|_| "The selected file is not valid UTF-8 text.".to_string())?;
+        if original_content == content {
+            return Err("The proposed file content is identical to the current file.".into());
         }
 
-        let temporary_name = format!(
-            ".spindle-tmp-{}-{}",
-            std::process::id(),
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        let temporary = parent.join(temporary_name);
-        let write_result: Result<(), String> = (|| {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)
-                .map_err(|error| format!("Could not create a temporary workspace file: {error}"))?;
-            file.write_all(content.as_bytes())
-                .map_err(|error| format!("Could not write the workspace file: {error}"))?;
-            file.sync_all()
-                .map_err(|error| format!("Could not flush the workspace file: {error}"))?;
-            drop(file);
-            fs::rename(&temporary, &target).map_err(|error| {
-                format!("Could not atomically replace the workspace file: {error}")
-            })?;
-            Ok(())
-        })();
-
-        if write_result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        write_result?;
-
-        Ok(WorkspaceWriteResult {
+        let proposed_revision = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let (diff, added_lines, removed_lines) =
+            build_diff(relative_path, &original_content, &content);
+        let timestamp = now_unix_ms();
+        let proposal = WorkspaceChangeProposal {
+            id: format!(
+                "change-{:x}-{:x}-{:x}",
+                std::process::id(),
+                timestamp,
+                CHANGE_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ),
             relative_path: relative_path.replace('\\', "/"),
-            bytes_written: content.len(),
-            revision: format!("{:x}", Sha256::digest(content.as_bytes())),
+            base_revision,
+            proposed_revision,
+            diff,
+            added_lines,
+            removed_lines,
+            status: "pending".into(),
+            created_at_unix_ms: timestamp,
+        };
+        let stored = StoredFileChange {
+            session_id: session_id.to_owned(),
+            proposal: proposal.clone(),
+            original_content,
+            proposed_content: content,
+        };
+        let mut changes = self
+            .changes
+            .lock()
+            .map_err(|_| "The workspace change store is unavailable.".to_string())?;
+        if changes.values().any(|change| {
+            change.session_id == session_id && change.proposal.status == "pending"
+        }) {
+            return Err("Review or discard the existing staged change before creating another.".into());
+        }
+        if changes.len() >= 100 {
+            return Err("The workspace change history is full. Restart Spindle to clear its temporary history.".into());
+        }
+        changes.insert(proposal.id.clone(), stored);
+        Ok(proposal)
+    }
+
+    pub fn apply_file_change(
+        &self,
+        session_id: &str,
+        proposal_id: &str,
+    ) -> Result<WorkspaceWriteResult, String> {
+        let session = self.session(session_id, true)?;
+        let mut changes = self
+            .changes
+            .lock()
+            .map_err(|_| "The workspace change store is unavailable.".to_string())?;
+        let change = changes
+            .get_mut(proposal_id)
+            .filter(|change| change.session_id == session_id)
+            .ok_or_else(|| "The staged file change does not exist for this workspace session.".to_string())?;
+        if change.proposal.status != "pending" {
+            return Err("Only a pending file change can be applied.".into());
+        }
+        let path = resolve_file(&session, &change.proposal.relative_path)?;
+        let current = read_bounded(&path, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not verify the current file before applying the change: {error}"))?;
+        let revision = format!("{:x}", Sha256::digest(&current));
+        if revision != change.proposal.base_revision {
+            return Err("The file changed after this preview was created. Discard the preview, reopen the file, and stage the change again.".into());
+        }
+        atomic_replace(
+            &session.root,
+            &path,
+            change.proposed_content.as_bytes(),
+            &change.proposal.base_revision,
+        )?;
+        change.proposal.status = "applied".into();
+        Ok(WorkspaceWriteResult {
+            relative_path: change.proposal.relative_path.clone(),
+            bytes_written: change.proposed_content.len(),
+            revision: change.proposal.proposed_revision.clone(),
         })
+    }
+
+    pub fn undo_file_change(
+        &self,
+        session_id: &str,
+        proposal_id: &str,
+    ) -> Result<WorkspaceWriteResult, String> {
+        let session = self.session(session_id, true)?;
+        let mut changes = self
+            .changes
+            .lock()
+            .map_err(|_| "The workspace change store is unavailable.".to_string())?;
+        let change = changes
+            .get_mut(proposal_id)
+            .filter(|change| change.session_id == session_id)
+            .ok_or_else(|| "The applied file change does not exist for this workspace session.".to_string())?;
+        if change.proposal.status != "applied" {
+            return Err("Only an applied file change can be undone.".into());
+        }
+        let path = resolve_file(&session, &change.proposal.relative_path)?;
+        let current = read_bounded(&path, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not verify the file before undo: {error}"))?;
+        let revision = format!("{:x}", Sha256::digest(&current));
+        if revision != change.proposal.proposed_revision {
+            return Err("The file changed after Spindle applied this change. Undo was refused to protect newer edits.".into());
+        }
+        atomic_replace(
+            &session.root,
+            &path,
+            change.original_content.as_bytes(),
+            &change.proposal.proposed_revision,
+        )?;
+        change.proposal.status = "undone".into();
+        Ok(WorkspaceWriteResult {
+            relative_path: change.proposal.relative_path.clone(),
+            bytes_written: change.original_content.len(),
+            revision: change.proposal.base_revision.clone(),
+        })
+    }
+
+    pub fn cancel_file_change(&self, session_id: &str, proposal_id: &str) -> Result<(), String> {
+        let _session = self.session(session_id, true)?;
+        let mut changes = self
+            .changes
+            .lock()
+            .map_err(|_| "The workspace change store is unavailable.".to_string())?;
+        let change = changes
+            .get_mut(proposal_id)
+            .filter(|change| change.session_id == session_id)
+            .ok_or_else(|| "The staged file change does not exist for this workspace session.".to_string())?;
+        if change.proposal.status != "pending" {
+            return Err("Only a pending file change can be discarded.".into());
+        }
+        change.proposal.status = "cancelled".into();
+        Ok(())
     }
 
     pub fn search(&self, session_id: &str, query: &str) -> Result<WorkspaceSearchResult, String> {
@@ -487,6 +599,136 @@ impl WorkspaceManager {
             truncated,
         })
     }
+}
+
+fn validate_revision(revision: &str) -> Result<(), String> {
+    if revision.len() != 64
+        || !revision.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err("The file revision token is invalid. Reopen the file before staging a change.".into());
+    }
+    Ok(())
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn build_diff(path: &str, original: &str, proposed: &str) -> (String, usize, usize) {
+    const MAX_DIFF_LINES: usize = 300;
+    const MAX_DIFF_BYTES: usize = 64 * 1024;
+    let old_lines = original.split('\n').collect::<Vec<_>>();
+    let new_lines = proposed.split('\n').collect::<Vec<_>>();
+    let mut prefix = 0usize;
+    while prefix < old_lines.len()
+        && prefix < new_lines.len()
+        && old_lines[prefix] == new_lines[prefix]
+    {
+        prefix += 1;
+    }
+    let mut suffix = 0usize;
+    while suffix < old_lines.len().saturating_sub(prefix)
+        && suffix < new_lines.len().saturating_sub(prefix)
+        && old_lines[old_lines.len() - 1 - suffix] == new_lines[new_lines.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let removed = old_lines.len().saturating_sub(prefix + suffix);
+    let added = new_lines.len().saturating_sub(prefix + suffix);
+    let context_start = prefix.saturating_sub(3);
+    let old_end = old_lines.len().saturating_sub(suffix);
+    let new_end = new_lines.len().saturating_sub(suffix);
+    let suffix_context = suffix.min(3);
+    let mut output = format!(
+        "--- a/{path}\n+++ b/{path}\n@@ -{},{} +{},{} @@\n",
+        context_start + 1,
+        old_end.saturating_sub(context_start) + suffix_context,
+        context_start + 1,
+        new_end.saturating_sub(context_start) + suffix_context
+    );
+    for line in old_lines.iter().take(prefix).skip(context_start) {
+        output.push(' ');
+        output.push_str(line);
+        output.push('\n');
+    }
+    for line in old_lines.iter().take(old_end).skip(prefix).take(MAX_DIFF_LINES) {
+        output.push('-');
+        output.push_str(line);
+        output.push('\n');
+    }
+    for line in new_lines.iter().take(new_end).skip(prefix).take(MAX_DIFF_LINES) {
+        output.push('+');
+        output.push_str(line);
+        output.push('\n');
+    }
+    if removed > MAX_DIFF_LINES || added > MAX_DIFF_LINES {
+        output.push_str("... diff preview truncated; line counts above are exact ...\n");
+    }
+    let suffix_start = old_lines.len().saturating_sub(suffix);
+    for line in old_lines.iter().skip(suffix_start).take(3) {
+        output.push(' ');
+        output.push_str(line);
+        output.push('\n');
+    }
+    if output.len() > MAX_DIFF_BYTES {
+        output = output.chars().take(MAX_DIFF_BYTES).collect();
+        output.push_str("\n... diff preview truncated ...");
+    }
+    (output, added, removed)
+}
+
+fn atomic_replace(
+    root: &Path,
+    target: &Path,
+    content: &[u8],
+    expected_revision: &str,
+) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| "The selected workspace file has no parent directory.".to_string())?;
+    let temporary = parent.join(format!(
+        ".spindle-tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("Could not create a temporary workspace file: {error}"))?;
+        file.write_all(content)
+            .map_err(|error| format!("Could not write the workspace file: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not flush the workspace file: {error}"))?;
+        drop(file);
+
+        let metadata = fs::symlink_metadata(target)
+            .map_err(|error| format!("Could not revalidate the target file: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("Workspace replacement is limited to regular files, not links or special files.".into());
+        }
+        let canonical = fs::canonicalize(target)
+            .map_err(|error| format!("Could not revalidate the target path: {error}"))?;
+        ensure_inside_root(root, &canonical)?;
+        let current = read_bounded(&canonical, MAX_FILE_BYTES)
+            .map_err(|error| format!("Could not recheck the target revision: {error}"))?;
+        let current_revision = format!("{:x}", Sha256::digest(&current));
+        if current_revision != expected_revision {
+            return Err("The file changed immediately before replacement. The operation was aborted.".into());
+        }
+        fs::rename(&temporary, &canonical)
+            .map_err(|error| format!("Could not atomically replace the workspace file: {error}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn read_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
@@ -685,12 +927,14 @@ mod tests {
     #[test]
     fn read_only_grants_reject_writes() {
         let (manager, root, grant) = test_workspace();
+        fs::write(root.join("notes.txt"), "original").unwrap();
+        let opened = manager.read_file(&grant.session_id, "notes.txt").unwrap();
         let error = manager
-            .write_file(
+            .stage_file_change(
                 &grant.session_id,
                 "notes.txt",
                 "hello".into(),
-                &"0".repeat(64),
+                &opened.revision,
             )
             .unwrap_err();
         assert!(error.contains("not permitted"));
@@ -707,21 +951,27 @@ mod tests {
         let file = manager
             .read_file(&grant.session_id, "src-notes.txt")
             .unwrap();
-        let saved = manager
-            .write_file(
+        let proposal = manager
+            .stage_file_change(
                 &grant.session_id,
                 "src-notes.txt",
                 "updated text".into(),
                 &file.revision,
             )
             .unwrap();
+        assert_eq!(proposal.status, "pending");
+        assert!(proposal.diff.contains("-workspace text"));
+        assert_eq!(fs::read_to_string(root.join("src-notes.txt")).unwrap(), "workspace text");
+        let saved = manager.apply_file_change(&grant.session_id, &proposal.id).unwrap();
         assert_eq!(saved.revision.len(), 64);
         let updated = manager
             .read_file(&grant.session_id, "src-notes.txt")
             .unwrap();
         assert_eq!(updated.content, "updated text");
+        manager.undo_file_change(&grant.session_id, &proposal.id).unwrap();
+        assert_eq!(fs::read_to_string(root.join("src-notes.txt")).unwrap(), "workspace text");
         assert!(manager
-            .write_file(
+            .stage_file_change(
                 &grant.session_id,
                 "../escape.txt",
                 "no".into(),
@@ -743,7 +993,7 @@ mod tests {
             .unwrap();
         fs::write(root.join("conflict.txt"), "external change").unwrap();
         let error = manager
-            .write_file(
+            .stage_file_change(
                 &grant.session_id,
                 "conflict.txt",
                 "my stale edit".into(),
@@ -759,6 +1009,23 @@ mod tests {
     }
 
     #[test]
+    fn staged_changes_abort_on_external_edits_and_can_be_cancelled() {
+        let (manager, root, _) = test_workspace();
+        let grant = manager.grant(root.to_string_lossy().into_owned(), true).unwrap();
+        fs::write(root.join("conflict.txt"), "original").unwrap();
+        let opened = manager.read_file(&grant.session_id, "conflict.txt").unwrap();
+        let proposal = manager
+            .stage_file_change(&grant.session_id, "conflict.txt", "planned".into(), &opened.revision)
+            .unwrap();
+        fs::write(root.join("conflict.txt"), "newer external edit").unwrap();
+        assert!(manager.apply_file_change(&grant.session_id, &proposal.id).is_err());
+        assert_eq!(fs::read_to_string(root.join("conflict.txt")).unwrap(), "newer external edit");
+        manager.cancel_file_change(&grant.session_id, &proposal.id).unwrap();
+        assert!(manager.apply_file_change(&grant.session_id, &proposal.id).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn secret_files_are_hidden_and_cannot_be_read_or_written() {
         let (manager, root, _) = test_workspace();
         let grant = manager
@@ -770,7 +1037,7 @@ mod tests {
         assert!(manager.read_file(&grant.session_id, ".env.local").is_err());
         assert!(manager.read_file(&grant.session_id, ".ssh/id_rsa").is_err());
         assert!(manager
-            .write_file(
+            .stage_file_change(
                 &grant.session_id,
                 ".env.local",
                 "changed".into(),

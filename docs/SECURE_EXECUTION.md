@@ -1,6 +1,6 @@
 # Secure agent execution design
 
-Status: design and acceptance criteria only. No model-driven process execution is enabled in Spindle.
+Status: permission and manual reviewed-file-change foundation implemented; isolated execution remains design and acceptance criteria only. No model-driven process execution is enabled in Spindle.
 
 ## Trust boundary
 
@@ -20,7 +20,7 @@ Before enabling command or autonomous file-write tools, implement and validate a
 4. **Filesystem policy.** Give the worker a per-task scratch directory or isolated Git worktree. Start with read-only source access and a separate writable output area. Use handle-relative operations, reject reparse-point escapes, and protect against time-of-check/time-of-use races.
 5. **Network policy.** Deny outbound access by default. If a task needs network access, route it through an allowlisted broker that records destinations and requires explicit scope approval.
 6. **MCP policy.** Launch MCP stdio servers only inside the worker boundary, with an explicit tool/schema allowlist. Do not pass user environment variables or secrets by default. Require separate approval for external side effects.
-7. **Permission policy.** Project read is the baseline. Project write, process execution, network, MCP, and parallel-agent scopes are separately granted, visible, revocable, and expire on application restart. An agent plan or Skill cannot elevate itself.
+7. **Permission policy.** Project read is the baseline. Project write, process execution, network, MCP, and parallel-agent scopes are separately granted, visible, revocable, and expire on application restart. The current broker enforces operation-to-scope checks and records bounded resource-tagged decisions; it is not yet a path-level policy engine. An agent plan or Skill cannot elevate itself.
 8. **Audit and recovery.** Record append-only task events for approval, worker creation, tool request/result, cancellation, validation, and cleanup. Make worker termination and scratch cleanup idempotent.
 
 A Windows Job Object controls process lifetime and resource usage; it is not sufficient by itself to provide AppContainer filesystem or network isolation.
