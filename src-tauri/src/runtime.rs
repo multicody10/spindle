@@ -714,9 +714,10 @@ pub async fn start(
     if configuration.model_path != model_path {
         return Err("The selected model path does not match the saved configuration.".into());
     }
-    let model = fs::canonicalize(&model_path)
+    let model = PathBuf::from(crate::gguf::display_model_path(Path::new(&model_path)));
+    let model_metadata = fs::metadata(&model)
         .map_err(|error| format!("Could not resolve the selected model file: {error}"))?;
-    if !model.is_file()
+    if !model_metadata.is_file()
         || !model
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
