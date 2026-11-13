@@ -19,3 +19,25 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.42.0", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Fast incremental builds for local development and CI validation.
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 256
+
+# Tests inherit the fast development profile but omit debug info to reduce
+# compile time and artifact size.
+[profile.test]
+inherits = "dev"
+debug = 0
+incremental = true
+codegen-units = 256
+
+# Keep release builds highly optimized without enabling full or thin LTO,
+# which adds link-time work for limited benefit in this small native layer.
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
