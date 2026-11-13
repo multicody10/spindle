@@ -263,7 +263,7 @@ function ChatView({
           <div className="chat-empty">
             <div className="chat-empty-mark">✳</div>
             <strong>Your local chat workspace</strong>
-            <p>Choose a loaded model above and send a message. Responses stream as the model generates them.</p>
+            <p>Select a loaded model below and send a message. Responses stream as the model generates them.</p>
           </div>
         ) : (
           <div className="chat-message-list">
