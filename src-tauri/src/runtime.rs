@@ -1,7 +1,7 @@
 use crate::domain::ModelConfiguration;
+use crate::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::hash::sha256_hex;
 use std::{
     collections::VecDeque,
     fs::{self, File},
