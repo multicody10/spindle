@@ -185,7 +185,10 @@ async fn delete_session(
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
     let permission_session_id = session_id.clone();
-    with_project_database(&app, move |database| projects::delete_session(database, session_id)).await?;
+    with_project_database(&app, move |database| {
+        projects::delete_session(database, session_id)
+    })
+    .await?;
     permissions.revoke_all(&permission_session_id)
 }
 #[tauri::command]
@@ -285,7 +288,10 @@ async fn save_project_memory(
     app: AppHandle,
     input: projects::SaveProjectMemoryInput,
 ) -> Result<(), String> {
-    with_project_database(&app, move |database| projects::save_project_memory(database, input)).await
+    with_project_database(&app, move |database| {
+        projects::save_project_memory(database, input)
+    })
+    .await
 }
 #[tauri::command]
 async fn search_project_memory(
@@ -353,7 +359,10 @@ async fn plan_project_task(
     let database = database_path(&app)?;
     let lookup_session = input.session_id.clone();
     let project_id = input.project_id.clone();
-    let session = with_project_database(&app, move |database| projects::get_session(database, lookup_session)).await?;
+    let session = with_project_database(&app, move |database| {
+        projects::get_session(database, lookup_session)
+    })
+    .await?;
     if session.project_id != project_id {
         return Err("The selected session does not belong to this project.".into());
     }
