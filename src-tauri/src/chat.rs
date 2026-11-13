@@ -168,12 +168,7 @@ async fn read_bounded_json(response: Response, limit: u64) -> Result<Value, Stri
     }
 
     let mut response = response;
-    let mut body = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or(0)
-            .min(limit) as usize,
-    );
+    let mut body = Vec::with_capacity(response.content_length().unwrap_or(0).min(limit) as usize);
     while let Some(chunk) = response
         .chunk()
         .await
@@ -185,8 +180,7 @@ async fn read_bounded_json(response: Response, limit: u64) -> Result<Value, Stri
         body.extend_from_slice(&chunk);
     }
 
-    serde_json::from_slice(&body)
-        .map_err(|_| "Local provider returned invalid JSON.".to_string())
+    serde_json::from_slice(&body).map_err(|_| "Local provider returned invalid JSON.".to_string())
 }
 
 async fn verify_model(
@@ -309,7 +303,10 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
 
     Ok(Some(ParsedFrame {
         delta,
-        done: document.get("done").and_then(Value::as_bool).unwrap_or(false),
+        done: document
+            .get("done")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         metrics: StreamMetrics {
             prompt_tokens: document.get("prompt_eval_count").and_then(Value::as_u64),
             output_tokens: document.get("eval_count").and_then(Value::as_u64),
@@ -484,23 +481,20 @@ async fn stream_chat(
     Ok(metrics)
 }
 
-fn read_error_body(response: Response) -> impl std::future::Future<Output = String> {
-    async move {
-        let mut response = response;
-        let mut body = Vec::new();
-        while let Ok(Some(chunk)) = response.chunk().await {
-            let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(body.len());
-            if remaining == 0 {
-                break;
-            }
-            body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-            if body.len() >= MAX_ERROR_BODY_BYTES {
-                break;
-            }
+async fn read_error_body(mut response: Response) -> String {
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = response.chunk().await {
+        let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(body.len());
+        if remaining == 0 {
+            break;
         }
-        let text = String::from_utf8_lossy(&body);
-        text.chars().take(500).collect()
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        if body.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
     }
+    let text = String::from_utf8_lossy(&body);
+    text.chars().take(500).collect()
 }
 
 pub async fn run(
@@ -553,7 +547,7 @@ pub async fn run(
             .evaluation_duration_ns
             .map(|duration| duration as f64 / 1_000_000_000.0)
             .filter(|duration| *duration > 0.0)
-            .unwrap_or_else(|| elapsed.as_secs_f64());
+            .unwrap_or(elapsed.as_secs_f64());
         (seconds > 0.0).then_some(tokens as f64 / seconds)
     });
 

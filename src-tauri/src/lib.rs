@@ -50,10 +50,7 @@ async fn start_chat(
 }
 
 #[tauri::command]
-fn cancel_chat(
-    request_id: String,
-    runtime: State<'_, chat::ChatRuntime>,
-) -> bool {
+fn cancel_chat(request_id: String, runtime: State<'_, chat::ChatRuntime>) -> bool {
     if !is_valid_chat_request_id(&request_id) {
         return false;
     }
@@ -90,7 +87,11 @@ fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
     if total_bytes > 256 * 1024 {
         return Err("The combined chat history exceeds the 256 KiB request limit.".into());
     }
-    if request.messages.last().is_none_or(|message| message.role != "user") {
+    if request
+        .messages
+        .last()
+        .is_none_or(|message| message.role != "user")
+    {
         return Err("The final chat message must come from the user.".into());
     }
 

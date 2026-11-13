@@ -11,6 +11,49 @@ import type {
   LocalProviderStatus
 } from "../lib/types";
 
+const MAX_CHAT_MESSAGES = 64;
+const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
+const MAX_CHAT_HISTORY_BYTES = 256 * 1024;
+
+function boundedChatHistory(messages: ChatMessage[]): ChatMessage[] | null {
+  const encoder = new TextEncoder();
+  const history = messages.filter((message, index) =>
+    message.content.trim().length > 0 || index === messages.length - 1
+  );
+  if (history.length === 0) return null;
+
+  if (encoder.encode(history[history.length - 1].content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
+    return null;
+  }
+
+  for (let index = 0; index < history.length - 1;) {
+    if (encoder.encode(history[index].content).byteLength > MAX_CHAT_MESSAGE_BYTES) {
+      history.splice(index, 1);
+    } else {
+      index++;
+    }
+  }
+
+  const totalBytes = () => history.reduce(
+    (total, message) => total + encoder.encode(message.content).byteLength,
+    0
+  );
+
+  while (history.length > MAX_CHAT_MESSAGES || totalBytes() > MAX_CHAT_HISTORY_BYTES) {
+    const lastIndex = history.length - 1;
+    let removeIndex = history.findIndex(
+      (message, index) => index < lastIndex && message.role !== "system"
+    );
+    if (removeIndex < 0) {
+      removeIndex = history.findIndex((_, index) => index < lastIndex);
+    }
+    if (removeIndex < 0) return null;
+    history.splice(removeIndex, 1);
+  }
+
+  return history;
+}
+
 interface ChatViewProps {
   providers: LocalProviderStatus[];
   providersBusy: boolean;
@@ -84,8 +127,13 @@ function ChatView({
     if (!text || sending || !selectedProvider?.available || !modelId) return;
 
     const id = crypto.randomUUID();
-    const history: ChatMessage[] = [...messages, { role: "user", content: text }];
-    setMessages([...history, { role: "assistant", content: "" }]);
+    const transcript: ChatMessage[] = [...messages, { role: "user", content: text }];
+    const history = boundedChatHistory(transcript);
+    if (!history) {
+      setError("This message exceeds the local chat request limit. Shorten it and try again.");
+      return;
+    }
+    setMessages([...transcript, { role: "assistant", content: "" }]);
     setDraft("");
     setSending(true);
     activeRequest.current = id;
