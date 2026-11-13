@@ -3,7 +3,7 @@ use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -71,39 +71,60 @@ pub struct ChatResult {
 }
 
 #[derive(Default)]
+struct ChatRuntimeState {
+    active: HashMap<String, Arc<Notify>>,
+    cancelled_before_start: HashMap<String, Instant>,
+}
+
+#[derive(Default)]
 pub struct ChatRuntime {
-    active: Mutex<HashMap<String, Arc<Notify>>>,
+    state: Mutex<ChatRuntimeState>,
 }
 
 impl ChatRuntime {
     pub fn begin(&self, request_id: &str) -> Result<Arc<Notify>, String> {
-        let mut active = self
-            .active
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| "The chat runtime is unavailable.".to_string())?;
-        if active.contains_key(request_id) {
+        state
+            .cancelled_before_start
+            .retain(|_, created| created.elapsed() < Duration::from_secs(120));
+        if state.active.contains_key(request_id) {
             return Err("A chat request with this identifier is already active.".into());
         }
         let signal = Arc::new(Notify::new());
-        active.insert(request_id.to_owned(), signal.clone());
+        if state.cancelled_before_start.remove(request_id).is_some() {
+            signal.notify_one();
+        }
+        state.active.insert(request_id.to_owned(), signal.clone());
         Ok(signal)
     }
 
     pub fn cancel(&self, request_id: &str) -> bool {
-        self.active
-            .lock()
-            .ok()
-            .and_then(|active| active.get(request_id).cloned())
-            .map(|signal| {
-                signal.notify_one();
-                true
-            })
-            .unwrap_or(false)
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if let Some(signal) = state.active.get(request_id) {
+            signal.notify_one();
+            return true;
+        }
+        state
+            .cancelled_before_start
+            .retain(|_, created| created.elapsed() < Duration::from_secs(120));
+        if state.cancelled_before_start.len() >= 64 {
+            return false;
+        }
+        state
+            .cancelled_before_start
+            .insert(request_id.to_owned(), Instant::now());
+        true
     }
 
     pub fn finish(&self, request_id: &str) {
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(request_id);
+        if let Ok(mut state) = self.state.lock() {
+            state.active.remove(request_id);
+            state.cancelled_before_start.remove(request_id);
         }
     }
 }
@@ -172,17 +193,21 @@ async fn verify_model(
     client: &Client,
     provider: ChatProvider,
     model: &str,
+    cancellation: &Notify,
 ) -> Result<(), String> {
     let (endpoint, list_path, list_key, id_key) = match provider {
         ChatProvider::Ollama => (OLLAMA_BASE, "/api/tags", "models", "name"),
         ChatProvider::LmStudio => (LM_STUDIO_BASE, "/v1/models", "data", "id"),
     };
-    let response = client
-        .get(format!("{endpoint}{list_path}"))
-        .send()
-        .await
-        .map_err(|_| "Could not reach the selected local provider. Check that its server is running.".to_string())?;
-    let document = read_bounded_json(response, MAX_MODEL_RESPONSE_BYTES).await?;
+    let response = tokio::select! {
+        _ = cancellation.notified() => return Err("Generation cancelled.".into()),
+        result = client.get(format!("{endpoint}{list_path}")).send() => result
+            .map_err(|_| "Could not reach the selected local provider. Check that its server is running.".to_string())?,
+    };
+    let document = tokio::select! {
+        _ = cancellation.notified() => return Err("Generation cancelled.".into()),
+        result = read_bounded_json(response, MAX_MODEL_RESPONSE_BYTES) => result?,
+    };
     let models = document
         .get(list_key)
         .and_then(Value::as_array)
@@ -443,7 +468,12 @@ async fn stream_chat(
             if frame.metrics.evaluation_duration_ns.is_some() {
                 metrics.evaluation_duration_ns = frame.metrics.evaluation_duration_ns;
             }
+            finished = frame.done;
         }
+    }
+
+    if !finished {
+        return Err("The local provider stream ended before it sent a completion marker.".into());
     }
 
     Ok(metrics)
@@ -475,7 +505,7 @@ pub async fn run(
 ) -> Result<ChatResult, String> {
     let started = Instant::now();
     let client = provider_client()?;
-    verify_model(&client, request.provider_id, &request.model).await?;
+    verify_model(&client, request.provider_id, &request.model, &cancellation).await?;
 
     let (endpoint, body) = match request.provider_id {
         ChatProvider::Ollama => (format!("{OLLAMA_BASE}/api/chat"), ollama_body(&request)),
