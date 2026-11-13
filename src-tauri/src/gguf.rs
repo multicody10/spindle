@@ -183,7 +183,7 @@ fn as_usize(value: Option<&Value>) -> Option<usize> {
         .and_then(|number| usize::try_from(number).ok())
 }
 
-fn display_model_path(path: &Path) -> String {
+pub(crate) fn display_model_path(path: &Path) -> String {
     // Resolve the containing directory but retain the final filename. GGUF files
     // in Hugging Face snapshots can be file symlinks whose blob target has no
     // .gguf extension; canonicalizing the complete file path would break reloads.
