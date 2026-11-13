@@ -33,4 +33,4 @@ Start Ollama or LM Studio yourself and load a model before selecting it in **Cha
 - The HTTP request has a 15-minute total timeout. Stop generation also cancels the pending request and response stream.
 - Error response bodies are bounded and surfaced as short messages. No arbitrary provider URLs or external network destinations are accepted.
 
-Discovery and chat send no model file paths. Chat prompts are sent only to the selected local inference service over loopback. The app does not currently launch or manage provider processes.
+Discovery and chat send no model file paths. Chat prompts are sent only to the selected local inference service over loopback. Spindle does not launch or manage Ollama or LM Studio; it launches only its separately verified llama.cpp runtime from the Runtime workspace.
