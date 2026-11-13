@@ -1260,13 +1260,8 @@ mod tests {
             },
         )
         .unwrap();
-        let results = search_project_memory(
-            database,
-            project.id,
-            "authentication auth".into(),
-            5,
-        )
-        .unwrap();
+        let results =
+            search_project_memory(database, project.id, "authentication auth".into(), 5).unwrap();
         assert_eq!(results.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
