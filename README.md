@@ -74,6 +74,8 @@ Model paths and configuration profiles are stored in the OS application data dir
 ## Project documentation
 
 - Architecture: docs/ARCHITECTURE.md
+- Agent architecture research: docs/AGENT_ARCHITECTURE_RESEARCH.md
+- Secure agent execution design: docs/SECURE_EXECUTION.md
 - Local providers and chat: docs/LOCAL_PROVIDERS.md
 - Windows installation and update scope: docs/DISTRIBUTION.md
 - Workspace access and file tool limits: docs/WORKSPACE_ACCESS.md

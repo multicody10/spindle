@@ -72,6 +72,7 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
 fn roots(project_root: &Path) -> Vec<(PathBuf, String)> {
     let mut output = vec![
         (project_root.join(".agents").join("skills"), "Project .agents".to_string()),
+        (project_root.join(".rivet").join("skills"), "Project Rivet compatible".to_string()),
         (project_root.join(".spindle").join("skills"), "Project Spindle".to_string()),
     ];
     if let Some(home) = home_dir() {
@@ -84,6 +85,9 @@ fn roots(project_root: &Path) -> Vec<(PathBuf, String)> {
     }
     if let Some(extra) = std::env::var_os("SPINDLE_SKILLS_DIR") {
         output.extend(std::env::split_paths(&extra).map(|path| (path, "SPINDLE_SKILLS_DIR".into())));
+    }
+    if let Some(extra) = std::env::var_os("RIVET_SKILLS_DIR") {
+        output.extend(std::env::split_paths(&extra).map(|path| (path, "RIVET_SKILLS_DIR compatible".into())));
     }
     output
 }

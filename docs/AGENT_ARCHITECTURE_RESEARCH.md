@@ -53,7 +53,7 @@ Rivet Agents: https://github.com/rivet-dev/agents
 
 Rivet Skills documentation: https://rivet.dev/agents/docs/skills/
 
-The actor model separates a durable agent head (identity, state, memory, scheduling) from the sandbox where generated code executes. Skills are discovered through small name/description metadata and loaded only when needed. This informed the future worker boundary and Spindle's bounded SKILL.md discovery. This project is distinct from the user's private Rivet coding agent above.
+The actor model separates a durable agent head (identity, state, memory, scheduling) from the sandbox where generated code executes. Skills are discovered through small name/description metadata and loaded only when needed. Spindle scans project `.agents/skills`, `.rivet/skills`, and `.spindle/skills`, plus global `.agents`, `.codex`, `.claude`, `.lmstudio`, `SPINDLE_SKILLS_DIR`, and `RIVET_SKILLS_DIR` locations. This informed the future worker boundary and Spindle's bounded SKILL.md discovery. This project is distinct from the user's private Rivet coding agent above.
 
 ## Spindle implementation decisions
 
