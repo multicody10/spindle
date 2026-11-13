@@ -298,7 +298,11 @@ pub async fn run(
     input: BenchmarkRequest,
 ) -> Result<BenchmarkRun, String> {
     let BenchmarkRequest {
-        provider_id, model_id, context_tokens, mut generation, iterations,
+        provider_id,
+        model_id,
+        context_tokens,
+        mut generation,
+        iterations,
     } = input;
     if iterations == 0 || iterations > MAX_ITERATIONS {
         return Err("Choose between 1 and 5 benchmark iterations.".into());
@@ -383,8 +387,9 @@ pub async fn run(
     })
     .await
     .map_err(|error| format!("Benchmark finalization task failed: {error}"))??;
-    let mut runs = list_runs(database, 50)?;
-    runs.into_iter().find(|run| run.id == run_id)
+    let runs = list_runs(database, 50)?;
+    runs.into_iter()
+        .find(|run| run.id == run_id)
         .ok_or_else(|| "The benchmark completed but its result could not be reloaded.".into())
 }
 
