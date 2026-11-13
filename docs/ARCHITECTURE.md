@@ -14,6 +14,7 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - The model file is treated as untrusted binary input. The GGUF parser bounds metadata counts, string lengths, and array lengths.
 - The model configuration is validated again in Rust before persistence.
 - SQLite lives in the operating system application data directory, not in the project folder.
+- Local provider discovery makes bounded GET requests only to fixed loopback endpoints, disables proxy use and redirects, and never launches or controls provider processes.
 - No shell execution, workspace file editing, MCP tool hosting, or agent loop is exposed in this milestone.
 
 ## Planned architecture
