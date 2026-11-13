@@ -4,7 +4,6 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum CapabilitySupport {
     Supported,
-    Unsupported,
     ProviderDependent,
     NotImplemented,
 }
@@ -73,9 +72,18 @@ mod tests {
     fn registry_reports_only_features_implemented_by_the_adapter() {
         for provider in registry() {
             assert!(matches!(provider.streaming, CapabilitySupport::Supported));
-            assert!(matches!(provider.cancellation, CapabilitySupport::Supported));
-            assert!(matches!(provider.tool_calling, CapabilitySupport::NotImplemented));
-            assert!(matches!(provider.structured_output, CapabilitySupport::NotImplemented));
+            assert!(matches!(
+                provider.cancellation,
+                CapabilitySupport::Supported
+            ));
+            assert!(matches!(
+                provider.tool_calling,
+                CapabilitySupport::NotImplemented
+            ));
+            assert!(matches!(
+                provider.structured_output,
+                CapabilitySupport::NotImplemented
+            ));
         }
     }
 }
