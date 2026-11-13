@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 const MAX_MODELS: usize = 100;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
+const LLAMA_CPP_BASE: &str = "http://127.0.0.1:12345";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,7 +179,7 @@ pub async fn discover() -> Result<Vec<LocalProviderStatus>, String> {
         .build()
         .map_err(|_| "Could not initialize the local provider discovery client.".to_string())?;
 
-    let (ollama, lm_studio) = tokio::join!(
+    let (ollama, lm_studio, llama_cpp) = tokio::join!(
         probe(
             &client,
             "ollama",
@@ -194,10 +195,18 @@ pub async fn discover() -> Result<Vec<LocalProviderStatus>, String> {
             "http://127.0.0.1:1234",
             "/v1/models",
             parse_openai_models,
+        ),
+        probe(
+            &client,
+            "llama-cpp",
+            "llama.cpp (Spindle)",
+            LLAMA_CPP_BASE,
+            "/v1/models",
+            parse_openai_models,
         )
     );
 
-    Ok(vec![ollama, lm_studio])
+    Ok(vec![ollama, lm_studio, llama_cpp])
 }
 
 #[cfg(test)]
