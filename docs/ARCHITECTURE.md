@@ -6,7 +6,7 @@ Spindle uses a native Rust/Tauri 2 core and a React/TypeScript/Vite interface. R
 
 Current request path:
 
-React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, and SQLite persistence.
+React / TypeScript → typed IPC bridge → Tauri command boundary → hardware inventory, bounded GGUF parser, explainable optimizer, fixed-loopback provider discovery and streaming chat adapters, verified llama.cpp runtime installer/process manager, and SQLite persistence.
 
 ## Trust boundaries
 
@@ -14,10 +14,12 @@ React / TypeScript → typed IPC bridge → Tauri command boundary → hardware 
 - The model file is treated as untrusted binary input. The GGUF parser bounds metadata counts, string lengths, and array lengths.
 - The model configuration is validated again in Rust before persistence.
 - SQLite lives in the operating system application data directory, not in the project folder.
-- Provider discovery and chat use fixed IPv4 loopback endpoints only, disable proxies and redirects, bound request and response sizes, and never launch or control provider processes.
+- Ollama and LM Studio discovery/chat use fixed IPv4 loopback endpoints and never launch or control those external provider processes.
+- The managed llama.cpp installer uses fixed official release URLs, pinned SHA-256 digests, bounded downloads, safe ZIP path checks, and per-user application-data storage.
+- The process manager launches only the installed, verified llama-server.exe with typed settings and fixed 127.0.0.1 binding; it does not invoke a shell or accept arbitrary executable paths.
 - Chat streams provider tokens back to the UI through scoped Tauri events; each request can be cancelled independently.
 - Chat history exists only in the active window and is not persisted.
-- No shell execution, workspace file editing, MCP tool hosting, or agent loop is exposed in this milestone.
+- No shell execution, workspace file editing, MCP tool hosting, or agent loop is exposed in this milestone. The llama.cpp server is not started with its agent, tools, MCP, or filesystem features.
 
 ## Planned architecture
 
