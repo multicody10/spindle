@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     fs::{self, File},
-    io::{self, BufRead, BufReader, Cursor, Read, Write},
+    io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -602,11 +602,13 @@ pub async fn start(
         .arg(&configuration.runtime.kv_cache_k_type)
         .arg("--cache-type-v")
         .arg(&configuration.runtime.kv_cache_v_type)
-        .arg(if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu {
-            "--kv-offload"
-        } else {
-            "--no-kv-offload"
-        })
+        .arg(
+            if backend == RuntimeBackend::Vulkan && configuration.runtime.kv_cache_on_gpu {
+                "--kv-offload"
+            } else {
+                "--no-kv-offload"
+            },
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -690,17 +692,18 @@ pub async fn start(
             .send()
             .await
             .is_ok_and(|response| response.status().is_success())
-        {
-            if read_applied_settings().await.is_ok_and(|settings| {
+            && read_applied_settings().await.is_ok_and(|settings| {
                 settings.model_path.as_deref() == Some(expected_model_path.as_str())
                     && settings
                         .build_info
                         .as_deref()
                         .is_some_and(|info| info.starts_with(VERSION))
-            }) {
-                runtime.push_log("Model loaded. The pinned llama.cpp process is ready for local chat.");
-                return status(&app, runtime).await;
-            }
+            })
+        {
+            runtime.push_log(
+                "Model loaded. The pinned llama.cpp process is ready for local chat.",
+            );
+            return status(&app, runtime).await;
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
     }
@@ -742,7 +745,10 @@ pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
             response.status().as_u16()
         ));
     }
-    if response.content_length().is_some_and(|length| length > 1024 * 1024) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > 1024 * 1024)
+    {
         return Err("llama.cpp runtime settings exceeded the response size limit.".into());
     }
     let mut body = Vec::with_capacity(32 * 1024);
