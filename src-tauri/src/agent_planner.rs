@@ -1,11 +1,11 @@
 use crate::chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime};
 use crate::domain::GenerationSettings;
 use crate::{projects, workspace::WorkspaceManager};
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::Deserialize;
 use tauri::AppHandle;
 
 const MAX_SNAPSHOT_FILES: usize = 64;
@@ -298,7 +298,13 @@ pub async fn create_read_only_plan(
     input: PlanTaskRequest,
 ) -> Result<projects::TaskDetail, String> {
     let PlanTaskRequest {
-        project_id, session_id, prompt, provider_id, model, context_tokens, generation,
+        project_id,
+        session_id,
+        prompt,
+        provider_id,
+        model,
+        context_tokens,
+        generation,
     } = input;
     if prompt.trim().is_empty() || prompt.len() > 32 * 1024 {
         return Err("Task prompts must contain 1 to 32,768 UTF-8 bytes.".into());
@@ -337,8 +343,7 @@ pub async fn create_read_only_plan(
         let root = project.root_path.clone();
         let budget = context_tokens
             .saturating_mul(2)
-            .min(MAX_SNAPSHOT_BYTES)
-            .max(4 * 1024);
+            .clamp(4 * 1024, MAX_SNAPSHOT_BYTES);
         move || build_snapshot(root, budget)
     })
     .await
