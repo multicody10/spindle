@@ -337,8 +337,7 @@ function App() {
           <img className="brand-logo" src={spindleLogo} alt="Spindle" />
         </div>
         <div className="nav-caption">WORKSPACE</div>
-        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">⌘</span> Projects</button>
-        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">◫</span> Sessions</button>
+        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}><span className="nav-icon">▣</span> Projects &amp; sessions</button>
         <div className="nav-caption section-gap">TOOLS</div>
         <button className={"nav-item " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}><span className="nav-icon">◈</span> Model Lab</button>
         <button className={"nav-item " + (activeView === "chat" ? "active" : "")} onClick={() => setActiveView("chat")}><span className="nav-icon">◉</span> Chat</button>
@@ -360,7 +359,7 @@ function App() {
           
         </header>
 
-        <div className="content">
+        <div className={"content " + (activeView === "chat" ? "content-chat" : "")}>
           {activeView === "projects" ? (
             <ProjectsView providers={localProviders} configuration={configuration} onOpenSession={openProjectSession} />
           ) : activeView === "benchmark" ? (
