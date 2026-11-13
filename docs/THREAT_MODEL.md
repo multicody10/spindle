@@ -34,7 +34,8 @@
 - No AppContainer/LPAC execution worker exists.
 - No permission broker, network isolation, restricted token, or process Job Object policy exists.
 - No filesystem handle-relative/reparse-point-safe workspace mutation service exists.
-- Spindle can send chat to an already-running Ollama or LM Studio process over loopback, but does not install, launch, stop, or configure provider processes.
+- Spindle can send chat to already-running Ollama or LM Studio processes over loopback. Those provider processes remain externally managed.
+- Spindle can install pinned llama.cpp Windows x64 CPU/Vulkan archives after SHA-256 verification, then launch one managed llama-server.exe with fixed arguments and a loopback-only bind address. It does not enable llama.cpp agent tools, MCP, or filesystem access.
 - NVIDIA telemetry does not prove that a matching CUDA or Vulkan inference backend is installed.
 - Updater keys and Authenticode certificates must be provisioned by the repository owner before signed releases can ship.
 
