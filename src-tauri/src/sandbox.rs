@@ -300,7 +300,7 @@ fn run_validation_windows(
             return Err(format!("The AppContainer launcher did not return its required Job Object guard; {detail}."));
         }
     };
-    configure_worker_job(job_handle)?;
+    configure_worker_job(windows::Win32::Foundation::HANDLE(job_handle))?;
     resume_suspended_worker(child.pid)?;
     drop(child.stdin.take());
     let stdout = child.stdout.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
