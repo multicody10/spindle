@@ -135,14 +135,47 @@ fn as_usize(value: Option<&Value>) -> Option<usize> {
 }
 
 fn quantization_label(file_type: Option<u32>) -> Option<String> {
+    // Values follow llama.cpp's public llama_ftype enum. They describe the
+    // dominant model file type, not the quantization of every individual tensor.
     let value = file_type?;
     let label = match value {
-        0 => "F32", 1 => "F16", 2 => "Q4_0", 3 => "Q4_1",
-        6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0",
-        9 => "Q8_1", 10 => "Q2_K", 11 => "Q3_K_S",
-        12 => "Q3_K_M", 13 => "Q3_K_L", 14 => "Q4_K_S",
-        15 => "Q4_K_M", 16 => "Q5_K_S", 17 => "Q5_K_M",
-        18 => "Q6_K", 19 => "Q8_K",
+        0 => "F32",
+        1 => "F16",
+        2 => "Q4_0",
+        3 => "Q4_1",
+        7 => "Q8_0",
+        8 => "Q5_0",
+        9 => "Q5_1",
+        10 => "Q2_K",
+        11 => "Q3_K_S",
+        12 => "Q3_K_M",
+        13 => "Q3_K_L",
+        14 => "Q4_K_S",
+        15 => "Q4_K_M",
+        16 => "Q5_K_S",
+        17 => "Q5_K_M",
+        18 => "Q6_K",
+        19 => "IQ2_XXS",
+        20 => "IQ2_XS",
+        21 => "Q2_K_S",
+        22 => "IQ3_XS",
+        23 => "IQ3_XXS",
+        24 => "IQ1_S",
+        25 => "IQ4_NL",
+        26 => "IQ3_S",
+        27 => "IQ3_M",
+        28 => "IQ2_S",
+        29 => "IQ2_M",
+        30 => "IQ4_XS",
+        31 => "IQ1_M",
+        32 => "BF16",
+        36 => "TQ1_0",
+        37 => "TQ2_0",
+        38 => "MXFP4_MOE",
+        39 => "NVFP4",
+        40 => "Q1_0",
+        41 => "Q2_0",
+        42 => "F8_E4M3",
         _ => return Some(format!("GGUF file type {value}")),
     };
     Some(label.into())
@@ -243,6 +276,18 @@ mod tests {
     fn put_string(writer: &mut Vec<u8>, value: &str) {
         put_u64(writer, value.len() as u64);
         writer.extend(value.as_bytes());
+    }
+
+    #[test]
+    fn maps_llama_cpp_file_type_values_to_the_correct_labels() {
+        assert_eq!(quantization_label(Some(7)).as_deref(), Some("Q8_0"));
+        assert_eq!(quantization_label(Some(8)).as_deref(), Some("Q5_0"));
+        assert_eq!(quantization_label(Some(9)).as_deref(), Some("Q5_1"));
+        assert_eq!(quantization_label(Some(15)).as_deref(), Some("Q4_K_M"));
+        assert_eq!(quantization_label(Some(19)).as_deref(), Some("IQ2_XXS"));
+        assert_eq!(quantization_label(Some(32)).as_deref(), Some("BF16"));
+        assert_eq!(quantization_label(Some(38)).as_deref(), Some("MXFP4_MOE"));
+        assert_eq!(quantization_label(Some(42)).as_deref(), Some("F8_E4M3"));
     }
 
     #[test]
