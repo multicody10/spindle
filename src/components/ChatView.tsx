@@ -71,6 +71,8 @@ interface ChatViewProps {
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
   onSelectManagedModel: (path: string) => Promise<void>;
+  onLoadManagedModel: () => Promise<string>;
+  managedModelReady: boolean;
   contextTokens: number;
   generation: GenerationSettings;
   session?: ProjectSession | null;
@@ -86,6 +88,8 @@ function ChatView({
   managedModelPath,
   runtimeStatus,
   onSelectManagedModel,
+  onLoadManagedModel,
+  managedModelReady,
   contextTokens,
   generation,
   session = null
@@ -95,6 +99,7 @@ function ChatView({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [loadingManagedModel, setLoadingManagedModel] = useState(false);
   const [status, setStatus] = useState("Choose a local model. Spindle Runtime only needs to start when you are ready to chat.");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ChatResult | null>(null);
@@ -106,6 +111,12 @@ function ChatView({
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
+  const managedRuntimeLoaded = Boolean(
+    runtimeStatus?.running &&
+    runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === managedModelPath.replace(/\\/g, "/").toLowerCase()
+  );
+  const managedRuntimeBusy = Boolean(runtimeStatus?.running && !managedRuntimeLoaded);
+  const hasInstalledBackend = runtimeStatus?.installedBackends.some((item) => item.installed) ?? false;
 
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
@@ -141,10 +152,30 @@ function ChatView({
     setStatus("Inspecting the GGUF and preparing its configuration…");
     try {
       await onSelectManagedModel(path);
-      setStatus("Model selected. Start Spindle Runtime when you are ready to chat.");
+      setStatus("Model selected. Use Load model below when you are ready to start inference.");
     } catch (reason) {
       setError("Could not prepare the selected model: " + String(reason));
       setStatus("Model selection failed.");
+    }
+  };
+
+  const loadManagedModel = async () => {
+    if (!managedModelPath || !managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded) return;
+    setLoadingManagedModel(true);
+    setError(null);
+    setStatus(hasInstalledBackend
+      ? "Loading the selected model into Spindle Runtime…"
+      : "Installing a compatible backend and loading the selected model…");
+    try {
+      const loadedModelId = await onLoadManagedModel();
+      setProviderId("llama-cpp");
+      setModelId(loadedModelId);
+      setStatus("Model loaded. Chat is ready.");
+    } catch (reason) {
+      setError(String(reason));
+      setStatus("Could not load the selected model.");
+    } finally {
+      setLoadingManagedModel(false);
     }
   };
 
@@ -287,7 +318,7 @@ function ChatView({
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
           <p>You can still choose a local GGUF model here. Selecting it does not start llama.cpp or load the model into memory.</p>
-          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library below. When you are ready, open Tools → Runtime to install a backend and load it.</span></div>
+          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library, then use the Load model button in this chat. Spindle installs a compatible backend if needed and starts the model for you.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
         </section>
@@ -301,7 +332,7 @@ function ChatView({
           <div className="chat-empty">
             <div className="chat-empty-mark">✳</div>
             <strong>Your local chat workspace</strong>
-            <p>Choose a model below, even while the Spindle runtime is stopped. Start the runtime only when you are ready to chat.</p>
+            <p>Choose a model below, then press Load model. The runtime stays stopped until you explicitly start it.</p>
           </div>
         ) : (
           <div className="chat-message-list">
@@ -382,6 +413,9 @@ function ChatView({
                 {providerId === "llama-cpp" ? (
                   <>
                     <option value="">Choose a local GGUF model…</option>
+                    {managedModelPath && !modelLibrary.some((entry) => entry.path === managedModelPath) && (
+                      <option value={managedModelPath}>{managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}</option>
+                    )}
                     {modelLibrary.map((entry) => (
                       <option key={entry.path} value={entry.path}>
                         {entry.fileName} · {entry.source}
@@ -410,9 +444,28 @@ function ChatView({
                 ↻
               </button>
               <span className="chat-provider-state">
-                <span className={"status-dot " + (selectedProvider?.available ? "" : "red")} />
-                {selectedProvider?.available ? selectedProvider.name : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
+                <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
+                {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
+              {providerId === "llama-cpp" && (
+                <button
+                  type="button"
+                  className="button subtle chat-load-model"
+                  onClick={() => void loadManagedModel()}
+                  disabled={!managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded}
+                  title={managedRuntimeBusy ? "Stop the currently loaded model before switching" : managedRuntimeLoaded ? "This model is already loaded" : "Install a backend if needed, then load this model"}
+                >
+                  {loadingManagedModel
+                    ? "Loading…"
+                    : managedRuntimeLoaded
+                      ? "Loaded"
+                      : managedRuntimeBusy
+                        ? "Runtime busy"
+                        : hasInstalledBackend
+                          ? "Load model"
+                          : "Install & load"}
+                </button>
+              )}
             </div>
             <div className="chat-submit-controls">
               {sending ? (
