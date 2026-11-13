@@ -302,6 +302,7 @@ function App() {
               modelPath={model?.path ?? configuration.modelPath}
               configuration={configuration}
               hardware={hardware}
+              onRuntimeChange={() => void refreshLocalProviders()}
             />
           ) : (
             <>
