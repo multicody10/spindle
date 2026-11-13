@@ -213,6 +213,19 @@ fn backend_status(app: &AppHandle, backend: RuntimeBackend) -> Result<BackendIns
 
 pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<RuntimeStatus, String> {
     let (running, process_id, backend, model_path, logs) = runtime.take_snapshot();
+    let applied_settings = if running {
+        match read_applied_settings().await {
+            Ok(settings)
+                if settings.model_path.as_deref() == model_path.as_deref()
+                    && settings.build_info.as_deref().is_some_and(|info| info.starts_with(VERSION)) =>
+            {
+                Some(settings)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     Ok(RuntimeStatus {
         version: VERSION,
         running,
@@ -224,7 +237,7 @@ pub async fn status(app: &AppHandle, runtime: &ManagedRuntime) -> Result<Runtime
             backend_status(app, RuntimeBackend::Vulkan)?,
         ],
         logs,
-        applied_settings: if running { read_applied_settings().await.ok() } else { None },
+        applied_settings,
     })
 }
 
@@ -509,6 +522,7 @@ pub async fn start(
         .build()
         .map_err(|_| "Could not initialize the runtime health client.".to_string())?;
 
+    let expected_model_path = model.to_string_lossy().into_owned();
     let started = std::time::Instant::now();
     while started.elapsed() < HEALTH_TIMEOUT {
         if !runtime.take_snapshot().0 {
@@ -517,8 +531,13 @@ pub async fn start(
         if client.get(format!("{BASE_URL}/health")).send().await
             .is_ok_and(|response| response.status().is_success())
         {
-            runtime.push_log("Model loaded. llama.cpp is ready for local chat.");
-            return status(&app, runtime).await;
+            if read_applied_settings().await.is_ok_and(|settings| {
+                settings.model_path.as_deref() == Some(expected_model_path.as_str())
+                    && settings.build_info.as_deref().is_some_and(|info| info.starts_with(VERSION))
+            }) {
+                runtime.push_log("Model loaded. The pinned llama.cpp process is ready for local chat.");
+                return status(&app, runtime).await;
+            }
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
     }
