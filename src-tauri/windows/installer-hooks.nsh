@@ -24,6 +24,8 @@ spindle_desktop_shortcut_done:
   Delete "$DESKTOP\${PRODUCTNAME}.lnk"
   Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
 
+  ; Restore the machine-wide context expected by Tauri's remaining uninstall steps.
+  SetShellVarContext all
   ; Refresh Explorer's desktop and Start Menu views after shortcut cleanup.
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
