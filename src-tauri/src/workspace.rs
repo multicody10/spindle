@@ -1,8 +1,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -252,11 +252,8 @@ impl WorkspaceManager {
         if metadata.len() > MAX_FILE_BYTES as u64 {
             return Err("The selected file exceeds the 1 MiB workspace read limit.".into());
         }
-        let bytes = fs::read(&path)
+        let bytes = read_bounded(&path, MAX_FILE_BYTES)
             .map_err(|error| format!("Could not read the selected workspace file: {error}"))?;
-        if bytes.len() > MAX_FILE_BYTES {
-            return Err("The selected file exceeds the 1 MiB workspace read limit.".into());
-        }
         let revision = format!("{:x}", Sha256::digest(&bytes));
         let content = String::from_utf8(bytes)
             .map_err(|_| "The selected file is not valid UTF-8 text and cannot be opened in the editor.".to_string())?;
@@ -311,7 +308,7 @@ impl WorkspaceManager {
                 let canonical = fs::canonicalize(&target)
                     .map_err(|error| format!("Could not resolve the target file: {error}"))?;
                 ensure_inside_root(&session.root, &canonical)?;
-                let current = fs::read(&canonical)
+                let current = read_bounded(&canonical, MAX_FILE_BYTES)
                     .map_err(|error| format!("Could not verify the current file revision: {error}"))?;
                 let current_revision = format!("{:x}", Sha256::digest(&current));
                 if current_revision != expected_revision {
@@ -423,10 +420,18 @@ impl WorkspaceManager {
                     continue;
                 }
 
+                let remaining_bytes = MAX_SEARCH_BYTES.saturating_sub(bytes_scanned);
+                if metadata.len() > remaining_bytes as u64 {
+                    truncated = true;
+                    break;
+                }
                 files_scanned += 1;
-                let bytes = match fs::read(&canonical) {
-                    Ok(bytes) if bytes.len() <= MAX_SEARCH_FILE_BYTES => bytes,
-                    _ => continue,
+                let bytes = match read_bounded(&canonical, remaining_bytes.min(MAX_SEARCH_FILE_BYTES)) {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        truncated = true;
+                        break;
+                    }
                 };
                 bytes_scanned = bytes_scanned.saturating_add(bytes.len());
                 let text = match std::str::from_utf8(&bytes) {
@@ -456,6 +461,22 @@ impl WorkspaceManager {
             truncated,
         })
     }
+}
+
+fn read_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::with_capacity(
+        file.metadata()
+            .map(|metadata| metadata.len().min(max_bytes as u64) as usize)
+            .unwrap_or(0),
+    );
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > max_bytes {
+        return Err("The file grew beyond the permitted read limit.".into());
+    }
+    Ok(bytes)
 }
 
 fn validate_relative_path(value: &str, allow_root: bool) -> Result<PathBuf, String> {
