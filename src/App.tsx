@@ -115,7 +115,7 @@ function App() {
     let unlisten: (() => void) | undefined;
     void getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
-      const candidates = event.payload.paths.filter((path) => /\\.gguf$/i.test(path));
+      const candidates = event.payload.paths.filter((path) => /\.gguf$/i.test(path));
       if (candidates.length === 0) return;
       if (candidates.length !== 1) {
         setError("Drop one GGUF model at a time.");
