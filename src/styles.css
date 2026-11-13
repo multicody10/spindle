@@ -127,3 +127,9 @@ footer { display: flex; justify-content: space-between; color: #566579; font-siz
   .content { padding-left: 25px; padding-right: 25px; }
   .profile-grid { grid-template-columns: repeat(3,1fr); }
 }
+
+.warning-list {
+  color: #e1b982;
+  border-left: 2px solid #8b6537;
+  padding-left: 22px;
+}

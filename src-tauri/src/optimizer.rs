@@ -6,7 +6,8 @@ const GIB: u64 = 1024 * 1024 * 1024;
 const COMPUTE_HEADROOM: u64 = 768 * 1024 * 1024;
 
 fn preferred_context(profile: OptimizationProfile, hardware: &HardwareProfile, model: &ModelMetadata) -> usize {
-    let model_limit = model.context_length.unwrap_or(8192).clamp(2048, 131072);
+    let model_limit = model.context_length.filter(|limit| *limit > 0).unwrap_or(8192).min(131072);
+    let minimum_context = model_limit.min(2048);
     let ram_gib = hardware.ram_total_bytes / GIB;
     let target = match profile {
         OptimizationProfile::MemoryEfficient => 4096,
@@ -19,7 +20,7 @@ fn preferred_context(profile: OptimizationProfile, hardware: &HardwareProfile, m
         OptimizationProfile::Automatic => 8192,
         OptimizationProfile::Custom => 4096,
     };
-    target.min(model_limit).max(2048)
+    target.min(model_limit).max(minimum_context)
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -62,6 +63,10 @@ fn estimate_context_budget(
     // Without architecture data, keep the initial recommendation small and reserve a
     // conservative memory allowance instead of treating an unknown KV cache as zero.
     let target = if bytes_per_token.is_none() { target.min(4096) } else { target };
+    let minimum_context = model.context_length
+        .filter(|limit| *limit > 0)
+        .unwrap_or(8192)
+        .min(2048);
     let mut candidate = target;
     let unknown_kv_reserve = if bytes_per_token.is_none() { 2 * GIB } else { 0 };
 
@@ -93,13 +98,13 @@ fn estimate_context_budget(
             .saturating_add(COMPUTE_HEADROOM)
             .saturating_add(unknown_kv_reserve);
 
-        if cpu_required <= ram_budget || candidate == 2048 {
+        if cpu_required <= ram_budget || candidate <= minimum_context {
             if cpu_required > ram_budget {
                 notes.push("Estimated model weights and KV cache exceed the conservative available system-memory budget. Reduce context or use a smaller quantization.".into());
             }
             break (candidate, gpu_layers, slots, kv_on_gpu);
         }
-        candidate = (candidate / 2).max(2048);
+        candidate = (candidate / 2).max(minimum_context);
     };
     if gpu.is_none() {
         notes.push("No supported GPU memory telemetry was found. GPU offload is set to zero rather than guessed.".into());
@@ -115,10 +120,12 @@ fn estimate_context_budget(
         ));
     }
     notes.push("System-memory budgeting reserves at least 2 GiB; available memory can change while other applications run.".into());
-    notes.push(format!(
-        "Context recommendation is capped by the model's declared context limit ({} tokens).",
-        model.context_length.unwrap_or(8192)
-    ));
+    match model.context_length.filter(|limit| *limit > 0) {
+        Some(limit) => notes.push(format!(
+            "Context recommendation is capped by the model's declared context limit ({limit} tokens)."
+        )),
+        None => notes.push("The model does not declare a usable context limit in GGUF metadata; a conservative 8K fallback ceiling is used.".into()),
+    }
     (context, gpu_layers, slots, kv_on_gpu, notes)
 }
 
@@ -156,6 +163,7 @@ pub fn optimize(
 
     let mut configuration = ModelConfiguration::new(model.path.clone(), profile);
     configuration.runtime.context_tokens = context_tokens;
+    configuration.generation.max_output_tokens = configuration.generation.max_output_tokens.min(context_tokens);
     configuration.runtime.gpu_layers = gpu_layers;
     configuration.runtime.threads = threads;
     configuration.runtime.batch_threads = batch_threads;
@@ -195,6 +203,26 @@ mod tests {
         assert!(result.configuration.runtime.context_tokens <= 8192);
         assert!(result.configuration.runtime.gpu_layers <= 32);
         assert_eq!(result.configuration.runtime.parallel_slots, 1);
+    }
+
+
+    #[test]
+    fn maximum_context_never_exceeds_a_small_model_limit() {
+        let mut model = sample_model();
+        model.context_length = Some(1024);
+        let hardware = HardwareProfile {
+            os: "windows".into(),
+            cpu_name: None,
+            logical_threads: 8,
+            physical_cores: None,
+            ram_total_bytes: 16 * GIB,
+            ram_available_bytes: 12 * GIB,
+            gpus: vec![],
+            detection_notes: vec![],
+        };
+        let result = optimize(model, hardware, OptimizationProfile::MaximumContext);
+        assert_eq!(result.configuration.runtime.context_tokens, 1024);
+        assert_eq!(result.configuration.generation.max_output_tokens, 1024);
     }
 
     #[test]

@@ -64,9 +64,12 @@ async fn save_model_configuration(
     app: AppHandle,
     configuration: ModelConfiguration,
 ) -> Result<(), String> {
-    validate_configuration(&configuration)?;
     let database = database_path(&app)?;
-    tokio::task::spawn_blocking(move || persistence::save_configuration(database, configuration)).await
+    tokio::task::spawn_blocking(move || {
+        validate_configuration(&configuration)?;
+        validate_model_constraints(&configuration)?;
+        persistence::save_configuration(database, configuration)
+    }).await
         .map_err(|error| format!("Configuration write task failed: {error}"))?
 }
 
@@ -76,9 +79,12 @@ async fn save_preset(
     name: String,
     configuration: ModelConfiguration,
 ) -> Result<(), String> {
-    validate_configuration(&configuration)?;
     let database = database_path(&app)?;
-    tokio::task::spawn_blocking(move || persistence::save_preset(database, name, configuration)).await
+    tokio::task::spawn_blocking(move || {
+        validate_configuration(&configuration)?;
+        validate_model_constraints(&configuration)?;
+        persistence::save_preset(database, name, configuration)
+    }).await
         .map_err(|error| format!("Preset write task failed: {error}"))?
 }
 
@@ -96,11 +102,26 @@ async fn delete_preset(app: AppHandle, name: String) -> Result<(), String> {
         .map_err(|error| format!("Preset delete task failed: {error}"))?
 }
 
+fn validate_model_constraints(configuration: &ModelConfiguration) -> Result<(), String> {
+    let metadata = gguf::inspect(&configuration.model_path)?;
+    if let Some(limit) = metadata.context_length {
+        if configuration.runtime.context_tokens > limit {
+            return Err(format!("Configured context length exceeds the model's declared limit of {limit} tokens."));
+        }
+    }
+    if let Some(layers) = metadata.layer_count {
+        if configuration.runtime.gpu_layers > layers {
+            return Err(format!("GPU offload cannot exceed the model's {layers} layers."));
+        }
+    }
+    Ok(())
+}
+
 fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), String> {
     let runtime = &configuration.runtime;
     let generation = &configuration.generation;
-    if runtime.context_tokens < 2048 || runtime.context_tokens > 131072 {
-        return Err("Context length must be between 2,048 and 131,072 tokens.".into());
+    if runtime.context_tokens == 0 || runtime.context_tokens > 131072 {
+        return Err("Context length must be between 1 and 131,072 tokens.".into());
     }
     if runtime.gpu_layers > 512 {
         return Err("GPU layer count must be between 0 and 512.".into());
@@ -113,6 +134,9 @@ fn validate_configuration(configuration: &ModelConfiguration) -> Result<(), Stri
     }
     if runtime.parallel_slots == 0 || runtime.parallel_slots > 32 {
         return Err("Parallel slots must be between 1 and 32.".into());
+    }
+    if generation.max_output_tokens > runtime.context_tokens {
+        return Err("Maximum output tokens cannot exceed the configured context length.".into());
     }
     if !generation.temperature.is_finite() || !(0.0..=5.0).contains(&generation.temperature)
         || !generation.top_p.is_finite() || !(0.0..=1.0).contains(&generation.top_p)
@@ -155,4 +179,41 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Spindle");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_the_default_model_configuration() {
+        let configuration = ModelConfiguration::new(
+            "sample.gguf".into(),
+            OptimizationProfile::Automatic,
+        );
+        assert!(validate_configuration(&configuration).is_ok());
+    }
+
+    #[test]
+    fn rejects_output_budget_larger_than_context() {
+        let mut configuration = ModelConfiguration::new(
+            "sample.gguf".into(),
+            OptimizationProfile::Automatic,
+        );
+        configuration.runtime.context_tokens = 2048;
+        configuration.generation.max_output_tokens = 4096;
+        let error = validate_configuration(&configuration).unwrap_err();
+        assert!(error.contains("cannot exceed"));
+    }
+
+    #[test]
+    fn rejects_micro_batch_larger_than_batch() {
+        let mut configuration = ModelConfiguration::new(
+            "sample.gguf".into(),
+            OptimizationProfile::Automatic,
+        );
+        configuration.runtime.batch_size = 64;
+        configuration.runtime.micro_batch_size = 128;
+        assert!(validate_configuration(&configuration).is_err());
+    }
 }

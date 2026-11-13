@@ -17,7 +17,7 @@ const PROFILES: { value: OptimizationProfile; label: string; detail: string }[] 
   { value: "balanced", label: "Balanced", detail: "Balance context, throughput, and resource use." },
   { value: "memory_efficient", label: "Memory efficient", detail: "Reduce memory pressure and concurrency." },
   { value: "maximum_context", label: "Maximum context", detail: "Prioritize the largest estimated context that fits." },
-  { value: "custom", label: "Custom", detail: "Keep manually configured settings." }
+  { value: "custom", label: "Custom", detail: "Manual values are preserved; optimization is paused." }
 ];
 
 const formatBytes = (value: number) => {
@@ -45,6 +45,7 @@ function App() {
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Detecting hardware…");
+  const [optimizationWarnings, setOptimizationWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [update, setUpdate] = useState<Update | null>(null);
   const [updateState, setUpdateState] = useState("Update check has not run.");
@@ -109,14 +110,16 @@ function App() {
     try {
       const inspected = await api.inspectModel(candidatePath);
       setModel(inspected);
-      const saved = await api.loadConfiguration(candidatePath, configuration.profile);
+      const saved = await api.loadConfiguration(inspected.path, configuration.profile);
       if (saved) {
         setConfiguration(saved);
+        setOptimizationWarnings([]);
         setMessage("Model inspected. Saved model configuration restored.");
       } else {
-        const optimized = await api.optimizeModel(candidatePath, configuration.profile);
+        const optimized = await api.optimizeModel(inspected.path, configuration.profile);
         setHardware(optimized.hardware);
         setConfiguration(optimized.configuration);
+        setOptimizationWarnings(optimized.warnings);
         setMessage("Model inspected and initial recommendations calculated.");
       }
     } catch (reason) {
@@ -136,6 +139,7 @@ function App() {
       const result = await api.optimizeModel(model.path, configuration.profile);
       setHardware(result.hardware);
       setConfiguration(result.configuration);
+      setOptimizationWarnings(result.warnings);
       setMessage("Recommendation calculated. Review the rationale before saving.");
     } catch (reason) {
       setError(String(reason));
@@ -202,11 +206,13 @@ function App() {
   const changeRuntime = <K extends keyof ModelConfiguration["runtime"]>(
     key: K,
     value: ModelConfiguration["runtime"][K]
-  ) => setConfiguration((current) => ({
-    ...current,
-    profile: "custom",
-    runtime: { ...current.runtime, [key]: value }
-  }));
+  ) => setConfiguration((current) => {
+    const runtime = { ...current.runtime, [key]: value };
+    const generation = key === "contextTokens" && typeof value === "number"
+      ? { ...current.generation, maxOutputTokens: Math.min(current.generation.maxOutputTokens, value) }
+      : current.generation;
+    return { ...current, profile: "custom", runtime, generation };
+  });
 
   const changeGeneration = <K extends keyof ModelConfiguration["generation"]>(
     key: K,
@@ -327,6 +333,9 @@ function App() {
             {configuration.optimizationNotes.length > 0 && (
               <ul className="reason-list">{configuration.optimizationNotes.map((note, index) => <li key={index}>{note}</li>)}</ul>
             )}
+            {optimizationWarnings.length > 0 && (
+              <ul className="reason-list warning-list">{optimizationWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+            )}
           </section>
 
           <section className="section-heading">
@@ -338,7 +347,7 @@ function App() {
             <div className="settings-group">
               <div className="settings-group-title"><div><strong>Runtime</strong><small>Load-time and resource allocation values</small></div><span>LLAMA.CPP TARGET</span></div>
               <div className="settings-grid">
-                <label>Context length <input type="number" min="2048" max={model?.contextLength ?? 131072} step="1024" value={configuration.runtime.contextTokens} onChange={(event) => changeRuntime("contextTokens", Number(event.target.value))} /></label>
+                <label>Context length <input type="number" min="1" max={Math.min(model?.contextLength && model.contextLength > 0 ? model.contextLength : 131072, 131072)} step="1" value={configuration.runtime.contextTokens} onChange={(event) => changeRuntime("contextTokens", Number(event.target.value))} /></label>
                 <label>GPU layers <input type="number" min="0" max={model?.layerCount ?? 256} value={configuration.runtime.gpuLayers} onChange={(event) => changeRuntime("gpuLayers", Number(event.target.value))} /></label>
                 <label>CPU threads <input type="number" min="1" max="256" value={configuration.runtime.threads} onChange={(event) => changeRuntime("threads", Number(event.target.value))} /></label>
                 <label>Batch threads <input type="number" min="1" max="256" value={configuration.runtime.batchThreads} onChange={(event) => changeRuntime("batchThreads", Number(event.target.value))} /></label>

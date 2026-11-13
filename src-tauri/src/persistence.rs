@@ -101,3 +101,43 @@ pub fn delete_preset(database: PathBuf, name: String) -> Result<(), String> {
         .map_err(|error| format!("Could not delete preset: {error}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_settings_and_presets_round_trip_through_sqlite() {
+        let directory = std::env::temp_dir().join(format!(
+            "spindle-persistence-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("settings.sqlite3");
+        let configuration = ModelConfiguration::new(
+            "C:\\Models\\sample.gguf".into(),
+            OptimizationProfile::Automatic,
+        );
+        let expected = serde_json::to_string(&configuration).unwrap();
+
+        save_configuration(database.clone(), configuration.clone()).unwrap();
+        let loaded = load_configuration(
+            database.clone(),
+            configuration.model_path.clone(),
+            OptimizationProfile::Automatic,
+        ).unwrap().unwrap();
+        assert_eq!(serde_json::to_string(&loaded).unwrap(), expected);
+
+        save_preset(database.clone(), "Coding".into(), configuration.clone()).unwrap();
+        let presets = list_presets(database.clone()).unwrap();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].name, "Coding");
+        assert_eq!(serde_json::to_string(&presets[0].configuration).unwrap(), expected);
+
+        delete_preset(database, "Coding".into()).unwrap();
+        assert!(list_presets(directory.join("settings.sqlite3")).unwrap().is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
