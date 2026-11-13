@@ -39,6 +39,8 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
   );
   const selectedModelMatchesConfiguration =
     Boolean(modelPath.trim()) && configuration.modelPath === modelPath;
+  const parallelSlots = Math.max(1, configuration.runtime.parallelSlots);
+  const contextPerSlot = Math.floor(configuration.runtime.contextTokens / parallelSlots);
 
   const refresh = useCallback(async () => {
     try {
@@ -199,7 +201,9 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
           <span>DETECTED GPU</span>
           <strong>{gpuSummary}</strong>
           <span>CONFIGURATION</span>
-          <strong>{configuration.runtime.contextTokens.toLocaleString()} context · {configuration.runtime.gpuLayers} GPU layers · {configuration.runtime.threads} CPU threads</strong>
+          <strong>{configuration.runtime.contextTokens.toLocaleString()} total context · {configuration.runtime.gpuLayers} GPU layers · {configuration.runtime.threads} CPU threads</strong>
+          <span>CONTEXT PER SLOT</span>
+          <strong>{contextPerSlot.toLocaleString()} tokens across {parallelSlots} parallel slot{parallelSlots === 1 ? "" : "s"}</strong>
           <span>SHARED INFERENCE SCHEDULER</span>
           <strong>
             {status?.inference.modelLoaded

@@ -563,9 +563,9 @@ pub async fn run(
             lm_studio_body(&request),
         ),
         ChatProvider::LlamaCpp => {
-            let lease = session_lease
-                .as_ref()
-                .ok_or_else(|| "The managed inference session did not receive a KV cache slot.".to_string())?;
+            let lease = session_lease.as_ref().ok_or_else(|| {
+                "The managed inference session did not receive a KV cache slot.".to_string()
+            })?;
             if lease.needs_clear() {
                 erase_llama_slot(&client, lease.slot_id(), &cancellation).await?;
                 inference.mark_slot_cleared(&request.session_id, lease.slot_id())?;
@@ -574,7 +574,7 @@ pub async fn run(
                 format!("{LLAMA_CPP_BASE}/v1/chat/completions"),
                 llama_cpp_body(&request, lease.slot_id()),
             )
-        },
+        }
     };
 
     let response = tokio::select! {

@@ -233,7 +233,7 @@ impl InferenceRuntimeManager {
         state.use_clock = 0;
         state.slot_evictions = 0;
         state.generation = state.generation.wrapping_add(1);
-        Ok(());
+        Ok(())
     }
 
     pub fn invalidate(&self) {
@@ -284,7 +284,9 @@ impl InferenceRuntimeManager {
             .get(session_id)
             .ok_or_else(|| "The session no longer owns an inference cache slot.".to_string())?;
         if assignment.id != slot_id || !state.active_sessions.contains_key(session_id) {
-            return Err("The inference cache slot assignment changed before it could be cleared.".into());
+            return Err(
+                "The inference cache slot assignment changed before it could be cleared.".into(),
+            );
         }
         let dirty = state
             .dirty_slots
@@ -393,7 +395,9 @@ impl InferenceRuntimeManager {
                     .map(|(owner, assignment)| (owner.clone(), assignment.id));
                 let Some((owner, slot_id)) = candidate else {
                     state.reserved_sessions.remove(session_id);
-                    return Err("No idle llama.cpp KV cache slot is available for this session.".into());
+                    return Err(
+                        "No idle llama.cpp KV cache slot is available for this session.".into(),
+                    );
                 };
                 (slot_id, Some(owner))
             };
@@ -512,22 +516,34 @@ mod tests {
         let manager = manager_with_slots(2);
         let cancelled = Notify::new();
 
-        let first = manager.acquire_session("session-one", "request-one", &cancelled).await.unwrap();
+        let first = manager
+            .acquire_session("session-one", "request-one", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(first.slot_id(), 0);
         assert!(!first.needs_clear());
         drop(first);
 
-        let second = manager.acquire_session("session-two", "request-two", &cancelled).await.unwrap();
+        let second = manager
+            .acquire_session("session-two", "request-two", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(second.slot_id(), 1);
         assert!(!second.needs_clear());
         drop(second);
 
-        let first_again = manager.acquire_session("session-one", "request-three", &cancelled).await.unwrap();
+        let first_again = manager
+            .acquire_session("session-one", "request-three", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(first_again.slot_id(), 0);
         assert!(!first_again.needs_clear());
         drop(first_again);
 
-        let third = manager.acquire_session("session-three", "request-four", &cancelled).await.unwrap();
+        let third = manager
+            .acquire_session("session-three", "request-four", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(third.slot_id(), 1);
         assert!(third.needs_clear());
         assert_eq!(manager.status().assigned_sessions, 2);
@@ -535,7 +551,10 @@ mod tests {
         manager.mark_slot_cleared("session-three", 1).unwrap();
         drop(third);
 
-        let third_again = manager.acquire_session("session-three", "request-five", &cancelled).await.unwrap();
+        let third_again = manager
+            .acquire_session("session-three", "request-five", &cancelled)
+            .await
+            .unwrap();
         assert_eq!(third_again.slot_id(), 1);
         assert!(!third_again.needs_clear());
         drop(third_again);
