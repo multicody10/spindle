@@ -82,8 +82,8 @@ try {
         throw "Expected every manifest and lockfile to contain 0.1.1; got $($versions -join ', ')."
     }
 
-    $firstCommit = Invoke-TestGit @("rev-parse", "HEAD")
-    $remoteLine = Invoke-TestGit @("ls-remote", "origin", "refs/heads/main")
+    $firstCommit = Invoke-TestGit -GitArgs @("rev-parse", "HEAD")
+    $remoteLine = Invoke-TestGit -GitArgs @("ls-remote", "origin", "refs/heads/main")
     $remoteCommit = $remoteLine.Split([char]9)[0]
     if ($firstCommit -ne $remoteCommit) {
         throw "The release version commit was not pushed to the temporary main branch."
@@ -93,7 +93,7 @@ try {
     }
 
     & $prepareScript -ReleaseTag "v0.1.1" -EventName "workflow_dispatch" -GitRef "refs/heads/main"
-    $retryCommit = Invoke-TestGit @("rev-parse", "HEAD")
+    $retryCommit = Invoke-TestGit -GitArgs @("rev-parse", "HEAD")
     if ($retryCommit -ne $firstCommit) {
         throw "Retrying the same version created an unexpected second version commit."
     }
