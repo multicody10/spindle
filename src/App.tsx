@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api } from "./lib/api";
@@ -111,6 +112,7 @@ function App() {
   }, [refreshModelLibrary]);
 
   useEffect(() => {
+    if (!isTauri()) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void getCurrentWebview().onDragDropEvent((event) => {
