@@ -90,10 +90,13 @@ async fn write_workspace_file(
     session_id: String,
     relative_path: String,
     content: String,
+    expected_revision: String,
     workspace: State<'_, workspace::WorkspaceManager>,
 ) -> Result<workspace::WorkspaceWriteResult, String> {
     let manager = workspace.inner().clone();
-    tokio::task::spawn_blocking(move || manager.write_file(&session_id, &relative_path, content))
+    tokio::task::spawn_blocking(move || {
+        manager.write_file(&session_id, &relative_path, content, &expected_revision)
+    })
         .await
         .map_err(|error| format!("Workspace write task failed: {error}"))?
 }
