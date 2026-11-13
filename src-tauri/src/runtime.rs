@@ -555,16 +555,16 @@ pub async fn read_applied_settings() -> Result<AppliedSettings, String> {
         return Err(format!("llama.cpp returned HTTP {} while reading settings.", response.status().as_u16()));
     }
     let document: Value = response.json().await.map_err(|_| "llama.cpp returned invalid runtime settings.".to_string())?;
-    let defaults = document.get("default_generation_settings").unwrap_or(&Value::Null);
-    let params = defaults.get("params").unwrap_or(&Value::Null);
+    let defaults = document.get("default_generation_settings");
+    let params = defaults.and_then(|value| value.get("params"));
     Ok(AppliedSettings {
         model_path: document.get("model_path").and_then(Value::as_str).map(str::to_owned),
-        context_tokens: defaults.get("n_ctx").and_then(Value::as_u64),
-        temperature: params.get("temperature").and_then(Value::as_f64),
-        top_p: params.get("top_p").and_then(Value::as_f64),
-        top_k: params.get("top_k").and_then(Value::as_u64),
-        min_p: params.get("min_p").and_then(Value::as_f64),
-        repeat_penalty: params.get("repeat_penalty").and_then(Value::as_f64),
+        context_tokens: defaults.and_then(|value| value.get("n_ctx")).and_then(Value::as_u64),
+        temperature: params.and_then(|value| value.get("temperature")).and_then(Value::as_f64),
+        top_p: params.and_then(|value| value.get("top_p")).and_then(Value::as_f64),
+        top_k: params.and_then(|value| value.get("top_k")).and_then(Value::as_u64),
+        min_p: params.and_then(|value| value.get("min_p")).and_then(Value::as_f64),
+        repeat_penalty: params.and_then(|value| value.get("repeat_penalty")).and_then(Value::as_f64),
         build_info: document.get("build_info").and_then(Value::as_str).map(str::to_owned),
         note: "Values are read from llama.cpp /props. Hardware offload and some load-time options are not exposed by this endpoint.".into(),
     })
