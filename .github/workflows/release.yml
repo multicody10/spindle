@@ -8,9 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Next release version. The workflow updates all version files and commits them to main automatically (e.g. v0.1.1)."
+        description: "Next release version. Defaults to the current application version; change it only when intentionally bumping the release (e.g. v0.2.2)."
         required: true
         type: string
+        # Keep this aligned with the versions in package.json and src-tauri/Cargo.toml.
+        default: "v0.2.1"
 
 permissions:
   contents: write
