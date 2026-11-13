@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 const MAX_OUTPUT_BYTES: usize = 96 * 1024;
 const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_WORKER_PROCESSES: u32 = 64;
+const MAX_WORKER_PROCESS_MEMORY_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_WORKER_JOB_MEMORY_BYTES: usize = 4 * 1024 * 1024 * 1024;
 const EXECUTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -145,10 +148,14 @@ fn run_validation_windows(
         return Err("No supported Cargo.toml was found at the project root or src-tauri/Cargo.toml.".into());
     };
     let manifest = manifest.to_string_lossy().into_owned();
-    let cargo = find_executable("cargo.exe")?;
-    let rustc = find_executable("rustc.exe")?;
-    let rustfmt = find_executable("rustfmt.exe")?;
     let rustup_home = rustup_home()?;
+    // Resolve Rustup proxies on the trusted host before entering LPAC. The
+    // worker must execute the installed toolchain binaries directly because
+    // Rustup needs access to host profile metadata that LPAC intentionally
+    // cannot use.
+    let cargo = resolve_rustup_tool("cargo", &worktree, &rustup_home)?;
+    let rustc = resolve_rustup_tool("rustc", &worktree, &rustup_home)?;
+    let rustfmt = resolve_rustup_tool("rustfmt", &worktree, &rustup_home)?;
     let profile = AppContainerProfile::ensure(
         "com.spindle.agent.worker",
         "Spindle Restricted Agent Worker",
@@ -159,6 +166,19 @@ fn run_validation_windows(
         .lpac(true)
         .build()
         .map_err(|error| format!("Could not construct an LPAC security token: {error}"))?;
+
+    // Rust's Windows process launcher opens the NUL device when Cargo starts
+    // child tools. LPAC blocks device access by default, so grant this package
+    // read/write access to that single inert sink (reads return EOF and writes
+    // are discarded) rather than enabling a broad device capability.
+    grant_to_package(
+        ResourcePath::File(PathBuf::from(r"\\.\NUL")),
+        &profile.sid,
+        AccessMask(AccessMask::FILE_GENERIC_READ.0 | AccessMask::FILE_GENERIC_WRITE.0),
+    )
+    .map_err(|error| format!(
+        "Could not grant the LPAC worker read/write access to the NUL device required for child stdio: {error}"
+    ))?;
 
     let profile_home = profile.folder_path()
         .map_err(|error| format!("Could not resolve the worker profile directory: {error}"))?;
@@ -202,24 +222,26 @@ fn run_validation_windows(
         rustfmt.parent().ok_or("rustfmt executable path has no parent.")?.to_path_buf(),
         system32.clone(),
     ];
-    if matches!(command, ValidationCommand::Check | ValidationCommand::Test) {
-        if let Ok(linker) = find_executable("link.exe") {
-            if let Some(parent) = linker.parent() {
-                let parent = parent.to_path_buf();
-                grant_to_package(
-                    ResourcePath::Directory(parent.clone()), &profile.sid, AccessMask::FILE_GENERIC_READ,
-                ).map_err(|error| format!("Could not grant read-only access to the linker: {error}"))?;
-                path_entries.push(parent);
-            }
+    let linker = if matches!(command, ValidationCommand::Check | ValidationCommand::Test) {
+        Some(find_msvc_linker()?)
+    } else {
+        None
+    };
+    if let Some(linker) = linker.as_ref() {
+        if let Some(parent) = linker.parent() {
+            path_entries.push(parent.to_path_buf());
         }
     }
     path_entries.sort();
     path_entries.dedup();
+    let executable_tool_access = AccessMask(
+        AccessMask::FILE_GENERIC_READ.0 | windows::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE.0,
+    );
     for path in &path_entries {
         if path != &system32 {
             grant_to_package(
-                ResourcePath::Directory(path.clone()), &profile.sid, AccessMask::FILE_GENERIC_READ,
-            ).map_err(|error| format!("Could not grant read-only access to a toolchain directory: {error}"))?;
+                ResourcePath::Directory(path.clone()), &profile.sid, executable_tool_access,
+            ).map_err(|error| format!("Could not grant read and execute access to an approved toolchain directory: {error}"))?;
         }
     }
     let path_value = std::env::join_paths(path_entries)
@@ -231,8 +253,15 @@ fn run_validation_windows(
         (OsString::from("ComSpec"), system32.join("cmd.exe").into_os_string()),
         (OsString::from("PATHEXT"), OsString::from(".COM;.EXE;.BAT;.CMD")),
         (OsString::from("PATH"), path_value),
+        (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
+        (OsString::from("RUSTFMT"), rustfmt.as_os_str().to_owned()),
         (OsString::from("USERPROFILE"), profile_home.as_os_str().to_owned()),
         (OsString::from("HOME"), profile_home.as_os_str().to_owned()),
+        (
+            OsString::from("LOCALAPPDATA"),
+            std::env::var_os("LOCALAPPDATA")
+                .ok_or_else(|| "Could not resolve LOCALAPPDATA required for AppContainer process creation.".to_string())?,
+        ),
         (OsString::from("TEMP"), temp.as_os_str().to_owned()),
         (OsString::from("TMP"), temp.as_os_str().to_owned()),
         (OsString::from("CARGO_HOME"), cargo_home.into_os_string()),
@@ -244,7 +273,15 @@ fn run_validation_windows(
         (OsString::from("GIT_TERMINAL_PROMPT"), OsString::from("0")),
     ];
     for key in ["INCLUDE", "LIB", "LIBPATH"] {
-        if let Some(value) = std::env::var_os(key) {
+        let value = if key == "LIB" {
+            match linker.as_deref() {
+                Some(linker) => Some(msvc_library_search_path(linker)?),
+                None => std::env::var_os(key),
+            }
+        } else {
+            std::env::var_os(key)
+        };
+        if let Some(value) = value {
             for directory in std::env::split_paths(&value) {
                 if directory.is_dir() {
                     let resolved = directory.canonicalize()
@@ -257,6 +294,9 @@ fn run_validation_windows(
             env.push((OsString::from(key), value));
         }
     }
+    // CreateProcessW requires custom Unicode environment blocks to be sorted
+    // alphabetically by variable name, without regard to case.
+    sort_windows_environment(&mut env);
 
     let command_args = command.args(&manifest);
     let command_line = std::iter::once(cargo.as_os_str())
@@ -270,9 +310,12 @@ fn run_validation_windows(
         cwd: Some(worktree.clone()),
         env: Some(env),
         stdio: StdioConfig::Pipe,
-        suspended: false,
+        // rappct assigns the still-suspended process to its Job Object before
+        // returning. We apply and read back the complete job policy before the
+        // primary thread is resumed.
+        suspended: true,
         join_job: Some(JobLimits {
-            memory_bytes: Some(2 * 1024 * 1024 * 1024usize),
+            memory_bytes: Some(MAX_WORKER_PROCESS_MEMORY_BYTES),
             cpu_rate_percent: Some(80),
             kill_on_job_close: true,
         }),
@@ -280,12 +323,34 @@ fn run_validation_windows(
     };
 
     let started = Instant::now();
-    let mut child = launch_in_container_with_io(&capabilities, &options)
-        .map_err(|error| format!("The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"))?;
+    let mut child = launch_in_container_with_io(&capabilities, &options).map_err(|error| {
+        let source = std::error::Error::source(&error).map(ToString::to_string);
+        match source {
+            Some(source) => format!(
+                "The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error} ({source})"
+            ),
+            None => format!(
+                "The AppContainer worker could not be started; no unsandboxed fallback was attempted: {error}"
+            ),
+        }
+    })?;
+    let job_handle = match child.job_guard.as_ref() {
+        Some(guard) => guard.as_handle().0,
+        None => {
+            let terminated = terminate_worker_process(child.pid);
+            let detail = if terminated {
+                "the suspended worker was terminated"
+            } else {
+                "Windows did not confirm termination of the suspended process"
+            };
+            return Err(format!("The AppContainer launcher did not return its required Job Object guard; {detail}."));
+        }
+    };
+    configure_worker_job(windows::Win32::Foundation::HANDLE(job_handle))?;
+    resume_suspended_worker(child.pid)?;
     drop(child.stdin.take());
     let stdout = child.stdout.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
     let stderr = child.stderr.take().map(|mut stream| thread::spawn(move || read_capped(&mut stream, MAX_OUTPUT_BYTES)));
-    let job_handle = child.job_guard.as_ref().map(|guard| guard.as_handle().0);
     let wait_thread = thread::spawn(move || child.wait(Some(EXECUTION_TIMEOUT)));
     let wait_started = Instant::now();
     let exit_code = loop {
@@ -295,23 +360,18 @@ fn run_validation_windows(
                 .map_err(|error| format!("The restricted worker timed out or failed; its Job Object was closed: {error}"))?;
         }
         if cancellation.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle, 1223) };
-                if terminated {
-                    let _ = wait_thread.join();
-                    return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
-                }
-                return Err("Restricted validation cancellation was requested, but Windows refused to terminate the worker Job Object. The configured ten-minute worker timeout remains active.".into());
+            let terminated = unsafe { terminate_job_object(job_handle, 1223) };
+            if terminated {
+                let _ = wait_thread.join();
+                return Err("Restricted validation was cancelled. The worker Job Object and its child processes were terminated.".into());
             }
-            return Err("Restricted validation cancellation was requested, but no Job Object handle was available. The configured worker timeout remains active.".into());
+            return Err("Restricted validation cancellation was requested, but Windows refused to terminate the worker Job Object. The configured ten-minute worker timeout remains active.".into());
         }
         if wait_started.elapsed() >= EXECUTION_TIMEOUT + Duration::from_secs(2) {
-            if let Some(handle) = job_handle {
-                let terminated = unsafe { terminate_job_object(handle, 1460) };
-                if terminated {
-                    let _ = wait_thread.join();
-                    return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());
-                }
+            let terminated = unsafe { terminate_job_object(job_handle, 1460) };
+            if terminated {
+                let _ = wait_thread.join();
+                return Err("Restricted validation exceeded its ten-minute timeout. The worker Job Object and its child processes were terminated.".into());
             }
             return Err("Restricted validation exceeded its ten-minute timeout; worker termination could not be confirmed.".into());
         }
@@ -327,8 +387,150 @@ fn run_validation_windows(
         stdout: redact_output(&String::from_utf8_lossy(&stdout)),
         stderr: redact_output(&String::from_utf8_lossy(&stderr)),
         output_truncated: stdout_truncated || stderr_truncated,
-        isolation: "Windows AppContainer + LPAC; no network capabilities; 2 GiB memory limit; 80% CPU cap; kill-on-job-close".into(),
+        isolation: "Windows AppContainer + LPAC; no network capabilities; suspended launch; 64-process Job Object cap; 2 GiB per-process and 4 GiB aggregate memory caps; 80% CPU cap; no breakaway; kill-on-job-close".into(),
     })
+}
+
+#[cfg(windows)]
+fn configure_worker_job(job: windows::Win32::Foundation::HANDLE) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use windows::Win32::System::JobObjects::{
+        QueryInformationJobObject, SetInformationJobObject,
+        JobObjectExtendedLimitInformation,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+
+    let required = JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | JOB_OBJECT_LIMIT_JOB_MEMORY
+        | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let mut requested = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    requested.BasicLimitInformation.LimitFlags = required;
+    requested.BasicLimitInformation.ActiveProcessLimit = MAX_WORKER_PROCESSES;
+    requested.ProcessMemoryLimit = MAX_WORKER_PROCESS_MEMORY_BYTES;
+    requested.JobMemoryLimit = MAX_WORKER_JOB_MEMORY_BYTES;
+
+    unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &requested as *const _ as *const c_void,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    }
+    .map_err(|error| format!("Could not enforce the restricted worker Job Object policy: {error}"))?;
+
+    let mut effective = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    let mut returned_length = 0u32;
+    unsafe {
+        QueryInformationJobObject(
+            Some(job),
+            JobObjectExtendedLimitInformation,
+            &mut effective as *mut _ as *mut c_void,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            Some(&mut returned_length),
+        )
+    }
+    .map_err(|error| format!("Could not verify the restricted worker Job Object policy: {error}"))?;
+
+    let flags = effective.BasicLimitInformation.LimitFlags;
+    let required_bits = required.0;
+    let breakaway_bits =
+        (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK).0;
+    if flags.0 & required_bits != required_bits
+        || flags.0 & breakaway_bits != 0
+        || effective.BasicLimitInformation.ActiveProcessLimit != MAX_WORKER_PROCESSES
+        || effective.ProcessMemoryLimit != MAX_WORKER_PROCESS_MEMORY_BYTES
+        || effective.JobMemoryLimit != MAX_WORKER_JOB_MEMORY_BYTES
+        || returned_length < size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32
+    {
+        return Err("Windows did not retain the complete worker Job Object policy. The worker remains suspended and will be terminated.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn resume_suspended_worker(process_id: u32) -> Result<(), String> {
+    use std::mem::size_of;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_NO_MORE_FILES, HANDLE,
+    };
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
+    };
+    use windows::Win32::System::Threading::{
+        OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    };
+
+    struct OwnedHandle(HANDLE);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+
+    let snapshot = OwnedHandle(
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+            .map_err(|error| format!("Could not inspect suspended worker threads: {error}"))?,
+    );
+    let mut entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    unsafe { Thread32First(snapshot.0, &mut entry) }
+        .map_err(|error| format!("Could not enumerate suspended worker threads: {error}"))?;
+
+    let mut primary_thread_id = None;
+    loop {
+        if entry.th32OwnerProcessID == process_id
+            && primary_thread_id.replace(entry.th32ThreadID).is_some()
+        {
+            return Err("The suspended worker unexpectedly has multiple threads before initialization; refusing to resume it.".into());
+        }
+        match unsafe { Thread32Next(snapshot.0, &mut entry) } {
+            Ok(()) => {}
+            Err(error) => {
+                let last_error = unsafe { GetLastError() };
+                if last_error == ERROR_NO_MORE_FILES {
+                    break;
+                }
+                return Err(format!("Could not complete suspended worker thread enumeration: {error}"));
+            }
+        }
+    }
+
+    let thread_id = primary_thread_id
+        .ok_or_else(|| "The suspended worker's primary thread could not be identified.".to_string())?;
+    let thread = OwnedHandle(
+        unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, thread_id) }
+            .map_err(|error| format!("Could not open the suspended worker's primary thread: {error}"))?,
+    );
+    let previous_suspend_count = unsafe { ResumeThread(thread.0) };
+    if previous_suspend_count != 1 {
+        return Err(format!(
+            "The worker primary thread had an unexpected suspend count ({previous_suspend_count}); the Job Object will terminate it instead of running with an unverified startup state."
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn terminate_worker_process(process_id: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) }) else {
+        return false;
+    };
+    let terminated = unsafe { TerminateProcess(process, 1) }.is_ok();
+    let closed = unsafe { CloseHandle(process) }.is_ok();
+    terminated && closed
 }
 
 #[cfg(windows)]
@@ -352,6 +554,225 @@ fn find_executable(name: &str) -> Result<PathBuf, String> {
         }
     }
     Err(format!("{name} was not found on PATH. Install the Rust toolchain and restart Spindle."))
+}
+
+#[cfg(windows)]
+fn find_msvc_linker() -> Result<PathBuf, String> {
+    use std::process::Command;
+
+    fn linker_in_tools_directory(tools_directory: &Path) -> Option<PathBuf> {
+        for host in ["Hostx64", "Hostx86"] {
+            let candidate = tools_directory
+                .join("bin")
+                .join(host)
+                .join("x64")
+                .join("link.exe");
+            if candidate.is_file() {
+                if let Ok(path) = candidate.canonicalize() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    fn newest_toolchain_linker(tools_root: &Path) -> Option<PathBuf> {
+        let mut versions = std::fs::read_dir(tools_root)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .collect::<Vec<_>>();
+        versions.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        versions
+            .iter()
+            .find_map(|entry| linker_in_tools_directory(&entry.path()))
+    }
+
+    // Prefer the exact MSVC toolchain configured by the host environment.
+    if let Some(tools_directory) = std::env::var_os("VCToolsInstallDir").map(PathBuf::from) {
+        if let Some(linker) = linker_in_tools_directory(&tools_directory) {
+            return Ok(linker);
+        }
+    }
+
+    // If the developer command prompt is not active, ask Visual Studio Installer
+    // for the installed C++ toolchain. Never fall back to an arbitrary link.exe
+    // from PATH: Git for Windows also ships an unrelated executable with that name.
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+    let vswhere = program_files_x86
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    if vswhere.is_file() {
+        let output = Command::new(&vswhere)
+            .args([
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ])
+            .output()
+            .map_err(|error| format!("Could not query Visual Studio for its installed C++ toolchain: {error}"))?;
+        if output.status.success() {
+            let installation = String::from_utf8_lossy(&output.stdout);
+            let installation = installation.trim();
+            if !installation.is_empty() {
+                let tools_root = PathBuf::from(installation)
+                    .join("VC")
+                    .join("Tools")
+                    .join("MSVC");
+                if let Some(linker) = newest_toolchain_linker(&tools_root) {
+                    return Ok(linker);
+                }
+            }
+        }
+    }
+
+    // Some Visual Studio developer environments expose the installation root
+    // directly even when vswhere.exe is unavailable.
+    if let Some(installation) = std::env::var_os("VSINSTALLDIR").map(PathBuf::from) {
+        let tools_root = installation.join("VC").join("Tools").join("MSVC");
+        if let Some(linker) = newest_toolchain_linker(&tools_root) {
+            return Ok(linker);
+        }
+    }
+
+    Err(
+        "The Microsoft MSVC linker was not found. Install Visual Studio Build Tools with the C++ x64/x86 workload; an arbitrary link.exe on PATH is not accepted."
+            .into(),
+    )
+}
+
+#[cfg(windows)]
+fn msvc_library_search_path(linker: &Path) -> Result<std::ffi::OsString, String> {
+    let msvc_version = linker
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| "Could not resolve the MSVC toolchain root from link.exe.".to_string())?;
+    let msvc_libraries = msvc_version.join("lib").join("x64");
+    if !msvc_libraries.is_dir() {
+        return Err(format!(
+            "The MSVC library directory was not found: {}",
+            msvc_libraries.display()
+        ));
+    }
+
+    let mut directories = std::env::var_os("LIB")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    directories.push(msvc_libraries);
+    directories.extend(windows_sdk_library_directories());
+
+    directories.retain(|directory| directory.is_dir());
+    let mut resolved = Vec::with_capacity(directories.len());
+    for directory in directories {
+        let path = directory.canonicalize().map_err(|error| {
+            format!(
+                "Could not resolve the MSVC library directory {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !resolved.contains(&path) {
+            resolved.push(path);
+        }
+    }
+    if !resolved.iter().any(|directory| directory.join("kernel32.lib").is_file()) {
+        return Err(
+            "The Windows SDK x64 library directory containing kernel32.lib was not found; install the Windows 10/11 SDK with Visual Studio Build Tools."
+                .into(),
+        );
+    }
+    std::env::join_paths(resolved)
+        .map_err(|error| format!("Could not construct the isolated MSVC LIB path: {error}"))
+}
+
+#[cfg(windows)]
+fn windows_sdk_library_directories() -> Vec<PathBuf> {
+    let mut sdk_roots = Vec::new();
+    if let Some(root) = std::env::var_os("WindowsSdkDir").map(PathBuf::from) {
+        sdk_roots.push(root);
+    }
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+    sdk_roots.push(program_files_x86.join("Windows Kits").join("10"));
+
+    for sdk_root in sdk_roots {
+        let library_root = sdk_root.join("Lib");
+        let Ok(entries) = std::fs::read_dir(&library_root) else {
+            continue;
+        };
+        let mut versions = entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("10."))
+            .collect::<Vec<_>>();
+        versions.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        for version in versions {
+            let version_root = version.path();
+            let um = version_root.join("um").join("x64");
+            let ucrt = version_root.join("ucrt").join("x64");
+            if um.join("kernel32.lib").is_file() && ucrt.is_dir() {
+                return vec![um, ucrt];
+            }
+        }
+    }
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn resolve_rustup_tool(
+    name: &str,
+    worktree: &Path,
+    rustup_home: &Path,
+) -> Result<PathBuf, String> {
+    use std::process::Command;
+
+    let rustup = find_executable("rustup.exe")?;
+    let output = Command::new(rustup)
+        .args(["which", name])
+        .current_dir(worktree)
+        .env("RUSTUP_HOME", rustup_home)
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .output()
+        .map_err(|error| format!("Could not resolve the installed Rust {name} executable: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Rustup could not resolve an installed {name} executable without installing a toolchain: {}",
+            detail.trim()
+        ));
+    }
+
+    let resolved = String::from_utf8_lossy(&output.stdout);
+    let resolved = resolved.trim();
+    if resolved.is_empty() {
+        return Err(format!("Rustup returned an empty path for the {name} executable."));
+    }
+    let executable = PathBuf::from(resolved)
+        .canonicalize()
+        .map_err(|error| format!("Could not canonicalize the installed Rust {name} executable: {error}"))?;
+    let toolchains = rustup_home.join("toolchains")
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the installed Rust toolchain directory: {error}"))?;
+    if !executable.starts_with(&toolchains)
+        || !executable.is_file()
+        || !executable.file_name().is_some_and(|file| {
+            file.to_string_lossy().eq_ignore_ascii_case(&format!("{name}.exe"))
+        })
+    {
+        return Err(format!(
+            "Rustup resolved {name} outside the installed toolchain directory; refusing to launch it."
+        ));
+    }
+    Ok(executable)
 }
 
 #[cfg(windows)]
@@ -449,6 +870,16 @@ fn join_output(
     }
 }
 
+fn sort_windows_environment(
+    environment: &mut [(std::ffi::OsString, std::ffi::OsString)],
+) {
+    environment.sort_by(|(left, _), (right, _)| {
+        left.to_string_lossy()
+            .to_ascii_lowercase()
+            .cmp(&right.to_string_lossy().to_ascii_lowercase())
+    });
+}
+
 fn redact_output(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let bytes = input.as_bytes();
@@ -494,6 +925,211 @@ mod tests {
         assert_eq!(ValidationCommand::Format.args("src-tauri/Cargo.toml").join(" "), "fmt --manifest-path src-tauri/Cargo.toml --all -- --check");
         assert_eq!(ValidationCommand::Check.args("Cargo.toml").join(" "), "check --locked --manifest-path Cargo.toml --all-targets");
         assert_eq!(ValidationCommand::Test.args("Cargo.toml").join(" "), "test --locked --manifest-path Cargo.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lpac_worker_enforces_filesystem_network_and_job_boundaries() {
+        use std::net::TcpListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "spindle-lpac-acceptance-{}-{unique}",
+            std::process::id()
+        ));
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(worktree.join("src"))
+            .expect("the isolated acceptance worktree should be created");
+
+        struct TestTree(PathBuf);
+        impl Drop for TestTree {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _tree = TestTree(root.clone());
+
+        let outside_read = root.join("outside-secret.txt");
+        let outside_write = root.join("outside-created.txt");
+        std::fs::write(&outside_read, "host-only sentinel")
+            .expect("the host-only sentinel should be created");
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .expect("a live loopback listener should be available");
+        let loopback = listener.local_addr().unwrap().to_string();
+
+        std::fs::write(
+            worktree.join("Cargo.toml"),
+            "[package]\nname = \"spindle-lpac-acceptance\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            worktree.join("Cargo.lock"),
+            "# Generated by the acceptance test.\nversion = 4\n\n[[package]]\nname = \"spindle-lpac-acceptance\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let probe = r#"
+use std::{
+    env, fs,
+    net::{SocketAddr, TcpStream},
+    process::{Command, Stdio},
+    sync::Mutex,
+    thread,
+    time::Duration,
+};
+use std::os::windows::process::CommandExt;
+
+static SERIAL: Mutex<()> = Mutex::new(());
+const OUTSIDE_READ: &str = __OUTSIDE_READ__;
+const OUTSIDE_WRITE: &str = __OUTSIDE_WRITE__;
+const LOOPBACK: &str = __LOOPBACK__;
+
+#[test]
+fn denies_outside_file_read() {
+    let _serial = SERIAL.lock().unwrap();
+    assert!(fs::read(OUTSIDE_READ).is_err(), "LPAC read a file outside its granted worktree");
+}
+
+#[test]
+fn denies_outside_file_creation() {
+    let _serial = SERIAL.lock().unwrap();
+    assert!(fs::write(OUTSIDE_WRITE, b"escape").is_err(), "LPAC created a file outside its granted worktree");
+}
+
+#[test]
+fn denies_loopback_network() {
+    let _serial = SERIAL.lock().unwrap();
+    let address: SocketAddr = LOOPBACK.parse().unwrap();
+    assert!(
+        TcpStream::connect_timeout(&address, Duration::from_millis(750)).is_err(),
+        "LPAC connected to a host loopback listener without a network capability"
+    );
+}
+
+#[test]
+fn denies_job_breakaway() {
+    let _serial = SERIAL.lock().unwrap();
+    let executable = env::current_exe().unwrap();
+    let result = Command::new(executable)
+        .args(["--exact", "process_hold_probe", "--nocapture", "--test-threads=1"])
+        .creation_flags(0x01000000)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match result {
+        Err(error) => assert_eq!(
+            error.raw_os_error(),
+            Some(5),
+            "breakaway must fail specifically with ERROR_ACCESS_DENIED"
+        ),
+        Ok(mut child) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("a child process escaped the restricted worker Job Object");
+        }
+    }
+}
+
+#[test]
+fn enforces_active_process_limit() {
+    let _serial = SERIAL.lock().unwrap();
+    let executable = env::current_exe().unwrap();
+    let mut children = Vec::new();
+    let mut rejection = None;
+    for _ in 0..80 {
+        let result = Command::new(&executable)
+            .args(["--exact", "process_hold_probe", "--nocapture", "--test-threads=1"])
+            .env("SPINDLE_PROCESS_HOLD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        match result {
+            Ok(child) => children.push(child),
+            Err(error) => {
+                rejection = error.raw_os_error();
+                break;
+            }
+        }
+    }
+    for mut child in children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert_eq!(
+        rejection,
+        Some(1816),
+        "the 64-process Job Object cap must reject further process creation with ERROR_NOT_ENOUGH_QUOTA"
+    );
+}
+
+#[test]
+fn process_hold_probe() {
+    if env::var_os("SPINDLE_PROCESS_HOLD").is_some() {
+        thread::sleep(Duration::from_secs(30));
+    }
+}
+"#;
+        let probe = probe
+            .replace(
+                "__OUTSIDE_READ__",
+                &format!("{:?}", outside_read.to_string_lossy().to_string()),
+            )
+            .replace(
+                "__OUTSIDE_WRITE__",
+                &format!("{:?}", outside_write.to_string_lossy().to_string()),
+            )
+            .replace("__LOOPBACK__", &format!("{:?}", loopback));
+        std::fs::write(worktree.join("src/lib.rs"), probe).unwrap();
+
+        let result = run_validation(
+            worktree.to_string_lossy().as_ref(),
+            ValidationCommand::Test,
+        )
+        .expect("the LPAC worker should complete the runtime acceptance fixture");
+        assert!(
+            result.success,
+            "LPAC runtime acceptance failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+            result.exit_code,
+            result.stdout,
+            result.stderr
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn worker_job_policy_is_applied_and_read_back_before_resume() {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::JobObjects::CreateJobObjectW;
+        use windows::core::PCWSTR;
+
+        let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+            .expect("a private Windows Job Object should be creatable");
+        let result = configure_worker_job(job);
+        unsafe { CloseHandle(job) }.expect("the test Job Object should close");
+        result.expect("the full process and memory policy must be retained by Windows");
+    }
+
+    #[test]
+    fn windows_environment_entries_are_sorted_case_insensitively() {
+        let mut environment = vec![
+            (std::ffi::OsString::from("SystemRoot"), std::ffi::OsString::from("C:\\\\Windows")),
+            (std::ffi::OsString::from("cargo_home"), std::ffi::OsString::from("C:\\\\Cargo")),
+            (std::ffi::OsString::from("ComSpec"), std::ffi::OsString::from("C:\\\\Windows\\\\System32\\\\cmd.exe")),
+            (std::ffi::OsString::from("PATH"), std::ffi::OsString::from("C:\\\\Windows")),
+        ];
+        sort_windows_environment(&mut environment);
+        let keys: Vec<_> = environment
+            .iter()
+            .map(|(key, _)| key.to_string_lossy().to_ascii_lowercase())
+            .collect();
+        assert_eq!(keys, ["cargo_home", "comspec", "path", "systemroot"]);
     }
 
     #[test]

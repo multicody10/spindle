@@ -3338,6 +3338,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-updater",
  "tokio",
+ "windows",
  "winreg",
  "zip",
 ]
