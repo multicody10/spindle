@@ -104,6 +104,20 @@ impl AgentRuntime {
     }
 }
 
+#[derive(Clone, Copy)]
+struct AgentServices<'a> {
+    chat_runtime: &'a ChatRuntime,
+    inference: &'a InferenceRuntimeManager,
+    permissions: &'a PermissionBroker,
+}
+
+struct AgentLoopContext<'a> {
+    app: &'a AppHandle,
+    database: &'a Path,
+    services: AgentServices<'a>,
+    run: &'a ActiveRun,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum ModelTurn {
@@ -194,10 +208,8 @@ pub async fn run_task(
     let result = run_inner(
         app,
         database,
-        chat_runtime,
-        inference,
-        permissions,
-        &run,
+        AgentServices { chat_runtime, inference, permissions },
+        run.as_ref(),
         provider,
         input,
     )
@@ -209,10 +221,8 @@ pub async fn run_task(
 async fn run_inner(
     app: AppHandle,
     database: PathBuf,
-    chat_runtime: &ChatRuntime,
-    inference: &InferenceRuntimeManager,
-    permissions: &PermissionBroker,
-    run: &Arc<ActiveRun>,
+    services: AgentServices<'_>,
+    run: &ActiveRun,
     provider: ChatProvider,
     input: RunAgentTaskRequest,
 ) -> Result<AgentRunSummary, String> {
@@ -231,7 +241,7 @@ async fn run_inner(
             "Only an approved task plan or a resumable interrupted task can execute.".into(),
         );
     }
-    permissions.authorize(
+    services.permissions.authorize(
         &task.session_id,
         PermissionOperation::WorkspaceRead,
         "agent_task:run",
@@ -278,13 +288,14 @@ async fn run_inner(
     )
     .await?;
 
-    let result = loop_agent(
-        &app,
-        &database,
-        chat_runtime,
-        inference,
-        permissions,
+    let context = AgentLoopContext {
+        app: &app,
+        database: &database,
+        services,
         run,
+    };
+    let result = loop_agent(
+        &context,
         &task,
         &project,
         &worktree.path,
@@ -322,7 +333,7 @@ async fn run_inner(
                 || error.to_ascii_lowercase().contains("cancelled");
             let state = if cancelled { "cancelled" } else { "failed" };
             let reason = error.chars().take(1_200).collect::<String>();
-            let _ = db(&database, {
+            db(&database, {
                 let id = task.id.clone();
                 let state = state.to_owned();
                 let detail = json!({"reason":reason});
@@ -347,19 +358,14 @@ async fn run_inner(
 }
 
 async fn loop_agent(
-    app: &AppHandle,
-    database: &PathBuf,
-    chat_runtime: &ChatRuntime,
-    inference: &InferenceRuntimeManager,
-    permissions: &PermissionBroker,
-    run: &Arc<ActiveRun>,
+    context: &AgentLoopContext<'_>,
     task: &AgentTask,
     project: &Project,
     worktree: &str,
     provider: ChatProvider,
     input: &RunAgentTaskRequest,
 ) -> Result<AgentRunSummary, String> {
-    let saved = db(database, {
+    let saved = db(context.database, {
         let id = task.id.clone();
         move |database| projects::load_agent_messages(database, id)
     })
@@ -378,7 +384,7 @@ async fn loop_agent(
         let query_end = safe_boundary(&task.prompt, 2_048);
         let query = task.prompt[..query_end].to_owned();
         let project_id = project.id.clone();
-        let memories = db(database, move |database| {
+        let memories = db(context.database, move |database| {
             projects::search_project_memory(database, project_id, query, 8)
         })
         .await?;
@@ -416,15 +422,15 @@ async fn loop_agent(
             role: "user".into(),
             content: user.clone(),
         });
-        save_message(database, &task.id, "system", &system).await?;
-        save_message(database, &task.id, "user", &user).await?;
+        save_message(context.database, &task.id, "system", &system).await?;
+        save_message(context.database, &task.id, "user", &user).await?;
     } else if messages.last().is_none_or(|message| message.role != "user") {
         let recovery = "RECOVERY: Spindle restarted after persisting the previous assistant turn. Its tool result may not have been committed. Do not repeat the previous write blindly. Inspect the current files and task diff, determine which effects already happened, then continue safely.";
         messages.push(ChatMessage {
             role: "user".into(),
             content: recovery.into(),
         });
-        save_message(database, &task.id, "user", recovery).await?;
+        save_message(context.database, &task.id, "user", recovery).await?;
     }
 
     let mut generation = input.generation.clone();
@@ -436,9 +442,9 @@ async fn loop_agent(
     let mut diff_reviewed_after_last_change = false;
 
     for turn in 1..=MAX_TURNS {
-        ensure_active(run)?;
+        ensure_active(context.run)?;
         let request_id = new_request_id();
-        let cancellation = chat_runtime.begin(&request_id)?;
+        let cancellation = context.services.chat_runtime.begin(&request_id)?;
         let request = ChatRequest {
             request_id: request_id.clone(),
             session_id: task.session_id.clone(),
@@ -449,8 +455,8 @@ async fn loop_agent(
             generation: generation.clone(),
         };
         event(
-            app,
-            database,
+            context.app,
+            context.database,
             &task.id,
             "model_turn_started",
             json!({"turn":turn}),
@@ -462,9 +468,9 @@ async fn loop_agent(
                 cancellation.notify_one();
                 Err("Agent run cancelled.".to_string())
             }
-            result = chat::run(app.clone(), request, cancellation.clone(), inference) => result,
+            result = chat::run(context.app.clone(), request, cancellation.clone(), context.services.inference) => result,
         };
-        chat_runtime.finish(&request_id);
+        context.services.chat_runtime.finish(&request_id);
         let response = response?;
         let raw = response.content.trim().to_owned();
         if raw.is_empty() || raw.len() > 64 * 1024 {
@@ -477,7 +483,7 @@ async fn loop_agent(
             role: "assistant".into(),
             content: raw.clone(),
         });
-        save_message(database, &task.id, "assistant", &raw).await?;
+        save_message(context.database, &task.id, "assistant", &raw).await?;
 
         let action = match parse_turn(&raw) {
             Ok(action) => {
@@ -496,10 +502,10 @@ async fn loop_agent(
                     role: "user".into(),
                     content: correction.clone(),
                 });
-                save_message(database, &task.id, "user", &correction).await?;
+                save_message(context.database, &task.id, "user", &correction).await?;
                 event(
-                    app,
-                    database,
+                    context.app,
+                    context.database,
                     &task.id,
                     "protocol_repair",
                     json!({
@@ -522,7 +528,7 @@ async fn loop_agent(
                         "The agent stopped without completing the task: {summary}"
                     ));
                 }
-                let database_copy = database.clone();
+                let database_copy = context.database.to_path_buf();
                 let task_copy = task.id.clone();
                 let final_diff = tokio::task::spawn_blocking(move || {
                     git::worktree_diff(&database_copy, &task_copy)
@@ -540,12 +546,12 @@ async fn loop_agent(
                         role: "user".into(),
                         content: instruction.into(),
                     });
-                    save_message(database, &task.id, "user", instruction).await?;
+                    save_message(context.database, &task.id, "user", instruction).await?;
                     continue;
                 }
                 event(
-                    app,
-                    database,
+                    context.app,
+                    context.database,
                     &task.id,
                     "final_response",
                     json!({"summary":summary}),
@@ -576,7 +582,7 @@ async fn loop_agent(
                             role: "user".into(),
                             content: content.clone(),
                         });
-                        save_message(database, &task.id, "user", &content).await?;
+                        save_message(context.database, &task.id, "user", &content).await?;
                         event(
                             app,
                             database,
@@ -598,8 +604,8 @@ async fn loop_agent(
                     .unwrap_or("")
                     .to_owned();
                 event(
-                    app,
-                    database,
+                    context.app,
+                    context.database,
                     &task.id,
                     "tool_started",
                     json!({
@@ -608,7 +614,7 @@ async fn loop_agent(
                 )
                 .await?;
                 let result =
-                    execute_tool(database, permissions, run, task, worktree, &tool, arguments)
+                    execute_tool(context, task, worktree, &tool, arguments)
                         .await;
                 let tool_result = match result {
                     Ok((value, changed)) => {
@@ -662,7 +668,7 @@ async fn loop_agent(
                     role: "user".into(),
                     content: content.clone(),
                 });
-                save_message(database, &task.id, "user", &content).await?;
+                save_message(context.database, &task.id, "user", &content).await?;
             }
         }
     }
@@ -672,18 +678,16 @@ async fn loop_agent(
 }
 
 async fn execute_tool(
-    database: &PathBuf,
-    permissions: &PermissionBroker,
-    run: &Arc<ActiveRun>,
+    context: &AgentLoopContext<'_>,
     task: &AgentTask,
     worktree: &str,
     tool: &str,
     arguments: Value,
 ) -> Result<(Value, bool), String> {
-    ensure_active(run)?;
+    ensure_active(context.run)?;
     match tool {
         "list_files" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:list_files")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:list_files")?;
             let args: PathArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
@@ -693,7 +697,7 @@ async fn execute_tool(
             Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, false))
         }
         "read_file" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:read_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:read_file")?;
             let args: ReadArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
@@ -712,7 +716,7 @@ async fn execute_tool(
             Ok((value, false))
         }
         "list_skills" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:list_skills")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:list_skills")?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
                 crate::skills::discover(Path::new(&root)).map(|skills| skills.into_iter().map(|skill| {
@@ -722,7 +726,7 @@ async fn execute_tool(
             Ok((json!({"skills":value}), false))
         }
         "load_skill" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:load_skill")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:load_skill")?;
             let args: SkillArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
@@ -731,7 +735,7 @@ async fn execute_tool(
             Ok((json!({"name":value.name,"source":value.source,"manifest":value.manifest}), false))
         }
         "search_files" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:search_files")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:search_files")?;
             let args: SearchArgs = parse_args(arguments)?;
             if !(2..=512).contains(&args.query.len()) {
                 return Err("Search queries must contain 2 to 512 bytes.".into());
@@ -744,8 +748,8 @@ async fn execute_tool(
             Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, false))
         }
         "create_directory" => {
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:create_directory")?;
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:create_directory")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:create_directory")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:create_directory")?;
             let args: PathArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let path = args.path.clone();
@@ -756,8 +760,8 @@ async fn execute_tool(
             Ok((json!({"path":args.path,"created":true}), true))
         }
         "create_file" => {
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:create_file")?;
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:create_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:create_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:create_file")?;
             let args: CreateFileArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
@@ -767,8 +771,8 @@ async fn execute_tool(
             Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, true))
         }
         "write_file" => {
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:write_file")?;
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:write_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:write_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:write_file")?;
             let args: WriteFileArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let value = tokio::task::spawn_blocking(move || {
@@ -783,8 +787,8 @@ async fn execute_tool(
             Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, true))
         }
         "edit_file" => {
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:edit_file")?;
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:edit_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:edit_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:edit_file")?;
             let args: EditFileArgs = parse_args(arguments)?;
             if args.old_text.is_empty() || args.old_text.len()>128*1024 || args.new_text.len()>128*1024 {
                 return Err("Edit anchors and replacements must be nonempty and no larger than 128 KiB.".into());
@@ -804,8 +808,8 @@ async fn execute_tool(
             Ok((serde_json::to_value(value).map_err(|error|error.to_string())?, true))
         }
         "delete_file" => {
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:delete_file")?;
-            permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:delete_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangePropose, "agent_tool:delete_file")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::FileChangeApply, "agent_tool:delete_file")?;
             let args: DeleteFileArgs = parse_args(arguments)?;
             let root = worktree.to_owned();
             let path = args.path.clone();
@@ -816,8 +820,8 @@ async fn execute_tool(
             Ok((json!({"path":args.path,"deleted":true}), true))
         }
         "get_diff" => {
-            permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:get_diff")?;
-            let database = database.clone();
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::WorkspaceRead, "agent_tool:get_diff")?;
+            let database = context.database.to_path_buf();
             let id = task.id.clone();
             let value = tokio::task::spawn_blocking(move || git::worktree_diff(&database, &id))
                 .await.map_err(|error| format!("Task diff inspection failed: {error}"))??;
@@ -833,7 +837,7 @@ async fn execute_tool(
             }), false))
         }
         "validate" => {
-            permissions.authorize(&task.session_id, PermissionOperation::ProcessExecution, "agent_tool:validate")?;
+            context.services.permissions.authorize(&task.session_id, PermissionOperation::ProcessExecution, "agent_tool:validate")?;
             let args: ValidationArgs = parse_args(arguments)?;
             let command = match args.command.as_str() {
                 "cargo_format" => ValidationCommand::Format,
@@ -1029,7 +1033,7 @@ PROJECT: "
 }
 
 async fn save_message(
-    database: &PathBuf,
+    database: &Path,
     task_id: &str,
     role: &str,
     content: &str,
@@ -1045,7 +1049,7 @@ async fn save_message(
 
 async fn event(
     app: &AppHandle,
-    database: &PathBuf,
+    database: &Path,
     task_id: &str,
     kind: &str,
     payload: Value,
@@ -1070,12 +1074,12 @@ async fn event(
     Ok(())
 }
 
-async fn db<T, F>(database: &PathBuf, operation: F) -> Result<T, String>
+async fn db<T, F>(database: &Path, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(PathBuf) -> Result<T, String> + Send + 'static,
 {
-    let database = database.clone();
+    let database = database.to_path_buf();
     tokio::task::spawn_blocking(move || operation(database))
         .await
         .map_err(|error| format!("Agent database operation failed: {error}"))?
