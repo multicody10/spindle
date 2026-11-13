@@ -13,7 +13,7 @@ Thanks for helping improve Spindle. The repository is public and all contributio
 
 ## Local checks
 
-Run npm install and npm run check, then run cargo fmt, cargo clippy, and cargo test against src-tauri/Cargo.toml.
+Run npm ci and npm run check, then run cargo fmt and the locked Cargo validation commands against src-tauri/Cargo.toml. Use --locked for cargo clippy and cargo test so local checks match CI.
 
 ## Design expectations
 
