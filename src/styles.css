@@ -521,3 +521,103 @@ footer { font-size: 9px; }
   .chat-provider-state { flex-basis: 100%; order: 3; }
   .chat-message.user { margin-left: 5%; }
 }
+
+
+/* Managed llama.cpp runtime */
+.runtime-view { display: grid; gap: 14px; }
+.runtime-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 3px 0 2px;
+}
+.runtime-heading h2 { font-size: 20px; margin: 5px 0 0; }
+.runtime-heading p { color: #8998aa; font-size: 13px; line-height: 1.5; margin: 7px 0 0; }
+.runtime-status-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.runtime-status-copy { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.runtime-status-copy > div { display: grid; gap: 4px; }
+.runtime-status-copy strong { color: #dce8f5; font-size: 14px; }
+.runtime-status-copy span:not(.status-dot) { color: #8999ab; font-size: 11px; }
+.runtime-status-meta { display: flex; align-items: center; gap: 8px; color: #7f91a5; font-size: 10px; }
+.runtime-status-meta strong { color: #cbd8e7; font-size: 11px; }
+.runtime-panel { display: grid; gap: 15px; }
+.runtime-panel .section-heading { display: flex; justify-content: space-between; align-items: center; }
+.runtime-panel .section-heading h3 { color: #dce7f4; font-size: 14px; margin: 0; }
+.runtime-panel .section-heading p { color: #8797a9; font-size: 11px; margin: 5px 0 0; line-height: 1.5; }
+.runtime-controls { display: flex; align-items: flex-end; gap: 14px; }
+.runtime-backend-select { display: grid; gap: 6px; min-width: 180px; }
+.runtime-backend-select span, .runtime-model-path > span, .runtime-hardware > span {
+  color: #8d9db0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.runtime-backend-select select {
+  min-width: 0;
+  padding: 10px;
+  color: #dce5ef;
+  background: #0b1017;
+  border: 1px solid #2a394a;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+.runtime-install-state { display: flex; align-items: center; gap: 8px; color: #9aa8b8; font-size: 11px; padding-bottom: 10px; }
+.runtime-installed-list { display: grid; gap: 8px; }
+.runtime-installed-list > div {
+  display: grid;
+  grid-template-columns: 130px 100px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  background: #0d131c;
+  border: 1px solid #253344;
+  border-radius: 5px;
+  color: #cbd8e7;
+  font-size: 11px;
+}
+.runtime-installed-list strong { color: #9bb5ce; font-size: 10px; }
+.runtime-installed-list small { color: #718398; font-size: 10px; overflow-wrap: anywhere; }
+.runtime-model-path { display: grid; gap: 7px; }
+.runtime-model-path strong { color: #cbd8e7; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; font-weight: 500; }
+.runtime-hardware { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+.runtime-hardware strong { color: #9eafc2; font-size: 11px; font-weight: 500; overflow-wrap: anywhere; }
+.runtime-action-row { display: flex; align-items: center; gap: 14px; }
+.runtime-action-row > span { color: #78899d; font-size: 10px; line-height: 1.5; }
+.runtime-readback-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.runtime-readback-grid > div { min-width: 0; display: grid; gap: 5px; padding: 10px; background: #0d131c; border: 1px solid #253344; border-radius: 5px; }
+.runtime-readback-grid span { color: #7e91a6; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.runtime-readback-grid strong { color: #d2deeb; font-size: 12px; overflow-wrap: anywhere; }
+.runtime-log {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  color: #aab9c9;
+  background: #090d12;
+  border: 1px solid #253344;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .runtime-status-panel, .runtime-controls { flex-wrap: wrap; }
+  .runtime-readback-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .runtime-heading { align-items: flex-start; flex-direction: column; }
+  .runtime-installed-list > div { grid-template-columns: 1fr 1fr; }
+  .runtime-installed-list small { grid-column: 1 / -1; }
+  .runtime-hardware { grid-template-columns: 1fr; gap: 5px; }
+  .runtime-readback-grid { grid-template-columns: 1fr 1fr; }
+  .runtime-action-row { align-items: flex-start; flex-direction: column; }
+}
