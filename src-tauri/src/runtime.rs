@@ -700,9 +700,7 @@ pub async fn start(
                         .is_some_and(|info| info.starts_with(VERSION))
             })
         {
-            runtime.push_log(
-                "Model loaded. The pinned llama.cpp process is ready for local chat.",
-            );
+            runtime.push_log("Model loaded. The pinned llama.cpp process is ready for local chat.");
             return status(&app, runtime).await;
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
