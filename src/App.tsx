@@ -602,6 +602,7 @@ function App() {
   const startNewChat = () => {
     if (activeProjectId) void createChat(activeProjectId);
     else if (projects[0]) void createChat(projects[0].id);
+    else setProjectFormOpen(true);
   };
 
   return (
@@ -637,7 +638,10 @@ function App() {
             return (
               <section className={"sidebar-project-group " + (selected ? "selected" : "")} key={project.id}>
                 <div className="sidebar-project-row">
-                  <button type="button" className="sidebar-project-select" onClick={() => selectProject(project.id)} title={project.rootPath}>
+                  <button type="button" className="sidebar-project-select" onClick={() => {
+                    if (!selected) selectProject(project.id);
+                    setExpandedProjectId(expanded ? "" : project.id);
+                  }} title={project.rootPath} aria-expanded={expanded}>
                     <span className={"sidebar-project-chevron " + (expanded ? "expanded" : "")}>›</span>
                     <span className="sidebar-project-name">{project.name}</span>
                   </button>
