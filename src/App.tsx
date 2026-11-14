@@ -5,9 +5,6 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api } from "./lib/api";
 import ChatView from "./components/ChatView";
 import RuntimeView from "./components/RuntimeView";
-import WorkspaceView from "./components/WorkspaceView";
-import ProjectsView from "./components/ProjectsView";
-import BenchmarkView from "./components/BenchmarkView";
 import spindleLogo from "./assets/brand/spindle-logo.webp";
 import {
   DEFAULT_CONFIGURATION,
@@ -50,16 +47,33 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "workspace" | "projects" | "benchmark">("chat");
+  const [activeView, setActiveView] = useState<"settings" | "chat">("chat");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
-  const [chatInstance, setChatInstance] = useState(0);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [sessionsByProject, setSessionsByProject] = useState<Record<string, ProjectSession[]>>({});
+  const [activeProjectId, setActiveProjectId] = useState(() => {
+    try { return localStorage.getItem("spindle.active-project.v1") ?? ""; }
+    catch { return ""; }
+  });
+  const [expandedProjectId, setExpandedProjectId] = useState("");
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [sidebarBusy, setSidebarBusy] = useState(false);
+  const [projectFormOpen, setProjectFormOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectPath, setNewProjectPath] = useState("");
+  const [projectError, setProjectError] = useState<string | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [localProviders, setLocalProviders] = useState<LocalProviderStatus[]>([]);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
-  const [modelPath, setModelPath] = useState("");
+  const [modelPath, setModelPath] = useState(() => {
+    try {
+      const saved = localStorage.getItem("spindle.model-selection.v1");
+      return saved ? (JSON.parse(saved) as { managedModelPath?: string }).managedModelPath ?? "" : "";
+    } catch { return ""; }
+  });
   const [modelLibrary, setModelLibrary] = useState<ModelLibrary | null>(null);
   const [modelLibraryBusy, setModelLibraryBusy] = useState(false);
   const [modelLibraryError, setModelLibraryError] = useState<string | null>(null);
@@ -232,6 +246,58 @@ function App() {
   }, [refreshModelLibrary]);
 
   useEffect(() => {
+    let disposed = false;
+    const restoreProjects = async () => {
+      setProjectsLoading(true);
+      setProjectError(null);
+      try {
+        const items = await api.listProjects();
+        const sessionRows = await Promise.all(items.map(async (project) => ({
+          projectId: project.id,
+          sessions: (await api.listSessions(project.id)).sort((a, b) => b.updatedAt - a.updatedAt)
+        })));
+        if (disposed) return;
+
+        const sessionMap = Object.fromEntries(sessionRows.map((item) => [item.projectId, item.sessions]));
+        setProjects(items);
+        setSessionsByProject(sessionMap);
+
+        let rememberedProjectId = "";
+        let rememberedSessionId = "";
+        try {
+          rememberedProjectId = localStorage.getItem("spindle.active-project.v1") ?? "";
+          rememberedSessionId = localStorage.getItem("spindle.active-session.v1") ?? "";
+        } catch { /* Local persistence is optional; SQLite remains authoritative. */ }
+
+        const selectedProject = items.find((item) => item.id === rememberedProjectId) ?? items[0] ?? null;
+        if (!selectedProject) {
+          setActiveProjectId("");
+          setExpandedProjectId("");
+          setActiveSession(null);
+          return;
+        }
+
+        setActiveProjectId(selectedProject.id);
+        setExpandedProjectId(selectedProject.id);
+        const availableSessions = sessionMap[selectedProject.id] ?? [];
+        const selectedSession = availableSessions.find((item) => item.id === rememberedSessionId) ?? availableSessions[0] ?? null;
+        setActiveSession(selectedSession);
+        try {
+          localStorage.setItem("spindle.active-project.v1", selectedProject.id);
+          if (selectedSession) localStorage.setItem("spindle.active-session.v1", selectedSession.id);
+          else localStorage.removeItem("spindle.active-session.v1");
+        } catch { /* The active selection still works for this window. */ }
+      } catch (reason) {
+        if (!disposed) setProjectError("Could not load projects: " + String(reason));
+      } finally {
+        if (!disposed) setProjectsLoading(false);
+      }
+    };
+    void restoreProjects();
+    return () => { disposed = true; };
+  }, []);
+
+  useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -246,7 +312,7 @@ function App() {
       }
       const candidate = candidates[0];
       if (!candidate) return;
-      setActiveView("model-lab");
+      setActiveView("settings");
       selectModelPath(candidate);
     }).then((cleanup) => {
       if (disposed) cleanup();
@@ -445,15 +511,97 @@ function App() {
     generation: { ...current.generation, [key]: value }
   }));
 
-  const openProjectSession = (_project: Project, session: ProjectSession) => {
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
+
+  const persistActiveSelection = (projectId: string, sessionId: string | null) => {
+    try {
+      localStorage.setItem("spindle.active-project.v1", projectId);
+      if (sessionId) localStorage.setItem("spindle.active-session.v1", sessionId);
+      else localStorage.removeItem("spindle.active-session.v1");
+    } catch { /* Session persistence is still handled by the local database. */ }
+  };
+
+  const selectProject = (projectId: string) => {
+    const projectSessions = sessionsByProject[projectId] ?? [];
+    const nextSession = projectSessions[0] ?? null;
+    setActiveProjectId(projectId);
+    setExpandedProjectId(projectId);
+    setActiveSession(nextSession);
+    setActiveView("chat");
+    persistActiveSelection(projectId, nextSession?.id ?? null);
+  };
+
+  const selectProjectSession = (projectId: string, session: ProjectSession) => {
+    setActiveProjectId(projectId);
+    setExpandedProjectId(projectId);
     setActiveSession(session);
     setActiveView("chat");
+    persistActiveSelection(projectId, session.id);
+  };
+
+  const createChat = async (projectId = activeProjectId) => {
+    if (!projectId || sidebarBusy) return;
+    setSidebarBusy(true);
+    setProjectError(null);
+    try {
+      const session = await api.createSession(projectId);
+      setSessionsByProject((current) => ({
+        ...current,
+        [projectId]: [session, ...(current[projectId] ?? [])]
+      }));
+      setActiveProjectId(projectId);
+      setExpandedProjectId(projectId);
+      setActiveSession(session);
+      setActiveView("chat");
+      persistActiveSelection(projectId, session.id);
+    } catch (reason) {
+      setProjectError("Could not create chat: " + String(reason));
+    } finally {
+      setSidebarBusy(false);
+    }
+  };
+
+  const createProject = async () => {
+    const name = newProjectName.trim();
+    const path = newProjectPath.trim();
+    if (!name || !path || sidebarBusy) return;
+    setSidebarBusy(true);
+    setProjectError(null);
+    try {
+      const project = await api.createProject(path, name);
+      setProjects((current) => [project, ...current]);
+      setSessionsByProject((current) => ({ ...current, [project.id]: [] }));
+      setNewProjectName("");
+      setNewProjectPath("");
+      setProjectFormOpen(false);
+      setActiveProjectId(project.id);
+      setExpandedProjectId(project.id);
+      persistActiveSelection(project.id, null);
+      const session = await api.createSession(project.id);
+      setSessionsByProject((current) => ({ ...current, [project.id]: [session] }));
+      setActiveSession(session);
+      persistActiveSelection(project.id, session.id);
+      setActiveView("chat");
+    } catch (reason) {
+      setProjectError("Could not create project: " + String(reason));
+    } finally {
+      setSidebarBusy(false);
+    }
+  };
+
+  const handleSessionTitleChange = (sessionId: string, title: string) => {
+    setActiveSession((current) => current?.id === sessionId ? { ...current, title } : current);
+    setSessionsByProject((current) => Object.fromEntries(
+      Object.entries(current).map(([projectId, sessions]) => [
+        projectId,
+        sessions.map((session) => session.id === sessionId ? { ...session, title } : session)
+      ])
+    ));
   };
 
   const startNewChat = () => {
-    setActiveSession(null);
-    setChatInstance((current) => current + 1);
-    setActiveView("chat");
+    if (activeProjectId) void createChat(activeProjectId);
+    else if (projects[0]) void createChat(projects[0].id);
   };
 
   return (
@@ -467,24 +615,63 @@ function App() {
           New chat
         </button>
 
-        <div className="nav-caption">WORKSPACE</div>
-        <button className={"nav-item " + (activeView === "projects" ? "active" : "")} onClick={() => setActiveView("projects")}>
-          <span className="nav-icon">▣</span>
-          Projects
-        </button>
-
-        <details className="sidebar-tools" open={activeView === "workspace" || activeView === "benchmark"}>
-          <summary><span className="nav-icon">⌘</span><span>Tools</span><span className="sidebar-tools-chevron">⌄</span></summary>
-          <div className="sidebar-tool-list">
-            <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
-            <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmarks</button>
-          </div>
-        </details>
+        <div className="sidebar-projects-heading">
+          <span>PROJECTS</span>
+          <button type="button" title="Add project" aria-label="Add project" onClick={() => setProjectFormOpen((open) => !open)}>+</button>
+        </div>
+        {projectFormOpen && (
+          <form className="sidebar-project-form" onSubmit={(event) => { event.preventDefault(); void createProject(); }}>
+            <input aria-label="Project name" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Project name" maxLength={100} />
+            <input aria-label="Project folder path" value={newProjectPath} onChange={(event) => setNewProjectPath(event.target.value)} placeholder="Full folder path" spellCheck={false} />
+            <div>
+              <button type="button" className="sidebar-form-cancel" onClick={() => setProjectFormOpen(false)}>Cancel</button>
+              <button type="submit" disabled={sidebarBusy || !newProjectName.trim() || !newProjectPath.trim()}>{sidebarBusy ? "Creating…" : "Create"}</button>
+            </div>
+          </form>
+        )}
+        <div className="sidebar-project-list">
+          {projects.map((project) => {
+            const selected = project.id === activeProjectId;
+            const expanded = project.id === expandedProjectId;
+            const sessions = sessionsByProject[project.id] ?? [];
+            return (
+              <section className={"sidebar-project-group " + (selected ? "selected" : "")} key={project.id}>
+                <div className="sidebar-project-row">
+                  <button type="button" className="sidebar-project-select" onClick={() => selectProject(project.id)} title={project.rootPath}>
+                    <span className={"sidebar-project-chevron " + (expanded ? "expanded" : "")}>›</span>
+                    <span className="sidebar-project-name">{project.name}</span>
+                  </button>
+                  <button type="button" className="sidebar-project-add" onClick={() => void createChat(project.id)} disabled={sidebarBusy} title={"New chat in " + project.name} aria-label={"New chat in " + project.name}>+</button>
+                </div>
+                {expanded && (
+                  <div className="sidebar-chat-list">
+                    {sessions.map((session) => (
+                      <button
+                        type="button"
+                        key={session.id}
+                        className={"sidebar-chat-item " + (activeSession?.id === session.id && activeView === "chat" ? "active" : "")}
+                        onClick={() => selectProjectSession(project.id, session)}
+                        title={session.title}
+                      >
+                        <span className="sidebar-chat-icon">○</span>
+                        <span>{session.title || "New chat"}</span>
+                      </button>
+                    ))}
+                    {sessions.length === 0 && <span className="sidebar-no-chats">No chats yet</span>}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+          {!projectsLoading && projects.length === 0 && <p className="sidebar-empty-projects">Add a project to start a saved chat.</p>}
+          {projectsLoading && <p className="sidebar-empty-projects">Loading projects…</p>}
+          {projectError && <p className="sidebar-project-error">{projectError}</p>}
+        </div>
 
         <div className="sidebar-bottom">
-          <button className={"sidebar-settings " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}>
+          <button className={"sidebar-settings " + (activeView === "settings" ? "active" : "")} onClick={() => setActiveView("settings")}>
             <span aria-hidden="true">⚙</span>
-            Models
+            Settings
           </button>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
         </div>
@@ -493,41 +680,43 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
-            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "workspace" ? "Workspace" : "Models & runtime"}</h1>
+            <div className="eyebrow">{activeView === "chat" ? activeProject?.name ?? "PROJECT" : "SPINDLE"}</div>
+            <h1>{activeView === "chat" ? activeSession?.title || "Chat" : "Settings"}</h1>
           </div>
-          {activeView === "model-lab" && (
-            <button className="button subtle" onClick={() => setActiveView("chat")}>Open chat</button>
-          )}
         </header>
 
         <div className={"content " + (activeView === "chat" ? "content-chat" : "")}>
-          {activeView === "projects" ? (
-            <ProjectsView providers={localProviders} configuration={configuration} onOpenSession={openProjectSession} />
-          ) : activeView === "benchmark" ? (
-            <BenchmarkView providers={localProviders} configuration={configuration} />
-          ) : activeView === "chat" ? (
-            <ChatView
-              key={activeSession?.id ?? `ephemeral-chat-${chatInstance}`}
-              providers={localProviders}
-              providersBusy={providersBusy}
-              providersError={providersError}
-              onRefreshProviders={() => void refreshLocalProviders()}
-              modelLibrary={modelLibrary?.models ?? []}
-              managedModelPath={modelPath}
-              runtimeStatus={runtimeStatus}
-              onSelectManagedModel={prepareChatModel}
-              onEjectManagedModel={ejectChatModel}
-              onOpenModelManager={() => setActiveView("model-lab")}
-              contextTokens={configuration.runtime.contextTokens}
-              generation={configuration.generation}
-              session={activeSession}
-            />
-          ) : activeView === "workspace" ? (
-            <WorkspaceView />
+          {activeView === "chat" ? (
+            activeSession ? (
+              <ChatView
+                key={activeSession.id}
+                providers={localProviders}
+                providersBusy={providersBusy}
+                providersError={providersError}
+                onRefreshProviders={() => void refreshLocalProviders()}
+                modelLibrary={modelLibrary?.models ?? []}
+                managedModelPath={modelPath}
+                runtimeStatus={runtimeStatus}
+                onSelectManagedModel={prepareChatModel}
+                onEjectManagedModel={ejectChatModel}
+                onOpenModelManager={() => setActiveView("settings")}
+                onSessionTitleChange={handleSessionTitleChange}
+                contextTokens={configuration.runtime.contextTokens}
+                generation={configuration.generation}
+                session={activeSession}
+              />
+            ) : (
+              <section className="chat-start-state">
+                <div className="chat-start-mark">✳</div>
+                <strong>{activeProject ? activeProject.name : "Create a project to begin"}</strong>
+                <p>{activeProject ? "Every conversation is saved as a session inside this project. Start a chat to continue." : "Chats are always saved inside a project. Add a project from the left sidebar to get started."}</p>
+                <button className="button primary" onClick={() => void createChat(activeProjectId)} disabled={!activeProjectId || sidebarBusy}>
+                  {sidebarBusy ? "Creating…" : "New chat"}
+                </button>
+              </section>
+            )
           ) : (
-            <>
-          <section className="notice warning">
+            <>          <section className="notice warning">
             <strong>Project Core preview</strong>
             <span>GGUF inspection, hardware profiling, streamed local chat, provider discovery, optimization recommendations, local configuration storage, and a managed llama.cpp runtime are implemented. llama.cpp applies load-time settings and reports the values exposed by its API; some hardware and load-time settings remain unverified. Persistent projects and sessions, read-only project planning, reviewable task plans, Skill discovery, and task history are available in this preview. Agent execution, MCP tool dispatch, and the OS-isolated worker remain disabled.</span>
           </section>
