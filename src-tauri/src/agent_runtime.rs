@@ -716,14 +716,15 @@ async fn loop_agent(
                     }
                 };
                 let mut serialized = serde_json::to_string(&tool_result).unwrap_or_else(|_| {
-                    "{\"ok\":false,\"error\":\"Tool result serialization failed.\"}".into()
+                    r#"{"ok":false,"error":"Tool result serialization failed."}"#.into()
                 });
                 if serialized.len() > MAX_TOOL_OUTPUT_BYTES {
-                    let end = safe_boundary(&serialized, MAX_TOOL_OUTPUT_BYTES);
-                    serialized.truncate(end);
-                    serialized.push_str(
-                        "\n[Tool result truncated. Narrow the path, line range, or search query.]",
-                    );
+                    serialized = serde_json::to_string(&json!({
+                        "ok":false,
+                        "truncated":true,
+                        "error":"Tool output exceeded the 12 KiB response limit. Retry with a narrower path, smaller line range, or more selective search query."
+                    }))
+                    .unwrap_or_else(|_| r#"{"ok":false,"error":"Tool output exceeded the response limit."}"#.into());
                     if tool == "get_diff" {
                         diff_review_cursor = 0;
                         diff_reviewed_after_last_change = false;
