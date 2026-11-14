@@ -294,13 +294,16 @@ async fn verify_model(
 }
 
 fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
-    let interleaved_history = request.tool_history.iter().any(|entry| {
-        entry.get("kind").and_then(Value::as_str) == Some("chat_message")
-    });
+    let interleaved_history = request
+        .tool_history
+        .iter()
+        .any(|entry| entry.get("kind").and_then(Value::as_str) == Some("chat_message"));
     let mut messages = if interleaved_history {
         Vec::new()
     } else {
-        request.messages.iter()
+        request
+            .messages
+            .iter()
             .filter_map(|message| serde_json::to_value(message).ok())
             .collect::<Vec<_>>()
     };
@@ -314,7 +317,11 @@ fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
                 }
             }
             Some("assistant_tool_calls") => {
-                let calls = entry.get("calls").and_then(Value::as_array).cloned().unwrap_or_default();
+                let calls = entry
+                    .get("calls")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let tool_calls = calls.into_iter().filter_map(|call| {
                     let id = call.get("id").and_then(Value::as_str)?;
                     let name = call.get("name").and_then(Value::as_str)?;
@@ -336,7 +343,9 @@ fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
                 if ollama {
                     messages.push(json!({"role":"tool","content":content,"tool_name":name}));
                 } else {
-                    messages.push(json!({"role":"tool","tool_call_id":id,"name":name,"content":content}));
+                    messages.push(
+                        json!({"role":"tool","tool_call_id":id,"name":name,"content":content}),
+                    );
                 }
             }
             _ => {}
@@ -463,21 +472,34 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
-    let tool_calls = message.and_then(|message| message.get("tool_calls"))
+    let tool_calls = message
+        .and_then(|message| message.get("tool_calls"))
         .and_then(Value::as_array)
-        .map(|calls| calls.iter().enumerate().filter_map(|(index, call)| {
-            let function = call.get("function")?;
-            let name = function.get("name").and_then(Value::as_str).map(str::to_owned);
-            let arguments = function.get("arguments").map(|value| {
-                value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
-            });
-            Some(ToolCallFragment {
-                index,
-                id: call.get("id").and_then(Value::as_str).map(str::to_owned),
-                name,
-                arguments,
-            })
-        }).collect::<Vec<_>>())
+        .map(|calls| {
+            calls
+                .iter()
+                .enumerate()
+                .filter_map(|(index, call)| {
+                    let function = call.get("function")?;
+                    let name = function
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    let arguments = function.get("arguments").map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| value.to_string())
+                    });
+                    Some(ToolCallFragment {
+                        index,
+                        id: call.get("id").and_then(Value::as_str).map(str::to_owned),
+                        name,
+                        arguments,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
 
     Ok(Some(ParsedFrame {
@@ -541,21 +563,39 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
-    let tool_calls = provider_delta.and_then(|delta| delta.get("tool_calls"))
+    let tool_calls = provider_delta
+        .and_then(|delta| delta.get("tool_calls"))
         .and_then(Value::as_array)
-        .map(|calls| calls.iter().enumerate().filter_map(|(fallback_index, call)| {
-            let index = call.get("index").and_then(Value::as_u64).unwrap_or(fallback_index as u64) as usize;
-            let function = call.get("function");
-            let arguments = function.and_then(|function| function.get("arguments")).map(|value| {
-                value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
-            });
-            Some(ToolCallFragment {
-                index,
-                id: call.get("id").and_then(Value::as_str).map(str::to_owned),
-                name: function.and_then(|function| function.get("name")).and_then(Value::as_str).map(str::to_owned),
-                arguments,
-            })
-        }).collect::<Vec<_>>())
+        .map(|calls| {
+            calls
+                .iter()
+                .enumerate()
+                .filter_map(|(fallback_index, call)| {
+                    let index = call
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(fallback_index as u64) as usize;
+                    let function = call.get("function");
+                    let arguments = function
+                        .and_then(|function| function.get("arguments"))
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| value.to_string())
+                        });
+                    Some(ToolCallFragment {
+                        index,
+                        id: call.get("id").and_then(Value::as_str).map(str::to_owned),
+                        name: function
+                            .and_then(|function| function.get("name"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        arguments,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let usage = document.get("usage");
 
@@ -608,7 +648,9 @@ fn merge_tool_call_fragments(
 ) -> Result<(), String> {
     for fragment in fragments {
         if fragment.index >= MAX_TOOL_CALLS_PER_TURN {
-            return Err(format!("The provider exceeded the {MAX_TOOL_CALLS_PER_TURN}-call limit for one turn."));
+            return Err(format!(
+                "The provider exceeded the {MAX_TOOL_CALLS_PER_TURN}-call limit for one turn."
+            ));
         }
         let call = partial.entry(fragment.index).or_default();
         if let Some(id) = fragment.id {
@@ -639,27 +681,46 @@ fn merge_tool_call_fragments(
     Ok(())
 }
 
-fn finish_tool_calls(partial: BTreeMap<usize, PartialToolCall>, id_prefix: &str) -> Result<Vec<ChatToolCall>, String> {
+fn finish_tool_calls(
+    partial: BTreeMap<usize, PartialToolCall>,
+    id_prefix: &str,
+) -> Result<Vec<ChatToolCall>, String> {
     let mut ids = HashSet::new();
     let mut calls = Vec::with_capacity(partial.len());
     for (index, call) in partial {
         if call.name.is_empty() {
             return Err("The provider returned a tool call without a function name.".into());
         }
-        let id = call.id.unwrap_or_else(|| format!("{id_prefix}_tool_{index}"));
+        let id = call
+            .id
+            .unwrap_or_else(|| format!("{id_prefix}_tool_{index}"));
         if !ids.insert(id.clone()) {
             return Err("The provider returned duplicate tool-call identifiers.".into());
         }
-        let arguments_text = if call.arguments.is_empty() { "{}" } else { &call.arguments };
-        let arguments: Value = serde_json::from_str(arguments_text)
-            .map_err(|_| format!("The provider returned invalid JSON arguments for '{}'.", call.name))?;
+        let arguments_text = if call.arguments.is_empty() {
+            "{}"
+        } else {
+            &call.arguments
+        };
+        let arguments: Value = serde_json::from_str(arguments_text).map_err(|_| {
+            format!(
+                "The provider returned invalid JSON arguments for '{}'.",
+                call.name
+            )
+        })?;
         if !arguments.is_object() {
-            return Err(format!("Tool '{}' arguments must be a JSON object.", call.name));
+            return Err(format!(
+                "Tool '{}' arguments must be a JSON object.",
+                call.name
+            ));
         }
         calls.push(ChatToolCall {
             id,
             kind: "function".into(),
-            function: ChatToolFunctionCall { name: call.name, arguments },
+            function: ChatToolFunctionCall {
+                name: call.name,
+                arguments,
+            },
         });
     }
     Ok(calls)
@@ -1042,41 +1103,57 @@ mod tests {
     #[test]
     fn rejects_malformed_and_oversized_tool_arguments() {
         let mut malformed = BTreeMap::new();
-        merge_tool_call_fragments(&mut malformed, vec![ToolCallFragment {
-            index: 0, id: Some("call_bad".into()), name: Some("read_file".into()),
-            arguments: Some("{".into()),
-        }]).unwrap();
+        merge_tool_call_fragments(
+            &mut malformed,
+            vec![ToolCallFragment {
+                index: 0,
+                id: Some("call_bad".into()),
+                name: Some("read_file".into()),
+                arguments: Some("{".into()),
+            }],
+        )
+        .unwrap();
         assert!(finish_tool_calls(malformed, "malformed-test").is_err());
 
         let mut oversized = BTreeMap::new();
-        assert!(merge_tool_call_fragments(&mut oversized, vec![ToolCallFragment {
-            index: 0, id: Some("call_big".into()), name: Some("write_file".into()),
-            arguments: Some("x".repeat(MAX_TOOL_ARGUMENT_BYTES + 1)),
-        }]).is_err());
+        assert!(merge_tool_call_fragments(
+            &mut oversized,
+            vec![ToolCallFragment {
+                index: 0,
+                id: Some("call_big".into()),
+                name: Some("write_file".into()),
+                arguments: Some("x".repeat(MAX_TOOL_ARGUMENT_BYTES + 1)),
+            }]
+        )
+        .is_err());
     }
 
     #[test]
     fn provider_bodies_send_tool_schemas_and_round_trip_history() {
         let configuration = crate::domain::ModelConfiguration::new(
-            "sample.gguf".into(), crate::domain::OptimizationProfile::Automatic,
+            "sample.gguf".into(),
+            crate::domain::OptimizationProfile::Automatic,
         );
         let request = ChatRequest {
-            request_id:"123e4567-e89b-12d3-a456-426614174000".into(),
-            session_id:"session-one".into(),
-            provider_id:ChatProvider::LmStudio,
-            model:"local-model".into(),
-            messages:vec![ChatMessage { role:"user".into(), content:"Inspect README".into() }],
-            context_tokens:4096,
-            generation:configuration.generation,
-            tools:vec![ChatToolDefinition {
-                kind:"function".into(),
-                function:ChatToolFunctionDefinition {
-                    name:"read_file".into(),
-                    description:"Read a file".into(),
-                    parameters:json!({"type":"object","properties":{"path":{"type":"string"}}}),
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "session-one".into(),
+            provider_id: ChatProvider::LmStudio,
+            model: "local-model".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Inspect README".into(),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+            tools: vec![ChatToolDefinition {
+                kind: "function".into(),
+                function: ChatToolFunctionDefinition {
+                    name: "read_file".into(),
+                    description: "Read a file".into(),
+                    parameters: json!({"type":"object","properties":{"path":{"type":"string"}}}),
                 },
             }],
-            tool_history:vec![
+            tool_history: vec![
                 json!({"kind":"chat_message","role":"system","content":"You are Spindle."}),
                 json!({"kind":"chat_message","role":"user","content":"Inspect README"}),
                 json!({"kind":"assistant_tool_calls","calls":[
@@ -1095,7 +1172,10 @@ mod tests {
         };
         let ollama = ollama_body(&ollama_request);
         assert_eq!(ollama["tools"][0]["function"]["name"], "read_file");
-        assert_eq!(ollama["messages"][1]["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(
+            ollama["messages"][1]["tool_calls"][0]["function"]["name"],
+            "read_file"
+        );
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][1]["role"], "user");

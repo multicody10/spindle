@@ -1,5 +1,8 @@
 use crate::{
-    chat::{self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime, ChatToolDefinition, ChatToolFunctionDefinition},
+    chat::{
+        self, ChatMessage, ChatProvider, ChatRequest, ChatRuntime, ChatToolDefinition,
+        ChatToolFunctionDefinition,
+    },
     domain::GenerationSettings,
     git,
     inference::InferenceRuntimeManager,
@@ -36,6 +39,7 @@ const EVENT_NAME: &str = "agent-run-event";
 
 // Arbitrary process execution and external side-effect tools remain disabled until
 // they execute in a separately authenticated worker and pass Windows adversarial tests.
+#[cfg(test)]
 pub fn execution_worker_ready() -> bool {
     false
 }
@@ -260,7 +264,10 @@ pub async fn run_task(
 
     let task_id = input.task_id.clone();
     let run = runtime.begin(&task_id)?;
-    let _cleanup = AgentRunCleanup { runtime, task_id: task_id.clone() };
+    let _cleanup = AgentRunCleanup {
+        runtime,
+        task_id: task_id.clone(),
+    };
     let result = run_inner(
         app,
         database,
@@ -351,7 +358,9 @@ async fn run_inner(
     let result = match tokio::time::timeout(
         MAX_AGENT_RUNTIME,
         loop_agent(&context, &task, &project, &worktree.path, provider, &input),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(_) => {
             run.deadline_exceeded.store(true, Ordering::Release);
@@ -387,10 +396,9 @@ async fn run_inner(
         }
         Err(error) => {
             let deadline_exceeded = run.deadline_exceeded.load(Ordering::Acquire);
-            let cancelled = !deadline_exceeded && (
-                run.cancelled.load(Ordering::Acquire)
-                    || error.to_ascii_lowercase().contains("cancelled")
-            );
+            let cancelled = !deadline_exceeded
+                && (run.cancelled.load(Ordering::Acquire)
+                    || error.to_ascii_lowercase().contains("cancelled"));
             let state = if cancelled { "cancelled" } else { "failed" };
             let reason = error.chars().take(1_200).collect::<String>();
             db(&database, {
@@ -436,8 +444,13 @@ async fn loop_agent(
         if let Some(encoded) = message.content.strip_prefix(TOOL_HISTORY_PREFIX) {
             let entry: Value = serde_json::from_str(encoded)
                 .map_err(|_| "The saved native tool-call transcript is corrupt.".to_string())?;
-            if !matches!(entry.get("kind").and_then(Value::as_str), Some("assistant_tool_calls" | "tool_result")) {
-                return Err("The saved native tool-call transcript contains an unknown entry.".into());
+            if !matches!(
+                entry.get("kind").and_then(Value::as_str),
+                Some("assistant_tool_calls" | "tool_result")
+            ) {
+                return Err(
+                    "The saved native tool-call transcript contains an unknown entry.".into(),
+                );
             }
             tool_history.push(entry);
         } else {
@@ -455,8 +468,16 @@ async fn loop_agent(
 
     let recovered_tool_results = recover_incomplete_tool_calls(&tool_history);
     for entry in recovered_tool_results {
-        let id = entry.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
-        let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+        let id = entry
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         save_tool_history_entry(context.database, &task.id, "user", &entry).await?;
         event(
             context.app,
@@ -527,11 +548,11 @@ async fn loop_agent(
     }
 
     let mut generation = input.generation.clone();
-    generation.max_output_tokens = generation.max_output_tokens.clamp(
-        256,
-        input.context_tokens.min(4_096),
-    );
-    let mut tool_calls = tool_history.iter()
+    generation.max_output_tokens = generation
+        .max_output_tokens
+        .clamp(256, input.context_tokens.min(4_096));
+    let mut tool_calls = tool_history
+        .iter()
         .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls"))
         .filter_map(|entry| entry.get("calls").and_then(Value::as_array))
         .map(Vec::len)
@@ -561,7 +582,10 @@ async fn loop_agent(
             tools: native_tool_definitions(),
             tool_history: bounded_tool_history(
                 &tool_history,
-                input.context_tokens.saturating_mul(3).clamp(32 * 1024, MAX_CONTEXT_BYTES),
+                input
+                    .context_tokens
+                    .saturating_mul(3)
+                    .clamp(32 * 1024, MAX_CONTEXT_BYTES),
             ),
         };
         event(
@@ -586,42 +610,61 @@ async fn loop_agent(
                 return Err(format!("The model returned more than {MAX_NATIVE_TOOL_CALLS_PER_TURN} tool calls in one turn."));
             }
             if tool_calls.saturating_add(response.tool_calls.len()) > MAX_TOOL_CALLS {
-                return Err(format!("The agent exceeded its {MAX_TOOL_CALLS}-call tool budget."));
+                return Err(format!(
+                    "The agent exceeded its {MAX_TOOL_CALLS}-call tool budget."
+                ));
             }
-            let argument_bytes = response.tool_calls.iter()
+            let argument_bytes = response
+                .tool_calls
+                .iter()
                 .map(|call| call.function.arguments.to_string().len())
                 .sum::<usize>();
             if argument_bytes > MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN {
                 return Err(format!("The provider returned more than {MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN} bytes of tool arguments in one turn."));
             }
             let mut unique_ids = HashSet::new();
-            let calls = response.tool_calls.iter().map(|call| {
-                if !unique_ids.insert(call.id.clone()) {
-                    return Err("The model returned duplicate tool-call identifiers.".to_string());
-                }
-                Ok(json!({
-                    "id":call.id,
-                    "name":call.function.name,
-                    "arguments":call.function.arguments
-                }))
-            }).collect::<Result<Vec<_>, String>>()?;
+            let calls = response
+                .tool_calls
+                .iter()
+                .map(|call| {
+                    if !unique_ids.insert(call.id.clone()) {
+                        return Err(
+                            "The model returned duplicate tool-call identifiers.".to_string()
+                        );
+                    }
+                    Ok(json!({
+                        "id":call.id,
+                        "name":call.function.name,
+                        "arguments":call.function.arguments
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let assistant_entry = json!({"kind":"assistant_tool_calls","calls":calls});
             tool_history.push(assistant_entry.clone());
-            save_tool_history_entry(context.database, &task.id, "assistant", &assistant_entry).await?;
+            save_tool_history_entry(context.database, &task.id, "assistant", &assistant_entry)
+                .await?;
             for call in response.tool_calls {
                 ensure_active(context.run)?;
                 tool_calls += 1;
                 let tool = call.function.name;
                 let arguments = call.function.arguments;
-                let target = arguments.get("path").and_then(Value::as_str).unwrap_or("").to_owned();
+                let target = arguments
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
                 let diff_offset = arguments.get("offsetBytes").and_then(Value::as_u64).unwrap_or(0) as usize;
                 event(
-                    context.app, context.database, &task.id, "tool_started",
+                    context.app,
+                    context.database,
+                    &task.id,
+                    "tool_started",
                     json!({
                         "callId":call.id,"tool":tool,"target":target,"turn":turn,
                         "argumentBytes":arguments.to_string().len()
                     }),
-                ).await?;
+                )
+                .await?;
                 let fingerprint = format!("{tool}:{arguments}");
                 let repeated_read = if is_read_tool(&tool) {
                     let count = repeated_reads.entry(fingerprint.clone()).or_default();
@@ -662,9 +705,13 @@ async fn loop_agent(
                     }
                     Err(error) => {
                         event(
-                            context.app, context.database, &task.id, "tool_failed",
+                            context.app,
+                            context.database,
+                            &task.id,
+                            "tool_failed",
                             json!({"callId":call.id,"tool":tool,"target":target,"error":error}),
-                        ).await?;
+                        )
+                        .await?;
                         json!({"ok":false,"error":error})
                     }
                 };
@@ -674,7 +721,9 @@ async fn loop_agent(
                 if serialized.len() > MAX_TOOL_OUTPUT_BYTES {
                     let end = safe_boundary(&serialized, MAX_TOOL_OUTPUT_BYTES);
                     serialized.truncate(end);
-                    serialized.push_str("\n[Tool result truncated. Narrow the path, line range, or search query.]");
+                    serialized.push_str(
+                        "\n[Tool result truncated. Narrow the path, line range, or search query.]",
+                    );
                     if tool == "get_diff" {
                         diff_review_cursor = 0;
                         diff_reviewed_after_last_change = false;
@@ -715,7 +764,8 @@ async fn loop_agent(
                 let correction = format!(
                     "PROTOCOL ERROR: {error}. Your prior response was not executed. Use provider-native function calling for tool actions. Never serialize tool calls as assistant text. When complete, return exactly one JSON object: {{\"type\":\"final\",\"summary\":\"...\",\"completed\":true}}. Do not use Markdown fences."
                 );
-                tool_history.push(json!({"kind":"chat_message","role":"user","content":correction}));
+                tool_history
+                    .push(json!({"kind":"chat_message","role":"user","content":correction}));
                 messages.push(ChatMessage {
                     role: "user".into(),
                     content: correction.clone(),
@@ -760,7 +810,8 @@ async fn loop_agent(
                     && !diff_reviewed_after_last_change
                 {
                     let instruction = "REVIEW REQUIRED: You have not inspected the final diff after the most recent file change. Call get_diff, examine every change, correct any issue, and only then return a completed final response.";
-                    tool_history.push(json!({"kind":"chat_message","role":"user","content":instruction}));
+                    tool_history
+                        .push(json!({"kind":"chat_message","role":"user","content":instruction}));
                     messages.push(ChatMessage {
                         role: "user".into(),
                         content: instruction.into(),
@@ -1004,7 +1055,14 @@ fn parse_turn(raw: &str) -> Result<ModelTurn, String> {
 fn is_read_tool(tool: &str) -> bool {
     matches!(
         tool,
-        "list_files" | "read_file" | "search_files" | "get_diff" | "list_skills" | "load_skill" | "git_status" | "git_history"
+        "list_files"
+            | "read_file"
+            | "search_files"
+            | "get_diff"
+            | "list_skills"
+            | "load_skill"
+            | "git_status"
+            | "git_history"
     )
 }
 
@@ -1029,9 +1087,14 @@ fn validate_agent_generation(generation: &GenerationSettings) -> Result<(), Stri
         || generation.max_output_tokens == 0
         || generation.max_output_tokens > 32_768
         || generation.stop_sequences.len() > 32
-        || generation.stop_sequences.iter().any(|sequence| sequence.len() > 512)
+        || generation
+            .stop_sequences
+            .iter()
+            .any(|sequence| sequence.len() > 512)
     {
-        return Err("One or more agent generation settings are outside the supported range.".into());
+        return Err(
+            "One or more agent generation settings are outside the supported range.".into(),
+        );
     }
     Ok(())
 }
@@ -1191,17 +1254,29 @@ async fn save_tool_history_entry(
     entry: &Value,
 ) -> Result<(), String> {
     let encoded = serde_json::to_string(entry).map_err(|error| error.to_string())?;
-    save_message(database, task_id, role, &format!("{TOOL_HISTORY_PREFIX}{encoded}")).await
+    save_message(
+        database,
+        task_id,
+        role,
+        &format!("{TOOL_HISTORY_PREFIX}{encoded}"),
+    )
+    .await
 }
 
 fn recover_incomplete_tool_calls(history: &[Value]) -> Vec<Value> {
-    let Some((index, pending)) = history.iter().enumerate().rev()
-        .find(|(_, entry)| entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls"))
-    else {
+    let Some((index, pending)) = history.iter().enumerate().rev().find(|(_, entry)| {
+        entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls")
+    }) else {
         return Vec::new();
     };
-    let calls = pending.get("calls").and_then(Value::as_array).cloned().unwrap_or_default();
-    let completed = history.iter().skip(index + 1)
+    let calls = pending
+        .get("calls")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let completed = history
+        .iter()
+        .skip(index + 1)
         .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("tool_result"))
         .filter_map(|entry| entry.get("id").and_then(Value::as_str))
         .collect::<HashSet<_>>();
@@ -1256,7 +1331,11 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
         }
         let entry = &history[index];
         if entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls") {
-            let expected = entry.get("calls").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+            let expected = entry
+                .get("calls")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
             let mut group = vec![entry.clone()];
             let mut results = 0usize;
             index += 1;
@@ -1278,9 +1357,15 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
     }
 
     let mut selected = Vec::<Vec<Value>>::new();
-    let mut used = pinned.iter().map(|entry| entry.to_string().len()).sum::<usize>();
+    let mut used = pinned
+        .iter()
+        .map(|entry| entry.to_string().len())
+        .sum::<usize>();
     for group in groups.into_iter().rev() {
-        let size = group.iter().map(|entry| entry.to_string().len()).sum::<usize>();
+        let size = group
+            .iter()
+            .map(|entry| entry.to_string().len())
+            .sum::<usize>();
         if used.saturating_add(size) > budget {
             break;
         }
@@ -1295,8 +1380,8 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
 }
 
 fn native_tool_definitions() -> Vec<ChatToolDefinition> {
-    let definition = |name: &str, description: &str, properties: Value, required: &[&str]| {
-        ChatToolDefinition {
+    let definition =
+        |name: &str, description: &str, properties: Value, required: &[&str]| ChatToolDefinition {
             kind: "function".into(),
             function: ChatToolFunctionDefinition {
                 name: name.into(),
@@ -1308,8 +1393,7 @@ fn native_tool_definitions() -> Vec<ChatToolDefinition> {
                     "additionalProperties":false
                 }),
             },
-        }
-    };
+        };
     vec![
         definition("list_files", "List files and directories under the task worktree. Paths are relative to the project root.", json!({
             "path":{"type":"string","description":"Relative directory path; empty string lists the project root."}
@@ -1468,13 +1552,19 @@ mod tests {
         let recovered = recover_incomplete_tool_calls(&history);
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0]["id"], "call-2");
-        assert!(recovered[0]["content"].as_str().unwrap().contains("Do not replay this call automatically"));
+        assert!(recovered[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Do not replay this call automatically"));
     }
 
     #[test]
     fn native_tool_schemas_are_unique_bounded_and_exclude_general_execution() {
         let definitions = native_tool_definitions();
-        let names = definitions.iter().map(|tool| tool.function.name.as_str()).collect::<Vec<_>>();
+        let names = definitions
+            .iter()
+            .map(|tool| tool.function.name.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(names.len(), 14);
         let unique = names.iter().copied().collect::<HashSet<_>>();
         assert_eq!(unique.len(), names.len());
@@ -1482,9 +1572,18 @@ mod tests {
         assert!(names.contains(&"git_history"));
         assert!(names.contains(&"validate"));
         for definition in &definitions {
-            assert_eq!(definition.function.parameters["additionalProperties"], false);
+            assert_eq!(
+                definition.function.parameters["additionalProperties"],
+                false
+            );
         }
-        for forbidden in ["shell", "execute_command", "run_process", "http_request", "mcp_call"] {
+        for forbidden in [
+            "shell",
+            "execute_command",
+            "run_process",
+            "http_request",
+            "mcp_call",
+        ] {
             assert!(!names.contains(&forbidden));
         }
     }
@@ -1494,7 +1593,8 @@ mod tests {
         let mut generation = crate::domain::ModelConfiguration::new(
             "sample.gguf".into(),
             crate::domain::OptimizationProfile::Automatic,
-        ).generation;
+        )
+        .generation;
         assert!(validate_agent_generation(&generation).is_ok());
         generation.temperature = 99.0;
         assert!(validate_agent_generation(&generation).is_err());
@@ -1541,13 +1641,12 @@ mod tests {
 
     #[test]
     fn recovered_tool_budget_counts_prior_calls() {
-        let history = vec![
-            json!({"kind":"assistant_tool_calls","calls":[
-                {"id":"call-1","name":"read_file","arguments":{}},
-                {"id":"call-2","name":"read_file","arguments":{}}
-            ]})
-        ];
-        let count = history.iter()
+        let history = [json!({"kind":"assistant_tool_calls","calls":[
+            {"id":"call-1","name":"read_file","arguments":{}},
+            {"id":"call-2","name":"read_file","arguments":{}}
+        ]})];
+        let count = history
+            .iter()
             .filter(|entry| entry["kind"] == "assistant_tool_calls")
             .filter_map(|entry| entry["calls"].as_array())
             .map(Vec::len)

@@ -1380,27 +1380,33 @@ mod tests {
 
     #[test]
     fn rejects_native_tools_in_interactive_chat_requests() {
-        let configuration = ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
+        let configuration =
+            ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
         let mut request = chat::ChatRequest {
             request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
             session_id: "123e4567-e89b-12d3-a456-426614174001".into(),
             provider_id: chat::ChatProvider::Ollama,
             model: "qwen3.5:9b".into(),
-            messages: vec![chat::ChatMessage { role:"user".into(), content:"Hello".into() }],
+            messages: vec![chat::ChatMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+            }],
             context_tokens: 4096,
             generation: configuration.generation,
             tools: Vec::new(),
             tool_history: Vec::new(),
         };
         request.tools.push(chat::ChatToolDefinition {
-            kind:"function".into(),
-            function:chat::ChatToolFunctionDefinition {
-                name:"read_file".into(),
-                description:"Read a file".into(),
-                parameters:serde_json::json!({"type":"object"}),
+            kind: "function".into(),
+            function: chat::ChatToolFunctionDefinition {
+                name: "read_file".into(),
+                description: "Read a file".into(),
+                parameters: serde_json::json!({"type":"object"}),
             },
         });
-        assert!(validate_chat_request(&request).unwrap_err().contains("approved project tasks"));
+        assert!(validate_chat_request(&request)
+            .unwrap_err()
+            .contains("approved project tasks"));
     }
 
     #[test]
