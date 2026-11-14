@@ -221,6 +221,9 @@ function App() {
   const ejectChatModel = useCallback(async () => {
     const stopped = await api.stopRuntime();
     setRuntimeStatus(stopped);
+    setModelPath("");
+    setModel(null);
+    setOptimizationWarnings([]);
     await refreshLocalProviders();
   }, [refreshLocalProviders]);
 
