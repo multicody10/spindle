@@ -72,6 +72,7 @@ interface ChatViewProps {
   runtimeStatus: RuntimeStatus | null;
   onSelectManagedModel: (path: string) => Promise<void>;
   onLoadManagedModel: () => Promise<string>;
+  onOpenModelManager: () => void;
   managedModelReady: boolean;
   contextTokens: number;
   generation: GenerationSettings;
@@ -89,6 +90,7 @@ function ChatView({
   runtimeStatus,
   onSelectManagedModel,
   onLoadManagedModel,
+  onOpenModelManager,
   managedModelReady,
   contextTokens,
   generation,
@@ -435,6 +437,16 @@ function ChatView({
                   </>
                 )}
               </select>
+              <button
+                type="button"
+                className="chat-refresh"
+                onClick={onOpenModelManager}
+                disabled={sending}
+                title="Open model library and runtime settings"
+                aria-label="Open model library and runtime settings"
+              >
+                ⚙
+              </button>
               <button
                 type="button"
                 className="chat-refresh"
