@@ -1076,6 +1076,13 @@ mod tests {
         };
         let body = lm_studio_body(&request);
         assert_eq!(body["tool_choice"], "auto");
+        let ollama_request = ChatRequest {
+            provider_id: ChatProvider::Ollama,
+            ..request.clone()
+        };
+        let ollama = ollama_body(&ollama_request);
+        assert_eq!(ollama["tools"][0]["function"]["name"], "read_file");
+        assert_eq!(ollama["messages"][1]["tool_calls"][0]["function"]["name"], "read_file");
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");
         assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_abc");
         assert_eq!(body["messages"][2]["tool_call_id"], "call_abc");

@@ -85,6 +85,28 @@ pub struct AgentRuntime {
     active: Mutex<HashMap<String, Arc<ActiveRun>>>,
 }
 
+struct AgentRunCleanup<'a> {
+    runtime: &'a AgentRuntime,
+    task_id: String,
+}
+
+impl Drop for AgentRunCleanup<'_> {
+    fn drop(&mut self) {
+        self.runtime.finish(&self.task_id);
+    }
+}
+
+struct ChatRequestCleanup<'a> {
+    runtime: &'a ChatRuntime,
+    request_id: String,
+}
+
+impl Drop for ChatRequestCleanup<'_> {
+    fn drop(&mut self) {
+        self.runtime.finish(&self.request_id);
+    }
+}
+
 impl AgentRuntime {
     pub fn begin(&self, task_id: &str) -> Result<Arc<ActiveRun>, String> {
         let mut active = self
@@ -230,6 +252,7 @@ pub async fn run_task(
 
     let task_id = input.task_id.clone();
     let run = runtime.begin(&task_id)?;
+    let _cleanup = AgentRunCleanup { runtime, task_id: task_id.clone() };
     let result = run_inner(
         app,
         database,
@@ -243,7 +266,6 @@ pub async fn run_task(
         input,
     )
     .await;
-    runtime.finish(&task_id);
     result
 }
 
@@ -512,6 +534,10 @@ async fn loop_agent(
         ensure_active(context.run)?;
         let request_id = new_request_id();
         let cancellation = context.services.chat_runtime.begin(&request_id)?;
+        let _request_cleanup = ChatRequestCleanup {
+            runtime: context.services.chat_runtime,
+            request_id: request_id.clone(),
+        };
         let request = ChatRequest {
             request_id: request_id.clone(),
             session_id: task.session_id.clone(),
@@ -539,7 +565,6 @@ async fn loop_agent(
             }
             result = chat::run(context.app.clone(), request, cancellation.clone(), context.services.inference) => result,
         };
-        context.services.chat_runtime.finish(&request_id);
         let response = response?;
         if !response.tool_calls.is_empty() {
             if response.tool_calls.len() > MAX_NATIVE_TOOL_CALLS_PER_TURN {
@@ -1475,7 +1500,10 @@ mod tests {
 
     #[test]
     fn agent_generation_settings_are_validated_before_startup() {
-        let mut generation = GenerationSettings::default();
+        let mut generation = crate::domain::ModelConfiguration::new(
+            "sample.gguf".into(),
+            crate::domain::OptimizationProfile::Automatic,
+        ).generation;
         assert!(validate_agent_generation(&generation).is_ok());
         generation.temperature = 99.0;
         assert!(validate_agent_generation(&generation).is_err());
@@ -1535,6 +1563,19 @@ mod tests {
         assert_eq!(compacted[0].content, "policy");
         assert_eq!(compacted[1].content, "goal");
         assert_eq!(compacted.last().unwrap().content, "recent tool result");
+    }
+
+    #[test]
+    fn request_cleanup_releases_a_chat_runtime_slot_on_drop() {
+        let runtime = ChatRuntime::default();
+        let cancellation = runtime.begin("request-cleanup-test").unwrap();
+        let guard = ChatRequestCleanup {
+            runtime: &runtime,
+            request_id: "request-cleanup-test".into(),
+        };
+        drop(cancellation);
+        drop(guard);
+        assert!(runtime.begin("request-cleanup-test").is_ok());
     }
 
     #[test]
