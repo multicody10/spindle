@@ -143,6 +143,7 @@ function ChatView({
   const [turnActivities, setTurnActivities] = useState<TurnActivity[]>([]);
   const [thinkingText, setThinkingText] = useState("");
   const thinkingDraft = useRef("");
+  const autoPrepareAttempt = useRef<string | null>(null);
   const endOfMessages = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const cancelRequested = useRef(false);
@@ -225,6 +226,7 @@ function ChatView({
 
   const selectManagedModel = async (path: string) => {
     if (!path || sending || loadingManagedModel) return;
+    autoPrepareAttempt.current = session.id + ":" + path;
     setProviderId("llama-cpp");
     setModelId(path);
     setError(null);
@@ -247,6 +249,15 @@ function ChatView({
       setLoadingManagedModel(false);
     }
   };
+
+  // Restore inspection/configuration for a previously selected GGUF without starting
+  // the inference runtime. Actual loading still happens only inside send().
+  useEffect(() => {
+    if (providerId !== "llama-cpp" || !selectedManagedModelPath || loadingManagedModel || sending) return;
+    const attemptKey = session.id + ":" + selectedManagedModelPath;
+    if (autoPrepareAttempt.current === attemptKey) return;
+    void selectManagedModel(selectedManagedModelPath);
+  }, [providerId, selectedManagedModelPath, loadingManagedModel, sending, session.id]);
 
   useEffect(() => {
     endOfMessages.current?.scrollIntoView({ behavior: "smooth", block: "end" });
