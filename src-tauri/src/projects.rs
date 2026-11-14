@@ -840,7 +840,7 @@ pub struct AgentRunEntry {
     pub kind: Option<String>,
 }
 
-const MAX_AGENT_TRANSCRIPT_MESSAGES: usize = 128;
+const MAX_AGENT_TRANSCRIPT_MESSAGES: usize = 256;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_AGENT_TRANSCRIPT_MESSAGE_BYTES: usize = 1024 * 1024;
 
