@@ -570,7 +570,7 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
             calls
                 .iter()
                 .enumerate()
-                .filter_map(|(fallback_index, call)| {
+                .map(|(fallback_index, call)| {
                     let index = call
                         .get("index")
                         .and_then(Value::as_u64)
@@ -584,7 +584,7 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
                                 .map(str::to_owned)
                                 .unwrap_or_else(|| value.to_string())
                         });
-                    Some(ToolCallFragment {
+                    ToolCallFragment {
                         index,
                         id: call.get("id").and_then(Value::as_str).map(str::to_owned),
                         name: function
@@ -592,7 +592,7 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
                             .and_then(Value::as_str)
                             .map(str::to_owned),
                         arguments,
-                    })
+                    }
                 })
                 .collect::<Vec<_>>()
         })
@@ -1173,7 +1173,7 @@ mod tests {
         let ollama = ollama_body(&ollama_request);
         assert_eq!(ollama["tools"][0]["function"]["name"], "read_file");
         assert_eq!(
-            ollama["messages"][1]["tool_calls"][0]["function"]["name"],
+            ollama["messages"][2]["tool_calls"][0]["function"]["name"],
             "read_file"
         );
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");

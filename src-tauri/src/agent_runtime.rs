@@ -485,7 +485,8 @@ async fn loop_agent(
             &task.id,
             "tool_recovered_interrupted",
             json!({"callId":id,"tool":name}),
-        ).await?;
+        )
+        .await?;
         tool_history.push(entry);
     }
 
@@ -653,7 +654,10 @@ async fn loop_agent(
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned();
-                let diff_offset = arguments.get("offsetBytes").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let diff_offset = arguments
+                    .get("offsetBytes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
                 event(
                     context.app,
                     context.database,
@@ -689,7 +693,9 @@ async fn loop_agent(
                             seen_reads.clear();
                             repeated_reads.clear();
                         } else if tool == "get_diff" && diff_offset == diff_review_cursor {
-                            if let Some(next_offset) = value.get("nextOffsetBytes").and_then(Value::as_u64) {
+                            if let Some(next_offset) =
+                                value.get("nextOffsetBytes").and_then(Value::as_u64)
+                            {
                                 diff_review_cursor = next_offset as usize;
                                 diff_reviewed_after_last_change = false;
                             } else {
@@ -836,7 +842,6 @@ async fn loop_agent(
                     tool_calls,
                 });
             }
-
         }
     }
     Err(format!(
@@ -1105,7 +1110,10 @@ fn diff_page(diff: &str, diff_truncated: bool, offset: usize, max_bytes: usize) 
     while start < diff.len() && !diff.is_char_boundary(start) {
         start += 1;
     }
-    let end = safe_boundary(diff, start.saturating_add(max_bytes.min(MAX_DIFF_CHUNK_BYTES)));
+    let end = safe_boundary(
+        diff,
+        start.saturating_add(max_bytes.min(MAX_DIFF_CHUNK_BYTES)),
+    );
     let next_offset = (end < diff.len()).then_some(end);
     json!({
         "totalBytes":diff.len(),
@@ -1344,18 +1352,26 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
         groups.push(current);
     }
 
-    let pinned_bytes = pinned.iter().map(|entry| entry.to_string().len()).sum::<usize>();
+    let pinned_bytes = pinned
+        .iter()
+        .map(|entry| entry.to_string().len())
+        .sum::<usize>();
     let mut selected = Vec::<Vec<Value>>::new();
     let mut used = pinned_bytes;
     for group in groups.into_iter().rev() {
-        let size = group.iter().map(|entry| entry.to_string().len()).sum::<usize>();
+        let size = group
+            .iter()
+            .map(|entry| entry.to_string().len())
+            .sum::<usize>();
         let is_latest = selected.is_empty();
         let effective_budget = if is_latest {
             budget.max(used.saturating_add(size).min(MAX_CONTEXT_BYTES))
         } else {
             budget
         };
-        if used.saturating_add(size) > effective_budget || used.saturating_add(size) > MAX_CONTEXT_BYTES {
+        if used.saturating_add(size) > effective_budget
+            || used.saturating_add(size) > MAX_CONTEXT_BYTES
+        {
             if is_latest {
                 // If one atomic group exceeds the global context ceiling, keep
                 // the original system and user goal rather than a partial tool
