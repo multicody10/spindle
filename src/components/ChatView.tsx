@@ -611,22 +611,24 @@ function ChatView({
                 ↻
               </button>
               <span className="chat-provider-state">
-                <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
-                {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
+                <span className={"status-dot " + ((providerId === "llama-cpp" ? managedRuntimeLoaded : selectedProvider?.available) ? "" : "red")} />
+                {providerId === "llama-cpp"
+                  ? managedRuntimeLoaded ? "Model loaded" : selectedManagedModelPath ? "Selected · not loaded" : "Runtime stopped"
+                  : selectedProvider?.available ? selectedProvider.name : "Offline"}
               </span>
               {providerId === "llama-cpp" && selectedManagedModelPath && !managedRuntimeLoaded && (
                 <span className="chat-model-pending">Selected · loads on first message</span>
               )}
-              {providerId === "llama-cpp" && runtimeStatus?.running && (
+              {runtimeStatus?.running && (
                 <button
                   type="button"
                   className="chat-refresh"
                   onClick={() => void onEjectManagedModel().catch((reason) => {
-                    setError("Could not eject the managed model: " + String(reason));
+                    setError("Could not eject the Spindle Runtime model: " + String(reason));
                   })}
                   disabled={sending || loadingManagedModel}
-                  title="Eject the managed model and release memory"
-                  aria-label="Eject the managed model and release memory"
+                  title="Eject the Spindle Runtime model and release memory"
+                  aria-label="Eject the Spindle Runtime model and release memory"
                 >
                   ⏏
                 </button>
