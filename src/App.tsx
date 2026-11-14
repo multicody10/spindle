@@ -98,7 +98,8 @@ function App() {
       const inspected = await api.inspectModel(candidatePath);
       const saved = await api.loadConfiguration(inspected.path, configuration.profile);
       let nextConfiguration: ModelConfiguration;
-      let detectedHardware = hardware;
+      let detectedHardware = hardware ?? await api.hardware();
+      if (!hardware) setHardware(detectedHardware);
 
       if (saved) {
         nextConfiguration = { ...saved, modelPath: inspected.path };
