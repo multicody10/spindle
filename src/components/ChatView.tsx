@@ -137,7 +137,10 @@ function ChatView({
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
-  const selectedManagedModelPath = rememberedModel?.managedModelPath || managedModelPath;
+  const savedProviderId = session.providerId ?? rememberedModel?.providerId;
+  const selectedManagedModelPath = savedProviderId === "llama-cpp"
+    ? rememberedModel?.managedModelPath || managedModelPath
+    : savedProviderId ? "" : managedModelPath;
   const managedRuntimeLoaded = Boolean(
     runtimeStatus?.running &&
     runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === selectedManagedModelPath.replace(/\\/g, "/").toLowerCase()
