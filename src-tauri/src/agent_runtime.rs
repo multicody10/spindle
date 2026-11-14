@@ -6,7 +6,7 @@ use crate::{
     domain::GenerationSettings,
     git,
     inference::InferenceRuntimeManager,
-    permissions::{PermissionBroker, PermissionOperation},
+    permissions::{PermissionBroker, PermissionOperation, PermissionScope},
     projects::{self, AgentTask, Project},
     sandbox::{self, ValidationCommand},
     workspace::{WorkspaceGrant, WorkspaceManager},
@@ -558,6 +558,13 @@ async fn loop_agent(
         .filter_map(|entry| entry.get("calls").and_then(Value::as_array))
         .map(Vec::len)
         .sum::<usize>();
+    let mut used_tool_ids = tool_history
+        .iter()
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls"))
+        .filter_map(|entry| entry.get("calls").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|call| call.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect::<HashSet<_>>();
     let mut malformed = 0usize;
     let mut repeated_reads = HashMap::<String, usize>::new();
     let mut seen_reads = HashSet::<String>::new();
@@ -580,7 +587,9 @@ async fn loop_agent(
             messages: bounded_context(&messages, input.context_tokens),
             context_tokens: input.context_tokens,
             generation: generation.clone(),
-            tools: native_tool_definitions(),
+            tools: native_tool_definitions(
+                &context.services.permissions.status(&task.session_id)?.scopes,
+            ),
             tool_history: bounded_tool_history(
                 &tool_history,
                 input
@@ -628,9 +637,9 @@ async fn loop_agent(
                 .tool_calls
                 .iter()
                 .map(|call| {
-                    if !unique_ids.insert(call.id.clone()) {
+                    if !unique_ids.insert(call.id.clone()) || !used_tool_ids.insert(call.id.clone()) {
                         return Err(
-                            "The model returned duplicate tool-call identifiers.".to_string()
+                            "The model returned a duplicate tool-call identifier.".to_string()
                         );
                     }
                     Ok(json!({
@@ -1397,7 +1406,7 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
     result
 }
 
-fn native_tool_definitions() -> Vec<ChatToolDefinition> {
+fn native_tool_definitions(scopes: &[PermissionScope]) -> Vec<ChatToolDefinition> {
     let definition =
         |name: &str, description: &str, properties: Value, required: &[&str]| ChatToolDefinition {
             kind: "function".into(),
@@ -1412,7 +1421,8 @@ fn native_tool_definitions() -> Vec<ChatToolDefinition> {
                 }),
             },
         };
-    vec![
+    let mut tools = vec![
+
         definition("list_files", "List files and directories under the task worktree. Paths are relative to the project root.", json!({
             "path":{"type":"string","description":"Relative directory path; empty string lists the project root."}
         }), &["path"]),
@@ -1428,35 +1438,43 @@ fn native_tool_definitions() -> Vec<ChatToolDefinition> {
         definition("load_skill", "Load a named project-local Agent Skill manifest.", json!({
             "name":{"type":"string","minLength":1,"maxLength":160}
         }), &["name"]),
-        definition("create_directory", "Create a directory in the isolated task worktree. Requires project write permission.", json!({
-            "path":{"type":"string"}
-        }), &["path"]),
-        definition("create_file", "Create a new UTF-8 file in the isolated task worktree. Requires project write permission.", json!({
-            "path":{"type":"string"},"content":{"type":"string","maxLength":32768}
-        }), &["path","content"]),
-        definition("write_file", "Replace an existing file only when its current revision matches the revision returned by read_file.", json!({
-            "path":{"type":"string"},"content":{"type":"string","maxLength":32768},"expectedRevision":{"type":"string"}
-        }), &["path","content","expectedRevision"]),
-        definition("edit_file", "Replace one exact, unique text anchor in an existing file in the isolated task worktree.", json!({
-            "path":{"type":"string"},"oldText":{"type":"string","minLength":1,"maxLength":32768},"newText":{"type":"string","maxLength":32768}
-        }), &["path","oldText","newText"]),
-        definition("delete_file", "Delete a file in the isolated task worktree only when its revision matches read_file.", json!({
-            "path":{"type":"string"},"expectedRevision":{"type":"string"}
-        }), &["path","expectedRevision"]),
-        definition("git_status", "Inspect the Git status of the isolated task worktree.", json!({}), &[]),
-        definition("git_history", "Read recent commit history from the task worktree.", json!({
-            "limit":{"type":"integer","minimum":1,"maximum":50}
-        }), &[]),
-        definition("get_diff", "Read the current task diff in sequential chunks. Continue with nextOffsetBytes until complete is true before declaring completion.", json!({
-            "offsetBytes":{"type":"integer","minimum":0},
-            "maxBytes":{"type":"integer","minimum":1024,"maximum":4096}
-        }), &[]),
-        definition("validate", "Run only the fixed offline Cargo validation commands inside the restricted Windows validation worker.", json!({
-            "command":{"type":"string","enum":["cargo_format","cargo_check","cargo_test"]}
-        }), &["command"]),
-    ]
-}
+    ];
 
+    if scopes.contains(&PermissionScope::ProjectWrite) {
+        tools.extend(vec![
+            definition("create_directory", "Create a directory in the isolated task worktree. Requires project write permission.", json!({
+                "path":{"type":"string"}
+            }), &["path"]),
+            definition("create_file", "Create a new UTF-8 file in the isolated task worktree. Requires project write permission.", json!({
+                "path":{"type":"string"},"content":{"type":"string","maxLength":32768}
+            }), &["path","content"]),
+            definition("write_file", "Replace an existing file only when its current revision matches the revision returned by read_file.", json!({
+                "path":{"type":"string"},"content":{"type":"string","maxLength":32768},"expectedRevision":{"type":"string"}
+            }), &["path","content","expectedRevision"]),
+            definition("edit_file", "Replace one exact, unique text anchor in an existing file in the isolated task worktree.", json!({
+                "path":{"type":"string"},"oldText":{"type":"string","minLength":1,"maxLength":32768},"newText":{"type":"string","maxLength":32768}
+            }), &["path","oldText","newText"]),
+            definition("delete_file", "Delete a file in the isolated task worktree only when its revision matches read_file.", json!({
+                "path":{"type":"string"},"expectedRevision":{"type":"string"}
+            }), &["path","expectedRevision"]),
+            definition("git_status", "Inspect the Git status of the isolated task worktree.", json!({}), &[]),
+            definition("git_history", "Read recent commit history from the task worktree.", json!({
+                "limit":{"type":"integer","minimum":1,"maximum":50}
+            }), &[]),
+            definition("get_diff", "Read the current task diff in sequential chunks. Continue with nextOffsetBytes until complete is true before declaring completion.", json!({
+                "offsetBytes":{"type":"integer","minimum":0},
+                "maxBytes":{"type":"integer","minimum":1024,"maximum":4096}
+            }), &[]),
+    
+        ]);
+    }
+    if scopes.contains(&PermissionScope::ProcessExecution) {
+        tools.push(definition("validate", "Run only the fixed offline Cargo validation commands inside the restricted Windows validation worker.", json!({
+            "command":{"type":"string","enum":["cargo_format","cargo_check","cargo_test"]}
+        }), &["command"]));
+    }
+    tools
+}
 async fn save_message(
     database: &Path,
     task_id: &str,
@@ -1578,7 +1596,21 @@ mod tests {
 
     #[test]
     fn native_tool_schemas_are_unique_bounded_and_exclude_general_execution() {
-        let definitions = native_tool_definitions();
+        let read_only = native_tool_definitions(&[PermissionScope::ProjectRead]);
+        let read_names = read_only
+            .iter()
+            .map(|tool| tool.function.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(read_names.len(), 8);
+        assert!(!read_names.contains(&"write_file"));
+        assert!(!read_names.contains(&"delete_file"));
+        assert!(!read_names.contains(&"validate"));
+
+        let definitions = native_tool_definitions(&[
+            PermissionScope::ProjectRead,
+            PermissionScope::ProjectWrite,
+            PermissionScope::ProcessExecution,
+        ]);
         let names = definitions
             .iter()
             .map(|tool| tool.function.name.as_str())
