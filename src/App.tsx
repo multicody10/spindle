@@ -50,7 +50,7 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("chat");
+  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "workspace" | "projects" | "benchmark">("chat");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
   const [chatInstance, setChatInstance] = useState(0);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -154,7 +154,7 @@ function App() {
       const runningPath = current.modelPath?.replace(/\\/g, "/").toLowerCase();
       const selectedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
       if (runningPath !== selectedPath) {
-        throw new Error("Another model is already loaded. Stop it in Tools → Runtime before switching models.");
+        throw new Error("Another model is already loaded. Stop the current model from Models before switching.");
       }
     } else {
       const hasNvidia = hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ?? false;
@@ -185,7 +185,7 @@ function App() {
     const managedProvider = discovered.find((provider) => provider.id === "llama-cpp" && provider.available);
     const loadedModelId = managedProvider?.models[0]?.id;
     if (!loadedModelId) {
-      throw new Error("llama.cpp started, but its model endpoint did not report a loaded model. Check Tools → Runtime for details.");
+      throw new Error("llama.cpp started, but its model endpoint did not report a loaded model. Check Models for runtime details.");
     }
     return loadedModelId;
   }, [configuration, hardware, model, modelPath]);
@@ -270,8 +270,8 @@ function App() {
     [configuration.profile]
   );
 
-  const inspect = async () => {
-    const candidatePath = modelPath.trim();
+  const inspect = async (path = modelPath) => {
+    const candidatePath = path.trim();
     if (!candidatePath) {
       setError("Enter the full path to a local GGUF model.");
       return;
@@ -436,10 +436,9 @@ function App() {
           Projects
         </button>
 
-        <details className="sidebar-tools" open={activeView === "runtime" || activeView === "workspace" || activeView === "benchmark"}>
+        <details className="sidebar-tools" open={activeView === "workspace" || activeView === "benchmark"}>
           <summary><span className="nav-icon">⌘</span><span>Tools</span><span className="sidebar-tools-chevron">⌄</span></summary>
           <div className="sidebar-tool-list">
-            <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
             <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
             <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmarks</button>
           </div>
@@ -448,7 +447,7 @@ function App() {
         <div className="sidebar-bottom">
           <button className={"sidebar-settings " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}>
             <span aria-hidden="true">⚙</span>
-            Settings
+            Models
           </button>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
         </div>
@@ -457,10 +456,12 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
-            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "runtime" ? "Runtime" : activeView === "workspace" ? "Workspace" : "Settings"}</h1>
+            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
+            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "workspace" ? "Workspace" : "Models & runtime"}</h1>
           </div>
-          
+          {activeView === "model-lab" && (
+            <button className="button subtle" onClick={() => setActiveView("chat")}>Open chat</button>
+          )}
         </header>
 
         <div className={"content " + (activeView === "chat" ? "content-chat" : "")}>
@@ -481,17 +482,11 @@ function App() {
               runtimeStatus={runtimeStatus}
               onSelectManagedModel={prepareChatModel}
               onLoadManagedModel={loadChatModel}
+              onOpenModelManager={() => setActiveView("model-lab")}
               managedModelReady={Boolean(model && model.path === modelPath && configuration.modelPath === modelPath)}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
               session={activeSession}
-            />
-          ) : activeView === "runtime" ? (
-            <RuntimeView
-              modelPath={modelPath}
-              configuration={configuration}
-              hardware={hardware}
-              onRuntimeChange={() => void refreshLocalProviders()}
             />
           ) : activeView === "workspace" ? (
             <WorkspaceView />
@@ -602,7 +597,7 @@ function App() {
                   type="button"
                   key={entry.path}
                   className={"model-library-entry " + (modelPath === entry.path ? "selected" : "")}
-                  onClick={() => selectModelPath(entry.path)}
+                  onClick={() => { selectModelPath(entry.path); void inspect(entry.path); }}
                   title={entry.path}
                 >
                   <span>
@@ -744,6 +739,13 @@ function App() {
               </div>
             </div>
           </section>
+
+          <RuntimeView
+            modelPath={modelPath}
+            configuration={configuration}
+            hardware={hardware}
+            onRuntimeChange={() => void refreshLocalProviders()}
+          />
 
           <section className="section-heading">
             <div><span className="eyebrow">06 / APPLICATION UPDATES</span><h2>Updates</h2></div>
