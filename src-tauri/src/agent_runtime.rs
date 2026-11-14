@@ -1128,6 +1128,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_execution_stays_disabled_until_the_isolated_worker_is_ready() {
+        assert!(!execution_worker_ready());
+    }
+
+    #[test]
     fn protocol_rejects_plain_text_and_extra_fields() {
         assert!(parse_turn(
             r#"{"type":"tool_call","tool":"read_file","arguments":{"path":"src/main.rs"}}"#
