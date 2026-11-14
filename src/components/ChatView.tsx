@@ -251,19 +251,13 @@ function ChatView({
     setError(null);
     setLoadingManagedModel(true);
     setStatus("Inspecting model metadata and preparing its configuration…");
-    setStatus("Inspecting model metadata and preparing its configuration…");
     try {
-      await onSelectManagedModel(path, (detail) => {
-        setStatus(detail);
-        updateActiveTurnActivity("Preparing model", detail);
-      });
+      await onSelectManagedModel(path, (detail) => setStatus(detail));
       rememberModel("llama-cpp", path, path);
       setStatus("Model selected. It will load into memory when you send your first message.");
-      finishTurnActivity("Ready to load", "No model weights have been loaded yet.");
     } catch (reason) {
       setError("Could not inspect the selected model: " + String(reason));
       setStatus("Model preparation failed.");
-      finishTurnActivity("Model preparation failed", String(reason), "error");
     } finally {
       setLoadingManagedModel(false);
     }
