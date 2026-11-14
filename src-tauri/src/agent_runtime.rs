@@ -549,7 +549,10 @@ async fn loop_agent(
             context_tokens: input.context_tokens,
             generation: generation.clone(),
             tools: native_tool_definitions(),
-            tool_history: bounded_tool_history(&tool_history, MAX_CONTEXT_BYTES),
+            tool_history: bounded_tool_history(
+                &tool_history,
+                input.context_tokens.saturating_mul(3).clamp(32 * 1024, MAX_CONTEXT_BYTES),
+            ),
         };
         event(
             context.app,
@@ -1457,6 +1460,29 @@ mod tests {
         assert!(validate_agent_generation(&generation).is_ok());
         generation.temperature = 99.0;
         assert!(validate_agent_generation(&generation).is_err());
+    }
+
+    #[test]
+    fn bounded_provider_history_keeps_tool_calls_with_their_results() {
+        let history = vec![
+            json!({"kind":"chat_message","role":"system","content":"system"}),
+            json!({"kind":"chat_message","role":"user","content":"goal"}),
+            json!({"kind":"assistant_tool_calls","calls":[
+                {"id":"a","name":"read_file","arguments":{}},
+                {"id":"b","name":"read_file","arguments":{}}
+            ]}),
+            json!({"kind":"tool_result","id":"a","name":"read_file","content":"one"}),
+            json!({"kind":"tool_result","id":"b","name":"read_file","content":"two"}),
+            json!({"kind":"chat_message","role":"assistant","content":"Reviewed both files."}),
+        ];
+        let bounded = bounded_tool_history(&history, 32 * 1024);
+        assert_eq!(bounded, history);
+        assert_eq!(bounded[0]["content"], "system");
+        assert_eq!(bounded[1]["content"], "goal");
+        assert_eq!(bounded[2]["kind"], "assistant_tool_calls");
+        assert_eq!(bounded[3]["id"], "a");
+        assert_eq!(bounded[4]["id"], "b");
+        assert_eq!(bounded[5]["role"], "assistant");
     }
 
     #[test]
