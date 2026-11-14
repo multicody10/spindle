@@ -21,6 +21,21 @@ This roadmap records implementation status rather than implying the full product
 - [x] First signed Windows release published and installed.
 - [ ] Validate the one-time per-user to per-machine installation transition and in-app update path.
 
+## Next milestone: Native tool calling and supervised workspace actions
+
+This is the next implementation priority. Do not prioritize remote-provider expansion ahead of usable tool calling.
+
+- [ ] Add provider-native tool definitions and structured tool-call parsing to the existing Ollama and OpenAI-compatible local adapters (LM Studio and Spindle llama.cpp).
+- [ ] Correctly assemble streamed tool-call deltas, stable call IDs, function names, and partial JSON arguments; support multiple calls in one model turn and reject malformed or oversized arguments.
+- [ ] Replace the current JSON-in-assistant-text agent protocol with structured tool calls and proper tool-result messages, including persisted call/result records and real activity events.
+- [ ] Route calls through a typed tool registry and the existing project/session permission broker; start with read-only project-scoped tools: directory listing, file reads, text search, and Git status/diff/history.
+- [ ] Add supervised file mutation through staged edits and detached task worktrees; require the appropriate write grant and explicit diff approval before changes reach the primary project.
+- [ ] Enforce bounded tool iterations, per-tool input/output limits, cancellation, deadlines, duplicate-call detection, and crash-safe recovery.
+- [ ] Advertise tool calling only for provider adapters whose request, stream parsing, and round-trip behavior are covered by tests.
+- [ ] Keep arbitrary shell/process execution, network access, MCP process launch, and parallel agents disabled until their separate OS-isolated execution and adversarial validation requirements are met.
+
+The first usable tool-calling release must not depend on enabling unrestricted process execution. Read-only project tools and explicitly reviewed file changes are the initial scope.
+
 ## Model runtime
 
 - [x] Discovery of local Ollama and LM Studio endpoints and model inventories.
@@ -34,7 +49,7 @@ This roadmap records implementation status rather than implying the full product
 - [ ] Complete applied-settings readback (initial /props readback is available for exposed settings).
 - [ ] Runtime logs and memory telemetry.
 - [x] Explicit opt-in sequential local benchmarks with persisted duration, output token, and provider-reported throughput samples.
-- [ ] Remote OpenAI-compatible provider adapter with capability negotiation.
+- [ ] Remote OpenAI-compatible provider adapter with capability negotiation (deferred until after the first tool-calling release).
 
 ## Core developer workflow
 
