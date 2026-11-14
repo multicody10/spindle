@@ -605,7 +605,7 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                         {agentRunning
                           ? <button className="button subtle" onClick={() => void cancelAgent()}>Cancel agent</button>
                           : <button className="button primary" onClick={() => void runAgent()}
-                              disabled={busy || !permissionState?.scopes.includes("project_write") || !selectedProvider || !modelId || !["approved", "interrupted", "failed", "cancelled"].includes(selectedTask.task.state)}>
+                              disabled={busy || !permissionState?.scopes.includes("project_read") || !selectedProvider || !modelId || !["approved", "interrupted", "failed", "cancelled"].includes(selectedTask.task.state)}>
                               {["interrupted", "failed", "cancelled"].includes(selectedTask.task.state) ? "Resume agent" : "Start agent"}
                             </button>}
                         <button className="button subtle" onClick={() => void removeTaskWorktree()}

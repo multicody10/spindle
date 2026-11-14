@@ -345,11 +345,6 @@ fn ollama_body(request: &ChatRequest) -> Value {
         "repeat_last_n": generation.repeat_last_n,
         "presence_penalty": generation.presence_penalty,
         "frequency_penalty": generation.frequency_penalty,
-        "top_k": generation.top_k,
-        "min_p": generation.min_p,
-        "typical_p": generation.typical_p,
-        "repeat_penalty": generation.repeat_penalty,
-        "repeat_last_n": generation.repeat_last_n,
         "stop": generation.stop_sequences,
     });
     if let Some(seed) = generation.seed {

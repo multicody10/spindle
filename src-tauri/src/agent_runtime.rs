@@ -297,11 +297,6 @@ async fn run_inner(
         PermissionOperation::WorkspaceRead,
         "agent_task:run",
     )?;
-    services.permissions.authorize(
-        &task.session_id,
-        PermissionOperation::FileChangePropose,
-        "agent_task:run",
-    )?;
     let worktree = git::get_worktree(&database, &task.id)?;
     let project = db(&database, {
         let id = task.project_id.clone();
