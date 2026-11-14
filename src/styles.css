@@ -1749,3 +1749,191 @@ footer { color: #626c78; font-size: 9px; }
   .workspace-audit-list code { grid-column: 2; }
   .workspace-audit-list small { grid-column: 2; }
 }
+
+
+/* Project first navigation */
+.sidebar-projects-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 5px 8px 9px;
+  color: #737d89;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.sidebar-projects-heading button,
+.sidebar-project-add {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #aeb8c4;
+  font-size: 17px;
+}
+.sidebar-projects-heading button:hover,
+.sidebar-project-add:hover:not(:disabled) {
+  background: #1b2027;
+  border-color: #333a44;
+  color: #f1f3f5;
+}
+.sidebar-project-form {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  margin: 0 0 10px;
+  border: 1px solid #303843;
+  border-radius: 8px;
+  background: #12161d;
+}
+.sidebar-project-form input {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid #303843;
+  border-radius: 6px;
+  outline: none;
+  background: #0c1015;
+  color: #e8ebef;
+  font-size: 11px;
+}
+.sidebar-project-form input:focus { border-color: #667d9a; }
+.sidebar-project-form > div { display: flex; justify-content: flex-end; gap: 7px; }
+.sidebar-project-form button {
+  border: 1px solid #3c4653;
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: #222a34;
+  color: #e5e9ef;
+  font-size: 10px;
+}
+.sidebar-project-form .sidebar-form-cancel { background: transparent; color: #aab3bf; }
+.sidebar-project-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 2px 12px;
+}
+.sidebar-project-group { min-width: 0; }
+.sidebar-project-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.sidebar-project-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #c5ccd5;
+  text-align: left;
+  font-size: 12px;
+}
+.sidebar-project-select:hover,
+.sidebar-project-group.selected > .sidebar-project-row .sidebar-project-select {
+  background: #171c23;
+  color: #f1f3f5;
+}
+.sidebar-project-chevron {
+  display: inline-block;
+  color: #7e8997;
+  font-size: 18px;
+  line-height: 12px;
+  transform: rotate(0);
+  transition: transform .12s ease;
+}
+.sidebar-project-chevron.expanded { transform: rotate(90deg); }
+.sidebar-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-project-add { flex: 0 0 25px; font-size: 16px; }
+.sidebar-chat-list {
+  display: grid;
+  gap: 2px;
+  padding: 2px 0 6px 22px;
+}
+.sidebar-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ba6b4;
+  text-align: left;
+  font-size: 11px;
+}
+.sidebar-chat-item:hover { background: #171c23; color: #e5e9ef; }
+.sidebar-chat-item.active {
+  border-color: #343d49;
+  background: #1a2028;
+  color: #f1f3f5;
+}
+.sidebar-chat-icon { flex: 0 0 auto; color: #778494; font-size: 10px; }
+.sidebar-chat-item > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-no-chats,
+.sidebar-empty-projects,
+.sidebar-project-error {
+  display: block;
+  margin: 4px 8px 7px 9px;
+  color: #707b89;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sidebar-project-error { color: #d89b9b; }
+.sidebar-bottom { flex: 0 0 auto; }
+.chat-start-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+}
+.chat-start-state strong { color: #e7e9ed; font-size: 16px; }
+.chat-start-state p {
+  max-width: 440px;
+  margin: 9px 0 18px;
+  color: #8994a2;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chat-start-mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 15px;
+  border: 1px solid #3c4755;
+  border-radius: 13px;
+  background: #171e28;
+  color: #aebed0;
+  font-size: 25px;
+}
