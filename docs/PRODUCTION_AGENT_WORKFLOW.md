@@ -82,10 +82,10 @@ Validation is not general command execution. The worker does not yet provide Nod
 
 1. Windows AppContainer/LPAC access-denial behavior still needs adversarial integration tests on supported Windows versions.
 2. The filesystem service is path-based. It rejects common symlink/reparse traversal, but it is not yet a handle-relative, race-proof Windows filesystem broker.
-3. Job Object process-count and breakaway restrictions are not implemented or verified.
+3. The Cargo validation worker configures and reads back Job Object active-process and no-breakaway policy before resume; Windows adversarial tests must still demonstrate that process creation and breakaway attempts are actually denied.
 4. The Git patch journal provides restart classification and guarded reverse application, not crash-atomic transactions across every affected file.
-5. Model tool calling is a strict JSON text protocol, not provider-native structured tool calling or token-level streaming tool events.
-6. No general egress broker, MCP runtime, arbitrary shell, or parallel agents are enabled.
-7. Context is bounded by preserving the goal and recent evidence; a full semantic summarization/compaction system remains future work.
+5. Provider-native tool calls are implemented and unit-tested, but live compatibility still depends on the selected provider version and model's function-calling behavior.
+6. The model tool host remains in the main application process and the workspace file service is path-based, not handle-relative/race-resistant. No general egress broker, MCP runtime, arbitrary shell, or parallel agents are enabled.
+7. Context is bounded by preserving the goal and recent complete tool-call/result groups; a full semantic summarization/compaction system remains future work.
 
 Do not label the worker a hardened sandbox until the Windows security test matrix passes and the remaining filesystem/process boundary gaps are closed.

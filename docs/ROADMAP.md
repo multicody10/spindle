@@ -21,18 +21,18 @@ This roadmap records implementation status rather than implying the full product
 - [x] First signed Windows release published and installed.
 - [ ] Validate the one-time per-user to per-machine installation transition and in-app update path.
 
-## Next milestone: Native tool calling and supervised workspace actions
+## Current milestone: Native tool calling and supervised workspace actions
 
-This is the next implementation priority. Do not prioritize remote-provider expansion ahead of usable tool calling.
+This milestone implements usable model-directed project tools without enabling unrestricted process execution. Remote-provider expansion remains deferred.
 
-- [ ] Add provider-native tool definitions and structured tool-call parsing to the existing Ollama and OpenAI-compatible local adapters (LM Studio and Spindle llama.cpp).
-- [ ] Correctly assemble streamed tool-call deltas, stable call IDs, function names, and partial JSON arguments; support multiple calls in one model turn and reject malformed or oversized arguments.
-- [ ] Replace the current JSON-in-assistant-text agent protocol with structured tool calls and proper tool-result messages, including persisted call/result records and real activity events.
-- [ ] Route calls through a typed tool registry and the existing project/session permission broker; start with read-only project-scoped tools: directory listing, file reads, text search, and Git status/diff/history.
-- [ ] Add supervised file mutation through staged edits and detached task worktrees; require the appropriate write grant and explicit diff approval before changes reach the primary project.
-- [ ] Enforce bounded tool iterations, per-tool input/output limits, cancellation, deadlines, duplicate-call detection, and crash-safe recovery.
-- [ ] Advertise tool calling only for provider adapters whose request, stream parsing, and round-trip behavior are covered by tests.
-- [ ] Keep arbitrary shell/process execution, network access, MCP process launch, and parallel agents disabled until their separate OS-isolated execution and adversarial validation requirements are met.
+- [x] Add provider-native tool definitions and structured tool-call parsing to Ollama and OpenAI-compatible local adapters (LM Studio and Spindle llama.cpp).
+- [x] Assemble streamed tool-call deltas by index, validate identifiers and function names, support multiple calls per turn, and reject malformed or oversized arguments.
+- [x] Require provider-native structured calls for tool execution; persist assistant call batches and call-ID-linked results, with durable start/finish/failure/recovery activity events. Plain-text JSON cannot trigger tools.
+- [x] Route fixed typed tools through the project/session permission broker: file listing/read/search, Skills, Git status/history/diff, bounded workspace edits, and fixed Cargo validation.
+- [x] Keep model edits inside detached task worktrees; require write scopes for mutations and separate explicit final-diff review/application before updating the registered project.
+- [x] Enforce per-turn and per-task call budgets, schema/argument/output bounds, cancellation, a 30-minute deadline, duplicate-read suppression, and no-replay recovery for calls with unknown outcomes.
+- [x] Advertise tool calling as provider-dependent; add protocol unit tests for Ollama and OpenAI-compatible request/history formats and streamed response assembly.
+- [x] Keep arbitrary shell/process execution, network access, MCP process launch, and parallel agents disabled pending their separate OS-isolated execution and adversarial validation requirements.
 
 The first usable tool-calling release must not depend on enabling unrestricted process execution. Read-only project tools and explicitly reviewed file changes are the initial scope.
 
@@ -42,7 +42,7 @@ The first usable tool-calling release must not depend on enabling unrestricted p
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
 - [x] Stream optional provider-supplied reasoning separately from assistant text and render it in a bounded expandable turn card when the provider exposes that channel.
-- [x] Provider capability registry for features implemented by the current adapters; tool calling and structured output remain unavailable.
+- [x] Provider capability registry reports function calling as provider/model-dependent; structured output remains unavailable.
 - [x] Pinned Windows x64 llama.cpp CPU, Vulkan, and CUDA 12.4 runtime installation with size and SHA-256 verification.
 - [x] Shared inference runtime manager with one shared model process, per-session request leases, bounded cancellable queueing, configured parallel-slot admission, and in-memory per-session KV-prefix reuse with LRU slot eviction; disk-backed KV restoration across runtime restarts remains future work.
 - [x] Single-model llama.cpp start/stop lifecycle with health checks and bounded process logs.
@@ -58,16 +58,16 @@ The first usable tool-calling release must not depend on enabling unrestricted p
 - [x] Temporary project workspace grants with read-only defaults and separately granted write access.
 - [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and reviewed staged file changes.
 - [x] Versioned SQLite schema for projects, sessions, messages, tasks, task steps, events, and memory.
-- [x] Read-only model planner with persisted task lifecycle and approval states, paired with a separate user-triggered restricted validation worker; general model tool execution remains disabled.
+- [x] Read-only model planner with persisted task lifecycle and approval states, paired with an approved task runner using provider-native tool calls; arbitrary process execution remains disabled.
 - [x] Read-only project snapshot planning with bounded source inventory and structured plan validation.
 - [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
 - [x] Manual workspace diff previews, explicit apply/discard, revision conflict checks, and guarded undo (bounded in-memory proposal history).
 - [x] Supervised approved-task workflow for detached Git worktree creation, bounded diff/status review, fixed sandboxed validation, and persisted task events.
-- [x] Bounded agent-authored task worktree edits, transcript persistence, task event streaming, cancellation, resume, final diff review, and journaled apply/undo (implementation retained; public run command fails closed until authenticated worker isolation and Windows adversarial acceptance are complete).
+- [x] Bounded native-tool agent edits in detached task worktrees, durable call/result transcript, task events, cancellation, resume, final diff review, and journaled apply/undo. Tool host remains in the main process; OS-isolated worker and adversarial validation are still outstanding.
 - [ ] Handle-relative and race-resistant Windows file broker with path/resource-specific grants.
 - [x] Suspended AppContainer validation-worker startup with verified Job Object active-process (64), per-process memory (2 GiB), aggregate memory (4 GiB), CPU (80%), kill-on-close, and no-breakaway policy before primary-thread resume.
 - [ ] Adversarial AppContainer/LPAC integration tests proving effective process-count and breakaway enforcement, filesystem/network denial, handle inheritance, cancellation, and crash recovery.
-- [ ] Move model-authored agent tool execution behind an OS-enforced worker boundary with authenticated, narrowly scoped IPC.
+- [ ] Move the model tool host behind an OS-enforced worker boundary with authenticated, narrowly scoped IPC before enabling arbitrary process execution or exposing tools that require an independent OS boundary.
 - [ ] Node/Vite and additional language-specific restricted validation profiles.
 - [ ] Semantic context compaction and durable large-task recovery.
 - [x] Bounded Git status/history inspection and detached per-task worktrees created only for approved tasks from a clean repository state; worktree metadata and task events are persisted.
