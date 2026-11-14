@@ -1,13 +1,13 @@
 # Production Agent Workflow
 
-Status: the workflow implementation is retained for design and test development, but the public `run_agent_task` command fails closed. Do not treat this document as authorization to run model-authored tools in the application process. Execution remains disabled until an authenticated OS-isolated worker, handle-relative file access, process mitigations, and the Windows adversarial acceptance suite are complete.
+Status: the approved project-task workflow uses provider-native tool calling with a fixed typed tool set. Model calls are parsed from Ollama tool-call frames or OpenAI-compatible streamed `tool_calls` deltas, then routed through the task tool dispatcher and session permission broker. Tools execute against a detached task worktree; final changes require separate user review and apply. The tool host and path-based file operations currently run in the main Spindle process and are not OS-isolated. This does not enable arbitrary process execution, external network, MCP, or parallel agents.
 
 ## Runtime architecture
 
 Spindle separates orchestration from the execution workspace:
 
 - **Control plane:** Tauri/Rust owns project identity, provider selection, permission checks, task state, SQLite persistence, event ordering, cancellation, and final application.
-- **Model adapter:** the selected local provider receives a bounded conversation. For cross-provider compatibility, the current agent protocol uses one strict JSON action per completion instead of assuming native tool-call support.
+- **Model adapter:** sends the fixed function schemas with each agent request. Ollama uses its native `tools`, `message.tool_calls`, and `tool_name` conventions. LM Studio and Spindle llama.cpp use OpenAI-compatible `tools`, streamed `delta.tool_calls`, assistant tool-call messages, and call-ID-linked tool results. Models/providers may vary in tool-call support; unsupported responses fail as provider errors rather than silently falling back to pretend execution.
 - **Tool broker:** parses typed arguments, checks the session permission broker for every operation, applies path and size constraints, and returns structured results.
 - **Task workspace:** every task writes to its own detached Git worktree. The registered project working tree is not edited by the model.
 - **Validation worker:** fixed commands execute in the Windows AppContainer/LPAC worker with no network capabilities, a Job Object, bounded output, and offline dependencies.
@@ -23,18 +23,15 @@ Spindle separates orchestration from the execution workspace:
                                       |             |-> cancelled -> running
                                       completed -> applied -> undone
 
-The durable transcript is ordered by task and sequence. A startup recovery pass converts persisted running tasks to interrupted. Resuming an interrupted transcript adds a recovery instruction that requires the model to inspect current files and diffs before repeating any operation. It does not blindly replay a tool call.
+The durable transcript is ordered by task and sequence. Native assistant tool-call batches and each result are stored as separate transcript entries, while lifecycle events are persisted independently. On startup, running tasks become interrupted. If a tool-call batch exists without a committed result, recovery inserts an explicit outcome-unknown tool result and never automatically replays that call. The model is instructed to inspect current files and Git state before deciding what to do next.
 
 Application uses a SQLite journal with the patch and SHA-256 digest. Startup recovery distinguishes a patch that was applied, not applied, or conflicted. Undo is guarded by a reverse-patch check and refuses to overwrite intervening user edits. This is recoverable, journaled application, not an atomic multi-file filesystem transaction under every possible power-loss or storage failure.
 
 ## Model protocol and tool surface
 
-The model returns exactly one of:
+The model returns provider-native function tool calls. OpenAI-compatible streamed call fragments are accumulated by call index; identifiers and function names are validated, argument JSON must decode to an object, and oversized or malformed calls fail closed. Ollama tool arguments are parsed from the provider's structured JSON object payload. Multiple calls per turn are supported.
 
-    {"type":"tool_call","tool":"read_file","arguments":{"path":"src/App.tsx"}}
-    {"type":"final","summary":"...","completed":true}
-
-Malformed responses receive at most two repair turns. The loop has a 48-turn ceiling and a 64-call tool budget. Repeated identical read operations are bounded. Conversation selection preserves system instructions, the task goal, and recent tool evidence while respecting existing chat request limits.
+The loop has a 30-minute total runtime deadline, a 48-turn ceiling, a 64-call total budget, an 8-call per-turn limit, a 64 KiB aggregate argument budget per turn, bounded tool outputs, and duplicate-read suppression. Context selection preserves system instructions, the task goal, and recent complete tool-call/result groups. Cancellation signals the active model request and any cancellable validation process.
 
 Current tools:
 
@@ -48,6 +45,8 @@ Current tools:
 | write_file | Revision-checked full-file replacement |
 | edit_file | Unique-anchor localized replacement |
 | delete_file | Revision-checked regular-file deletion |
+| git_status | Inspect detached-worktree status |
+| git_history | Read bounded recent commit history |
 | get_diff | Review tracked and untracked task changes |
 | validate | Run one of the fixed Cargo validation commands |
 
