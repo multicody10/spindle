@@ -486,7 +486,7 @@ async fn loop_agent(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned();
-        save_tool_history_entry(context.database, &task.id, "tool_result", &entry).await?
+        save_tool_history_entry(context.database, &task.id, "tool_result", &entry).await?;
         event(
             context.app,
             context.database,

@@ -1547,7 +1547,7 @@ mod tests {
             database.clone(),
             task.id.clone(),
             "user".into(),
-            "__SPINDLE_NATIVE_TOOL_HISTORY_V1__{\\"kind\\":\\"tool_result\\"}".into(),
+            "__SPINDLE_NATIVE_TOOL_HISTORY_V1__{\"kind\":\"tool_result\"}".into(),
         ).unwrap();
         save_agent_tool_entry(
             database.clone(),
