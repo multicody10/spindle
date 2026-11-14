@@ -410,20 +410,49 @@ async fn archive_project(app: AppHandle, project_id: String) -> Result<(), Strin
     .await
 }
 
+async fn remove_session_task_artifacts(
+    app: &AppHandle,
+    database: &std::path::Path,
+    session_id: &str,
+    project_root: &str,
+) -> Result<(), String> {
+    let lookup = session_id.to_owned();
+    let task_ids = with_project_database(app, move |database| {
+        projects::list_task_ids(database, lookup)
+    }).await?;
+    let database = database.to_path_buf();
+    let root = project_root.to_owned();
+    tokio::task::spawn_blocking(move || {
+        for task_id in task_ids {
+            git::remove_task_artifacts_if_safe(&database, &root, &task_id)?;
+        }
+        Ok(())
+    }).await.map_err(|error| format!("Task worktree cleanup failed: {error}"))?
+}
+
 #[tauri::command]
 async fn delete_project(
     app: AppHandle,
     project_id: String,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
+    let project_lookup = project_id.clone();
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, project_lookup)
+    }).await?;
     let project_for_sessions = project_id.clone();
     let sessions = with_project_database(&app, move |database| {
         projects::list_sessions(database, project_for_sessions)
     })
     .await?;
-    // Remove in-memory permission grants before deleting the owning database records.
-    // If revocation fails, leave the project intact rather than retaining stale authority.
-    for session in sessions {
+    // Worktrees live outside the project DB and do not cascade with task rows.
+    // Remove only clean worktrees; refuse deletion rather than destroy unreviewed work.
+    let database = database_path(&app)?;
+    for session in &sessions {
+        remove_session_task_artifacts(&app, &database, &session.id, &project.root_path).await?;
+    }
+    // Revoke in-memory grants before deleting the owning database records.
+    for session in &sessions {
         permissions.revoke_all(&session.id)?;
     }
     with_project_database(&app, move |database| {
@@ -482,6 +511,12 @@ async fn delete_session(
         projects::get_session(database, lookup_id)
     })
     .await?;
+    let project_id = session.project_id.clone();
+    let project = with_project_database(&app, move |database| {
+        projects::get_project(database, project_id)
+    }).await?;
+    let database = database_path(&app)?;
+    remove_session_task_artifacts(&app, &database, &session.id, &project.root_path).await?;
     permissions.revoke_all(&session.id)?;
     with_project_database(&app, move |database| {
         projects::delete_session(database, session_id)

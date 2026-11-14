@@ -504,7 +504,7 @@ function App() {
   const deleteChat = async (projectId: string, sessionId: string) => {
     const session = (sessionsByProject[projectId] ?? []).find((item) => item.id === sessionId);
     if (!session || sidebarBusy) return;
-    if (!window.confirm("Delete chat “" + session.title + "”? Its saved messages and task history will be permanently removed. Project files will not be touched.")) return;
+    if (!window.confirm("Delete chat “" + session.title + "”? Its saved messages and task history will be removed. Clean agent worktrees will also be removed; Spindle will block deletion if a worktree contains unreviewed changes or commits. Project files will not be touched.")) return;
     setSidebarBusy(true);
     setProjectError(null);
     try {
@@ -526,7 +526,7 @@ function App() {
   const deleteProject = async (projectId: string) => {
     const project = projects.find((item) => item.id === projectId);
     if (!project || sidebarBusy) return;
-    if (!window.confirm("Delete project “" + project.name + "” from Spindle? All of its chats, messages, and task history will be removed. Files in “" + project.rootPath + "” will not be deleted.")) return;
+    if (!window.confirm("Delete project “" + project.name + "” from Spindle? All chats, messages, and task history will be removed. Clean agent worktrees will also be removed; Spindle will block deletion if a worktree contains unreviewed changes or commits. Files in “" + project.rootPath + "” will not be deleted.")) return;
     setSidebarBusy(true);
     setProjectError(null);
     try {
