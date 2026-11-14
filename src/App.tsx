@@ -511,7 +511,6 @@ function App() {
               providersError={providersError}
               onRefreshProviders={() => void refreshLocalProviders()}
               modelLibrary={modelLibrary?.models ?? []}
-              modelLibraryBusy={modelLibraryBusy}
               managedModelPath={modelPath}
               runtimeStatus={runtimeStatus}
               onSelectManagedModel={prepareChatModel}
