@@ -300,7 +300,7 @@ function ChatView({
       {availableProviders.length === 0 && (
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
-          <p>You can still choose a local GGUF model here. Selecting it does not start llama.cpp or load the model into memory.</p>
+          <p>Choose a local GGUF model here. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</p>
           <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
