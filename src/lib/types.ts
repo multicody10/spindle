@@ -235,8 +235,15 @@ export interface SessionPermissions { sessionId: string; projectId: string; scop
 export interface AgentSkill { name: string; description: string; source: string; manifestPath: string; }
 export interface LoadedAgentSkill { name: string; source: string; manifest: string; }
 
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: Record<string, unknown> };
+}
+
 export interface ChatResult {
   content: string;
+  toolCalls: ChatToolCall[];
   providerId: string;
   model: string;
   durationMs: number;

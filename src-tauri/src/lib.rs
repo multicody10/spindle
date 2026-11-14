@@ -184,11 +184,8 @@ async fn run_agent_task(
     managed_runtime: State<'_, runtime::ManagedRuntime>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<agent_runtime::AgentRunSummary, String> {
-    if !agent_runtime::execution_worker_ready() {
-        return Err(
-            "Agent execution is disabled until model-authored tools run inside the authenticated Windows worker and the adversarial acceptance suite passes."
-                .into(),
-        );
+    if !agent_runtime::native_tool_calling_ready() {
+        return Err("Native tool calling is unavailable in this build.".into());
     }
     let database = database_path(&app)?;
     agent_runtime::run_task(
@@ -978,6 +975,9 @@ async fn start_chat(
     managed_runtime: State<'_, runtime::ManagedRuntime>,
     request: chat::ChatRequest,
 ) -> Result<chat::ChatResult, String> {
+    if !request.tools.is_empty() || !request.tool_history.is_empty() {
+        return Err("Native tool calling is reserved for approved project tasks.".into());
+    }
     validate_chat_request(&request)?;
     let request_id = request.request_id.clone();
     let cancellation = runtime.begin(&request_id)?;
@@ -1002,6 +1002,9 @@ fn is_valid_chat_request_id(request_id: &str) -> bool {
 }
 
 pub(crate) fn validate_chat_request(request: &chat::ChatRequest) -> Result<(), String> {
+    if !request.tools.is_empty() || !request.tool_history.is_empty() {
+        return Err("Native tool calling is reserved for approved project tasks.".into());
+    }
     if request.session_id.is_empty()
         || request.session_id.len() > 128
         || !request
@@ -1376,6 +1379,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejects_native_tools_in_interactive_chat_requests() {
+        let configuration =
+            ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
+        let mut request = chat::ChatRequest {
+            request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id: "123e4567-e89b-12d3-a456-426614174001".into(),
+            provider_id: chat::ChatProvider::Ollama,
+            model: "qwen3.5:9b".into(),
+            messages: vec![chat::ChatMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+            }],
+            context_tokens: 4096,
+            generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
+        };
+        request.tools.push(chat::ChatToolDefinition {
+            kind: "function".into(),
+            function: chat::ChatToolFunctionDefinition {
+                name: "read_file".into(),
+                description: "Read a file".into(),
+                parameters: serde_json::json!({"type":"object"}),
+            },
+        });
+        assert!(validate_chat_request(&request)
+            .unwrap_err()
+            .contains("approved project tasks"));
+    }
+
+    #[test]
     fn accepts_bounded_local_chat_requests() {
         let configuration =
             ModelConfiguration::new("sample.gguf".into(), OptimizationProfile::Automatic);
@@ -1390,6 +1424,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request).is_ok());
     }
@@ -1409,6 +1445,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request)
             .unwrap_err()
@@ -1430,6 +1468,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request).is_err());
     }

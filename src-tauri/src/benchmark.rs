@@ -349,6 +349,8 @@ pub async fn run(
             ],
             context_tokens,
             generation: generation.clone(),
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         crate::validate_chat_request(&request)?;
         let cancellation = runtime.begin(&id)?;

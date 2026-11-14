@@ -20,7 +20,7 @@ This comparison focuses on architecture and user workflow patterns relevant to a
 
 1. **Control plane versus worker.** Spindle's Rust/Tauri process owns task identity, permissions, provider sessions, persistence, event history, and apply/undo. The restricted worker executes only fixed validation operations.
 2. **One worktree per task.** Model edits never land directly in the registered project tree. The project tree is updated only through a separate, explicit apply action.
-3. **Structured action loop.** The current providers do not share one native tool-call capability. Spindle therefore uses a strict JSON action envelope, typed argument schemas, a bounded dispatch loop, and explicit tool-result feedback.
+3. **Provider-native action loop.** Ollama exposes structured chat tool calls; LM Studio and Spindle-managed llama.cpp expose OpenAI-compatible function calls. Spindle sends fixed schemas, validates streamed call fragments and arguments, routes calls through a typed permission-checked dispatcher, persists call/result records, and never executes JSON action objects embedded in ordinary assistant text.
 4. **Evidence before completion.** A task cannot return completed while its final diff is truncated or has not been inspected since the last file mutation.
 5. **Durable state.** Transcript messages, ordered task events, state transitions, and patch-application journals survive application restarts. Recovery inspects existing effects rather than replaying commands blindly.
 6. **Skills and project memory as context only.** They improve repository-specific guidance but do not carry authority or alter permission decisions.

@@ -14,6 +14,40 @@ interface Props {
   onOpenSession: (project: Project, session: ProjectSession) => void;
 }
 
+function agentEventPresentation(item: AgentRunEvent): { title: string; detail: string; tone: string } {
+  const payload = item.payload && typeof item.payload === "object"
+    ? item.payload as Record<string, unknown>
+    : {};
+  const value = (key: string) => typeof payload[key] === "string" ? payload[key] as string : "";
+  const tool = value("tool").replaceAll("_", " ");
+  const target = value("target");
+  const callId = value("callId");
+  switch (item.kind) {
+    case "tool_started":
+      return { title: "Calling " + (tool || "tool"), detail: target || (callId ? "Call " + callId : "Tool execution started"), tone: "active" };
+    case "tool_finished":
+      return { title: (tool || "Tool") + " completed", detail: target || (payload.changed === true ? "Task worktree changed" : "Read only result"), tone: "success" };
+    case "tool_failed":
+      return { title: (tool || "Tool") + " failed", detail: value("error") || "The operation returned an error", tone: "error" };
+    case "tool_recovered_interrupted":
+      return { title: "Interrupted tool call recovered", detail: (tool || "Tool") + (callId ? " · " + callId : "") + " · outcome unknown; no automatic replay", tone: "warning" };
+    case "run_started":
+      return { title: "Agent started", detail: "Working in the detached task worktree", tone: "active" };
+    case "run_completed":
+      return { title: "Agent completed", detail: "Review the task diff before applying it", tone: "success" };
+    case "run_failed":
+      return { title: "Agent failed", detail: value("reason") || "The task stopped with an error", tone: "error" };
+    case "run_cancelled":
+      return { title: "Agent cancelled", detail: "Task worktree preserved", tone: "warning" };
+    default:
+      return {
+        title: item.kind.replaceAll("_", " "),
+        detail: value("reason") || value("command") || value("summary") || "",
+        tone: "neutral"
+      };
+  }
+}
+
 function ProjectsView({ providers, configuration, onOpenSession }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -565,12 +599,13 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                     ) : <>
                       <p className="projects-empty">{worktreeDiff.status.branch} · base {worktreeDiff.worktree.baseCommit.slice(0, 8)} · {worktreeDiff.status.changedFiles} changed · {worktreeDiff.status.untrackedFiles} untracked</p>
                       <p className="projects-empty">Worktree: {worktreeDiff.worktree.path}</p>
+                      <p className="tool-safety-note">Native model tools run only in this detached task worktree. Changes reach the project repository only after you review and apply the final diff.</p>
                       <div className="planner-actions">
                         <button className="button subtle" onClick={() => void refreshTaskWorktree()}>Refresh diff</button>
                         {agentRunning
                           ? <button className="button subtle" onClick={() => void cancelAgent()}>Cancel agent</button>
                           : <button className="button primary" onClick={() => void runAgent()}
-                              disabled={busy || !permissionState?.scopes.includes("project_write") || !selectedProvider || !modelId || !["approved", "interrupted", "failed", "cancelled"].includes(selectedTask.task.state)}>
+                              disabled={busy || !permissionState?.scopes.includes("project_read") || !selectedProvider || !modelId || !["approved", "interrupted", "failed", "cancelled"].includes(selectedTask.task.state)}>
                               {["interrupted", "failed", "cancelled"].includes(selectedTask.task.state) ? "Resume agent" : "Start agent"}
                             </button>}
                         <button className="button subtle" onClick={() => void removeTaskWorktree()}
@@ -599,12 +634,15 @@ function ProjectsView({ providers, configuration, onOpenSession }: Props) {
                     </div>}
                     {agentEvents.length > 0 && <div className="agent-event-list">
                       <strong>Run activity</strong>
-                      {agentEvents.slice(-12).map((item, index) => (
-                        <div key={item.taskId + item.createdAt + item.kind + index}>
-                          <span>{item.kind.replaceAll("_", " ")}</span>
-                          <small>{new Date(item.createdAt * 1000).toLocaleTimeString()} · {JSON.stringify(item.payload).slice(0, 280)}</small>
-                        </div>
-                      ))}
+                      {agentEvents.slice(-20).map((item, index) => {
+                        const presentation = agentEventPresentation(item);
+                        return (
+                          <div className={"agent-event " + presentation.tone} key={item.taskId + item.createdAt + item.kind + index}>
+                            <span>{presentation.title}</span>
+                            <small>{new Date(item.createdAt * 1000).toLocaleTimeString()}{presentation.detail ? " · " + presentation.detail : ""}</small>
+                          </div>
+                        );
+                      })}
                     </div>}
                     {validationResult && <div className="validation-result"><strong>{validationResult.command} · {validationResult.success ? "passed" : "failed"} · exit {validationResult.exitCode} · {(validationResult.durationMs / 1000).toFixed(1)}s</strong>
                       <small>{validationResult.isolation}</small>
