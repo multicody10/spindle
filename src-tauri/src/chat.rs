@@ -347,11 +347,7 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
     let thinking = message
-        .and_then(|message| {
-            message
-                .get("thinking")
-                .or_else(|| message.get("reasoning"))
-        })
+        .and_then(|message| message.get("thinking").or_else(|| message.get("reasoning")))
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);

@@ -418,11 +418,10 @@ async fn remove_session_task_artifacts(
     project_root: &str,
 ) -> Result<(), String> {
     let lookup = session_id.to_owned();
-    let task_ids =
-        with_project_database(app, move |database| {
-            projects::list_task_ids(database, lookup)
-        })
-        .await?;
+    let task_ids = with_project_database(app, move |database| {
+        projects::list_task_ids(database, lookup)
+    })
+    .await?;
     let database = database.to_path_buf();
     let root = project_root.to_owned();
     tokio::task::spawn_blocking(move || {
