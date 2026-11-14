@@ -32,7 +32,7 @@ pub fn registry() -> Vec<ProviderCapabilities> {
             streaming: CapabilitySupport::Supported,
             cancellation: CapabilitySupport::Supported,
             usage_metrics: CapabilitySupport::Supported,
-            tool_calling: CapabilitySupport::NotImplemented,
+            tool_calling: CapabilitySupport::ProviderDependent,
             structured_output: CapabilitySupport::NotImplemented,
             parallel_sessions: CapabilitySupport::ProviderDependent,
             managed_by_spindle: false,
@@ -78,7 +78,7 @@ mod tests {
             ));
             assert!(matches!(
                 provider.tool_calling,
-                CapabilitySupport::NotImplemented
+                CapabilitySupport::ProviderDependent
             ));
             assert!(matches!(
                 provider.structured_output,
