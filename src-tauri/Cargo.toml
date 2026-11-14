@@ -1,6 +1,6 @@
 [package]
 name = "spindle"
-version = "0.3.3"
+version = "0.4.0"
 description = "Local-first AI development environment"
 authors = ["Spindle contributors"]
 license = "MIT"
