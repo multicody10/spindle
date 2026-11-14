@@ -160,8 +160,12 @@ function ChatView({
     setTurnActivities((current) => {
       const next = [...current];
       const last = next[next.length - 1];
-      if (last?.state === "active") next[next.length - 1] = { ...last, label, detail };
-      else next.push({ id: crypto.randomUUID(), label, detail, state: "active" });
+      if (last?.state === "active" && last.label === label) {
+        next[next.length - 1] = { ...last, detail };
+      } else {
+        if (last?.state === "active") next[next.length - 1] = { ...last, state: "complete" };
+        next.push({ id: crypto.randomUUID(), label, detail, state: "active" });
+      }
       return next.slice(-12);
     });
   };

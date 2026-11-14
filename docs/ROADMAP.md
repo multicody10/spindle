@@ -26,6 +26,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] Discovery of local Ollama and LM Studio endpoints and model inventories.
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
+- [x] Stream optional provider-supplied reasoning separately from assistant text and render it in a bounded expandable turn card when the provider exposes that channel.
 - [x] Provider capability registry for features implemented by the current adapters; tool calling and structured output remain unavailable.
 - [x] Pinned Windows x64 llama.cpp CPU, Vulkan, and CUDA 12.4 runtime installation with size and SHA-256 verification.
 - [x] Shared inference runtime manager with one shared model process, per-session request leases, bounded cancellable queueing, configured parallel-slot admission, and in-memory per-session KV-prefix reuse with LRU slot eviction; disk-backed KV restoration across runtime restarts remains future work.
