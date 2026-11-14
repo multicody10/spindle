@@ -443,7 +443,7 @@ function ChatView({
                 }}
               >
                 <option value="">Choose a model…</option>
-                {(modelLibrary.length > 0 || managedModelPath) && (
+                {(modelLibrary.length > 0 || selectedManagedModelPath) && (
                   <optgroup label="Spindle Runtime · GGUF">
                     {selectedManagedModelPath && !modelLibrary.some((entry) => entry.path === selectedManagedModelPath) && (
                       <option value={"llama-cpp:" + selectedManagedModelPath}>
