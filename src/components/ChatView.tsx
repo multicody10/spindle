@@ -70,10 +70,9 @@ interface ChatViewProps {
   modelLibraryBusy: boolean;
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
-  onSelectManagedModel: (path: string) => Promise<void>;
-  onLoadManagedModel: () => Promise<string>;
+  onSelectManagedModel: (path: string) => Promise<string>;
+  onEjectManagedModel: () => Promise<void>;
   onOpenModelManager: () => void;
-  managedModelReady: boolean;
   contextTokens: number;
   generation: GenerationSettings;
   session?: ProjectSession | null;
@@ -89,9 +88,8 @@ function ChatView({
   managedModelPath,
   runtimeStatus,
   onSelectManagedModel,
-  onLoadManagedModel,
+  onEjectManagedModel,
   onOpenModelManager,
-  managedModelReady,
   contextTokens,
   generation,
   session = null
@@ -118,9 +116,6 @@ function ChatView({
     runtimeStatus?.running &&
     runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === managedModelPath.replace(/\\/g, "/").toLowerCase()
   );
-  const managedRuntimeBusy = Boolean(runtimeStatus?.running && !managedRuntimeLoaded);
-  const hasInstalledBackend = runtimeStatus?.installedBackends.some((item) => item.installed) ?? false;
-
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
     if (providerId === "llama-cpp" && !selected?.available) {
@@ -148,35 +143,19 @@ function ChatView({
   }, [availableProviders.length, modelLibrary.length, providerId]);
 
   const selectManagedModel = async (path: string) => {
-    if (!path || sending) return;
+    if (!path || sending || loadingManagedModel) return;
     setProviderId("llama-cpp");
     setModelId("");
     setError(null);
-    setStatus("Inspecting the GGUF and preparing its configuration…");
-    try {
-      await onSelectManagedModel(path);
-      setStatus("Model selected. Use Load model below when you are ready to start inference.");
-    } catch (reason) {
-      setError("Could not prepare the selected model: " + String(reason));
-      setStatus("Model selection failed.");
-    }
-  };
-
-  const loadManagedModel = async () => {
-    if (!managedModelPath || !managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded) return;
     setLoadingManagedModel(true);
-    setError(null);
-    setStatus(hasInstalledBackend
-      ? "Loading the selected model into Spindle Runtime…"
-      : "Installing a compatible backend and loading the selected model…");
+    setStatus("Inspecting and optimizing the selected GGUF…");
     try {
-      const loadedModelId = await onLoadManagedModel();
-      setProviderId("llama-cpp");
+      const loadedModelId = await onSelectManagedModel(path);
       setModelId(loadedModelId);
       setStatus("Model loaded. Chat is ready.");
     } catch (reason) {
-      setError(String(reason));
-      setStatus("Could not load the selected model.");
+      setError("Could not prepare and load the selected model: " + String(reason));
+      setStatus("Model loading failed.");
     } finally {
       setLoadingManagedModel(false);
     }
@@ -385,7 +364,7 @@ function ChatView({
                 className="chat-provider-picker"
                 aria-label="Provider"
                 value={providerId}
-                disabled={sending}
+                disabled={sending || loadingManagedModel}
                 onChange={(event) => {
                   const value = event.target.value as ChatProviderId;
                   setProviderId(value);
@@ -406,8 +385,8 @@ function ChatView({
                 className="chat-model-picker"
                 aria-label="Model"
                 value={providerId === "llama-cpp" ? managedModelPath : modelId}
-                disabled={sending || (providerId === "llama-cpp"
-                  ? modelLibraryBusy || modelLibrary.length === 0 || Boolean(runtimeStatus?.running)
+                disabled={sending || loadingManagedModel || (providerId === "llama-cpp"
+                  ? modelLibraryBusy || modelLibrary.length === 0
                   : !selectedProvider?.available || selectedProvider.models.length === 0)}
                 onChange={(event) => {
                   if (providerId === "llama-cpp") void selectManagedModel(event.target.value);
@@ -461,23 +440,18 @@ function ChatView({
                 <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
                 {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
-              {providerId === "llama-cpp" && (
+              {providerId === "llama-cpp" && managedRuntimeLoaded && (
                 <button
                   type="button"
-                  className="button subtle chat-load-model"
-                  onClick={() => void loadManagedModel()}
-                  disabled={!managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded}
-                  title={managedRuntimeBusy ? "Stop the currently loaded model before switching" : managedRuntimeLoaded ? "This model is already loaded" : "Install a backend if needed, then load this model"}
+                  className="chat-refresh"
+                  onClick={() => void onEjectManagedModel().catch((reason) => {
+                    setError("Could not eject the managed model: " + String(reason));
+                  })}
+                  disabled={sending || loadingManagedModel}
+                  title="Eject model and release memory"
+                  aria-label="Eject model and release memory"
                 >
-                  {loadingManagedModel
-                    ? "Loading…"
-                    : managedRuntimeLoaded
-                      ? "Loaded"
-                      : managedRuntimeBusy
-                        ? "Runtime busy"
-                        : hasInstalledBackend
-                          ? "Load model"
-                          : "Install & load"}
+                  ⏏
                 </button>
               )}
             </div>
