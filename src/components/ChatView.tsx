@@ -67,7 +67,6 @@ interface ChatViewProps {
   providersError: string | null;
   onRefreshProviders: () => void;
   modelLibrary: ModelLibraryEntry[];
-  modelLibraryBusy: boolean;
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
   onSelectManagedModel: (path: string, onProgress: (message: string) => void) => Promise<string>;
@@ -84,7 +83,6 @@ function ChatView({
   providersError,
   onRefreshProviders,
   modelLibrary,
-  modelLibraryBusy,
   managedModelPath,
   runtimeStatus,
   onSelectManagedModel,
