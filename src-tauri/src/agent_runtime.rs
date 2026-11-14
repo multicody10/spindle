@@ -1438,6 +1438,14 @@ fn native_tool_definitions(scopes: &[PermissionScope]) -> Vec<ChatToolDefinition
         definition("load_skill", "Load a named project-local Agent Skill manifest.", json!({
             "name":{"type":"string","minLength":1,"maxLength":160}
         }), &["name"]),
+        definition("git_status", "Inspect the Git status of the isolated task worktree.", json!({}), &[]),
+        definition("git_history", "Read recent commit history from the task worktree.", json!({
+            "limit":{"type":"integer","minimum":1,"maximum":50}
+        }), &[]),
+        definition("get_diff", "Read the current task diff in sequential chunks. Continue with nextOffsetBytes until complete is true before declaring completion.", json!({
+            "offsetBytes":{"type":"integer","minimum":0},
+            "maxBytes":{"type":"integer","minimum":1024,"maximum":4096}
+        }), &[]),
     ];
 
     if scopes.contains(&PermissionScope::ProjectWrite) {
@@ -1457,15 +1465,6 @@ fn native_tool_definitions(scopes: &[PermissionScope]) -> Vec<ChatToolDefinition
             definition("delete_file", "Delete a file in the isolated task worktree only when its revision matches read_file.", json!({
                 "path":{"type":"string"},"expectedRevision":{"type":"string"}
             }), &["path","expectedRevision"]),
-            definition("git_status", "Inspect the Git status of the isolated task worktree.", json!({}), &[]),
-            definition("git_history", "Read recent commit history from the task worktree.", json!({
-                "limit":{"type":"integer","minimum":1,"maximum":50}
-            }), &[]),
-            definition("get_diff", "Read the current task diff in sequential chunks. Continue with nextOffsetBytes until complete is true before declaring completion.", json!({
-                "offsetBytes":{"type":"integer","minimum":0},
-                "maxBytes":{"type":"integer","minimum":1024,"maximum":4096}
-            }), &[]),
-    
         ]);
     }
     if scopes.contains(&PermissionScope::ProcessExecution) {
