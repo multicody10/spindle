@@ -39,6 +39,7 @@ This roadmap records implementation status rather than implying the full product
 ## Core developer workflow
 
 - [x] Persistent projects and independent sessions in SQLite.
+- [ ] Post-merge manual smoke test for PR #31: chat/project deletion, deferred GGUF loading, managed-runtime ejection, and rich turn activity.
 - [x] Temporary project workspace grants with read-only defaults and separately granted write access.
 - [x] Bounded workspace directory listing, UTF-8 file reads, literal text search, and reviewed staged file changes.
 - [x] Versioned SQLite schema for projects, sessions, messages, tasks, task steps, events, and memory.
