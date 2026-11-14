@@ -443,7 +443,21 @@ pub fn remove_task_artifacts_if_safe(
         params![task_id],
         |row| row.get::<_, bool>(0),
     ).map_err(|error| error.to_string())?;
+    let unresolved_application = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM task_worktree_applications
+           WHERE task_id=?1 AND status IN ('applying','failed','conflict')
+         )",
+        params![task_id],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
     drop(connection);
+
+    if unresolved_application {
+        return Err(
+            "This task has an incomplete, failed, or conflicted patch application. Resolve its recovery state before deleting the chat or project.".into()
+        );
+    }
 
     if has_worktree {
         remove_worktree(database_path, project_root, task_id)?;
