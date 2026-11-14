@@ -29,6 +29,12 @@ const MAX_TOOL_OUTPUT_BYTES: usize = 48 * 1024;
 const MAX_READ_LINES: usize = 300;
 const EVENT_NAME: &str = "agent-run-event";
 
+// Model-authored workspace tools must remain disabled until they execute in a
+// separately authenticated AppContainer worker and pass Windows adversarial tests.
+pub fn execution_worker_ready() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunAgentTaskRequest {

@@ -184,6 +184,11 @@ async fn run_agent_task(
     managed_runtime: State<'_, runtime::ManagedRuntime>,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<agent_runtime::AgentRunSummary, String> {
+    if !agent_runtime::execution_worker_ready() {
+        return Err(
+            "Agent execution is disabled until model-authored tools run inside the authenticated Windows worker and the adversarial acceptance suite passes.".into()
+        );
+    }
     let database = database_path(&app)?;
     agent_runtime::run_task(
         app,
