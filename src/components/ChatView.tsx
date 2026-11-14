@@ -133,6 +133,11 @@ function ChatView({
     session.providerId ?? rememberedModel?.providerId ?? (managedModelPath ? "llama-cpp" : "ollama")
   );
   const [modelId, setModelId] = useState(session.modelId ?? rememberedModel?.modelId ?? "");
+  const [managedModelPathSelection, setManagedModelPathSelection] = useState(
+    () => rememberedModel?.providerId === "llama-cpp"
+      ? rememberedModel.managedModelPath
+      : managedModelPath
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -199,9 +204,8 @@ function ChatView({
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
-  const selectedManagedModelPath = providerId === "llama-cpp" &&
-    (!rememberedModel || rememberedModel.providerId === "llama-cpp")
-    ? rememberedModel?.managedModelPath || managedModelPath
+  const selectedManagedModelPath = providerId === "llama-cpp"
+    ? managedModelPathSelection
     : "";
   const managedSelectionReady = providerId === "llama-cpp" && Boolean(selectedManagedModelPath);
   const managedRuntimeLoaded = Boolean(
@@ -247,6 +251,7 @@ function ChatView({
     if (!path || sending || loadingManagedModel) return;
     autoPrepareAttempt.current = session.id + ":" + path;
     setProviderId("llama-cpp");
+    setManagedModelPathSelection(path);
     setModelId(path);
     setError(null);
     setLoadingManagedModel(true);
@@ -284,6 +289,11 @@ function ChatView({
     setStatus("Restoring saved session…");
     setProviderId(session.providerId ?? rememberedModel?.providerId ?? "ollama");
     setModelId(session.modelId ?? rememberedModel?.modelId ?? "");
+    setManagedModelPathSelection(
+      rememberedModel?.providerId === "llama-cpp"
+        ? rememberedModel.managedModelPath
+        : managedModelPath
+    );
     void api.listSessionMessages(session.id).then((stored) => {
         if (disposed) return;
         setMessages(stored.map(({ role, content }) => ({ role, content })));
