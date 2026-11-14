@@ -444,7 +444,8 @@ function ChatView({
                   ⏏
                 </button>
               )}
-            </div>           <div className="chat-submit-controls">
+            </div>
+            <div className="chat-submit-controls">
               {sending ? (
                 <button className="button primary stop-button" onClick={() => void stop()}>Stop</button>
               ) : (
