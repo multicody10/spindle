@@ -1108,6 +1108,18 @@ pub fn get_task(database: PathBuf, task_id: String) -> Result<AgentTask, String>
       .ok_or_else(|| "The selected task no longer exists.".into())
 }
 
+pub fn list_task_ids(database: PathBuf, session_id: String) -> Result<Vec<String>, String> {
+    let connection = open(&database)?;
+    let mut statement = connection
+        .prepare("SELECT id FROM agent_tasks WHERE session_id=?1 ORDER BY created_at")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![session_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())
+}
+
 pub fn list_tasks(database: PathBuf, session_id: String) -> Result<Vec<AgentTask>, String> {
     let connection = open(&database)?;
     let mut statement = connection.prepare(

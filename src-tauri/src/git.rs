@@ -432,6 +432,45 @@ pub fn remove_worktree(
 }
 
 
+pub fn remove_task_artifacts_if_safe(
+    database_path: &Path,
+    project_root: &str,
+    task_id: &str,
+) -> Result<(), String> {
+    let connection = open_database(database_path)?;
+    let has_worktree = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM task_worktrees WHERE task_id=?1)",
+        params![task_id],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    let unresolved_application = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM task_worktree_applications
+           WHERE task_id=?1 AND status IN ('applying','failed','conflict')
+         )",
+        params![task_id],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    drop(connection);
+
+    if unresolved_application {
+        return Err(
+            "This task has an incomplete, failed, or conflicted patch application. Resolve its recovery state before deleting the chat or project.".into()
+        );
+    }
+
+    if has_worktree {
+        remove_worktree(database_path, project_root, task_id)?;
+    }
+
+    let connection = open_database(database_path)?;
+    connection.execute(
+        "DELETE FROM task_worktree_applications WHERE task_id=?1",
+        params![task_id],
+    ).map_err(|error| format!("Could not clear task application history: {error}"))?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskApplicationResult {

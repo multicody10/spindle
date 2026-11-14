@@ -26,6 +26,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] Discovery of local Ollama and LM Studio endpoints and model inventories.
 - [x] Streamed local chat adapters for Ollama and LM Studio.
 - [x] In-memory chat UI with request cancellation and provider-reported metrics.
+- [x] Stream optional provider-supplied reasoning separately from assistant text and render it in a bounded expandable turn card when the provider exposes that channel.
 - [x] Provider capability registry for features implemented by the current adapters; tool calling and structured output remain unavailable.
 - [x] Pinned Windows x64 llama.cpp CPU, Vulkan, and CUDA 12.4 runtime installation with size and SHA-256 verification.
 - [x] Shared inference runtime manager with one shared model process, per-session request leases, bounded cancellable queueing, configured parallel-slot admission, and in-memory per-session KV-prefix reuse with LRU slot eviction; disk-backed KV restoration across runtime restarts remains future work.
@@ -46,7 +47,7 @@ This roadmap records implementation status rather than implying the full product
 - [x] Append-only task event history, ordered plan steps, and explicit approve/reject transitions.
 - [x] Manual workspace diff previews, explicit apply/discard, revision conflict checks, and guarded undo (bounded in-memory proposal history).
 - [x] Supervised approved-task workflow for detached Git worktree creation, bounded diff/status review, fixed sandboxed validation, and persisted task events.
-- [x] Bounded agent-authored task worktree edits, transcript persistence, task event streaming, cancellation, resume, final diff review, and journaled apply/undo (draft; security acceptance tests remain outstanding).
+- [x] Bounded agent-authored task worktree edits, transcript persistence, task event streaming, cancellation, resume, final diff review, and journaled apply/undo (implementation retained; public run command fails closed until authenticated worker isolation and Windows adversarial acceptance are complete).
 - [ ] Handle-relative and race-resistant Windows file broker with path/resource-specific grants.
 - [x] Suspended AppContainer validation-worker startup with verified Job Object active-process (64), per-process memory (2 GiB), aggregate memory (4 GiB), CPU (80%), kill-on-close, and no-breakaway policy before primary-thread resume.
 - [ ] Adversarial AppContainer/LPAC integration tests proving effective process-count and breakaway enforcement, filesystem/network denial, handle inheritance, cancellation, and crash recovery.

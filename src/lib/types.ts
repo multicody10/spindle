@@ -169,6 +169,11 @@ export interface ChatDelta {
   delta: string;
 }
 
+export interface ChatThinkingDelta {
+  requestId: string;
+  delta: string;
+}
+
 export interface Project {
   id: string; name: string; rootPath: string; createdAt: number; updatedAt: number; lastOpenedAt: number | null;
 }

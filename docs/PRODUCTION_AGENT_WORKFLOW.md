@@ -1,6 +1,6 @@
 # Production Agent Workflow
 
-Status: implemented on the production-agent-workflow branch; draft until Windows CI and security acceptance testing pass.
+Status: the workflow implementation is retained for design and test development, but the public `run_agent_task` command fails closed. Do not treat this document as authorization to run model-authored tools in the application process. Execution remains disabled until an authenticated OS-isolated worker, handle-relative file access, process mitigations, and the Windows adversarial acceptance suite are complete.
 
 ## Runtime architecture
 

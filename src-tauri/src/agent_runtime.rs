@@ -29,6 +29,12 @@ const MAX_TOOL_OUTPUT_BYTES: usize = 48 * 1024;
 const MAX_READ_LINES: usize = 300;
 const EVENT_NAME: &str = "agent-run-event";
 
+// Model-authored workspace tools must remain disabled until they execute in a
+// separately authenticated AppContainer worker and pass Windows adversarial tests.
+pub fn execution_worker_ready() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunAgentTaskRequest {
@@ -1120,6 +1126,11 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_execution_stays_disabled_until_the_isolated_worker_is_ready() {
+        assert!(!execution_worker_ready());
+    }
 
     #[test]
     fn protocol_rejects_plain_text_and_extra_fields() {
