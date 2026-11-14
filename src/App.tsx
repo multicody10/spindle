@@ -85,32 +85,93 @@ function App() {
     setMessage("New GGUF selected. Inspect it before configuring or loading the model.");
   }, [modelPath]);
 
-  const prepareChatModel = useCallback(async (path: string) => {
+  const prepareChatModel = useCallback(async (path: string): Promise<string> => {
     const candidatePath = path.trim();
     if (!candidatePath) throw new Error("Select a local GGUF model first.");
+
     setModelPath(candidatePath);
     setModel(null);
     setOptimizationWarnings([]);
     setError(null);
+
     try {
       const inspected = await api.inspectModel(candidatePath);
       const saved = await api.loadConfiguration(inspected.path, configuration.profile);
+      let nextConfiguration: ModelConfiguration;
+      let detectedHardware = hardware;
+
       if (saved) {
-        setConfiguration(saved);
-        setOptimizationWarnings([]);
+        nextConfiguration = { ...saved, modelPath: inspected.path };
       } else {
         const optimized = await api.optimizeModel(inspected.path, configuration.profile);
-        setHardware(optimized.hardware);
-        setConfiguration(optimized.configuration);
+        detectedHardware = optimized.hardware;
+        nextConfiguration = { ...optimized.configuration, modelPath: inspected.path };
         setOptimizationWarnings(optimized.warnings);
       }
+
+      setHardware(detectedHardware);
+      setConfiguration(nextConfiguration);
       setModelPath(inspected.path);
       setModel(inspected);
+      await api.saveConfiguration(nextConfiguration);
+
+      let current = await api.runtimeStatus();
+      const normalizePath = (value: string | null | undefined) =>
+        value?.replace(/\\/g, "/").toLowerCase() ?? "";
+      const sameModelAlreadyLoaded = current.running &&
+        normalizePath(current.modelPath) === normalizePath(inspected.path);
+
+      if (current.running && !sameModelAlreadyLoaded) {
+        current = await api.stopRuntime();
+        setRuntimeStatus(current);
+      }
+
+      if (!sameModelAlreadyLoaded) {
+        const hasNvidia = detectedHardware?.gpus.some((gpu) =>
+          gpu.vendor.toLowerCase().includes("nvidia")
+        ) ?? false;
+        const preferredBackends: RuntimeBackend[] = hasNvidia
+          ? ["cuda", "vulkan", "cpu"]
+          : ["vulkan", "cpu", "cuda"];
+        const installed = new Set(
+          current.installedBackends
+            .filter((item) => item.installed)
+            .map((item) => item.backend)
+        );
+        const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
+        if (!backend) throw new Error("No compatible llama.cpp backend is available.");
+
+        if (!installed.has(backend)) {
+          await api.installRuntime(backend);
+          current = await api.runtimeStatus();
+          setRuntimeStatus(current);
+          if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
+            throw new Error("The selected llama.cpp backend did not finish installing.");
+          }
+        }
+
+        current = await api.startRuntime(inspected.path, nextConfiguration, backend);
+      }
+
+      setRuntimeStatus(current);
+      const discovered = await api.localProviders();
+      setLocalProviders(discovered);
+      const managedProvider = discovered.find((provider) =>
+        provider.id === "llama-cpp" && provider.available
+      );
+      const loadedModelId = managedProvider?.models[0]?.id;
+      if (!loadedModelId) {
+        throw new Error(
+          "The model runtime started, but its local endpoint did not report a loaded model. Open Models for runtime details."
+        );
+      }
+
+      return loadedModelId;
     } catch (reason) {
       setError(String(reason));
       throw reason;
     }
-  }, [configuration.profile]);
+  }, [configuration.profile, hardware]);
 
   const refreshModelLibrary = useCallback(async () => {
     setModelLibraryBusy(true);
@@ -142,53 +203,13 @@ function App() {
     }
   }, []);
 
-  const loadChatModel = useCallback(async (): Promise<string> => {
-    const candidatePath = modelPath.trim();
-    if (!candidatePath || model?.path !== candidatePath || configuration.modelPath !== candidatePath) {
-      throw new Error("Select a GGUF model and let Spindle finish inspecting it first.");
-    }
 
-    let current = await api.runtimeStatus();
-    setRuntimeStatus(current);
-    if (current.running) {
-      const runningPath = current.modelPath?.replace(/\\/g, "/").toLowerCase();
-      const selectedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
-      if (runningPath !== selectedPath) {
-        throw new Error("Another model is already loaded. Stop the current model from Models before switching.");
-      }
-    } else {
-      const hasNvidia = hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ?? false;
-      const preferredBackends: RuntimeBackend[] = hasNvidia
-        ? ["cuda", "vulkan", "cpu"]
-        : ["vulkan", "cpu", "cuda"];
-      const installed = new Set(
-        current.installedBackends.filter((item) => item.installed).map((item) => item.backend)
-      );
-      const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
-      if (!backend) throw new Error("No compatible llama.cpp backend is available.");
 
-      if (!installed.has(backend)) {
-        await api.installRuntime(backend);
-        current = await api.runtimeStatus();
-        setRuntimeStatus(current);
-        if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
-          throw new Error("The selected llama.cpp backend did not finish installing.");
-        }
-      }
-
-      const started = await api.startRuntime(candidatePath, configuration, backend);
-      setRuntimeStatus(started);
-    }
-
-    const discovered = await api.localProviders();
-    setLocalProviders(discovered);
-    const managedProvider = discovered.find((provider) => provider.id === "llama-cpp" && provider.available);
-    const loadedModelId = managedProvider?.models[0]?.id;
-    if (!loadedModelId) {
-      throw new Error("llama.cpp started, but its model endpoint did not report a loaded model. Check Models for runtime details.");
-    }
-    return loadedModelId;
-  }, [configuration, hardware, model, modelPath]);
+  const ejectChatModel = useCallback(async () => {
+    const stopped = await api.stopRuntime();
+    setRuntimeStatus(stopped);
+    await refreshLocalProviders();
+  }, [refreshLocalProviders]);
 
   useEffect(() => {
     void refreshModelLibrary();
@@ -481,9 +502,8 @@ function App() {
               managedModelPath={modelPath}
               runtimeStatus={runtimeStatus}
               onSelectManagedModel={prepareChatModel}
-              onLoadManagedModel={loadChatModel}
+              onEjectManagedModel={ejectChatModel}
               onOpenModelManager={() => setActiveView("model-lab")}
-              managedModelReady={Boolean(model && model.path === modelPath && configuration.modelPath === modelPath)}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
               session={activeSession}
