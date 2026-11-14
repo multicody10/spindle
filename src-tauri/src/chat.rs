@@ -625,14 +625,14 @@ fn merge_tool_call_fragments(
     Ok(())
 }
 
-fn finish_tool_calls(partial: BTreeMap<usize, PartialToolCall>) -> Result<Vec<ChatToolCall>, String> {
+fn finish_tool_calls(partial: BTreeMap<usize, PartialToolCall>, id_prefix: &str) -> Result<Vec<ChatToolCall>, String> {
     let mut ids = HashSet::new();
     let mut calls = Vec::with_capacity(partial.len());
     for (index, call) in partial {
         if call.name.is_empty() {
             return Err("The provider returned a tool call without a function name.".into());
         }
-        let id = call.id.unwrap_or_else(|| format!("ollama_call_{index}"));
+        let id = call.id.unwrap_or_else(|| format!("{id_prefix}_tool_{index}"));
         if !ids.insert(id.clone()) {
             return Err("The provider returned duplicate tool-call identifiers.".into());
         }
@@ -775,7 +775,7 @@ async fn stream_chat(
         return Err("The local provider stream ended before it sent a completion marker.".into());
     }
 
-    let tool_calls = finish_tool_calls(partial_tool_calls)?;
+    let tool_calls = finish_tool_calls(partial_tool_calls, request_id)?;
     if !tool_calls.is_empty() && !content.trim().is_empty() {
         return Err("The provider mixed a tool call with ordinary assistant text in the same turn; this ambiguous response was rejected.".into());
     }
@@ -1004,7 +1004,7 @@ mod tests {
         assert_eq!(frame.tool_calls.len(), 1);
         let mut partial = BTreeMap::new();
         merge_tool_call_fragments(&mut partial, frame.tool_calls).unwrap();
-        let calls = finish_tool_calls(partial).unwrap();
+        let calls = finish_tool_calls(partial, "ollama-test").unwrap();
         assert_eq!(calls[0].function.name, "read_file");
         assert_eq!(calls[0].function.arguments["path"], "README.md");
     }
@@ -1020,7 +1020,7 @@ mod tests {
         let mut partial = BTreeMap::new();
         merge_tool_call_fragments(&mut partial, first.tool_calls).unwrap();
         merge_tool_call_fragments(&mut partial, second.tool_calls).unwrap();
-        let calls = finish_tool_calls(partial).unwrap();
+        let calls = finish_tool_calls(partial, "openai-test").unwrap();
         assert_eq!(calls[0].id, "call_abc");
         assert_eq!(calls[0].function.arguments["path"], "README.md");
     }
@@ -1032,7 +1032,7 @@ mod tests {
             index: 0, id: Some("call_bad".into()), name: Some("read_file".into()),
             arguments: Some("{".into()),
         }]).unwrap();
-        assert!(finish_tool_calls(malformed).is_err());
+        assert!(finish_tool_calls(malformed, "malformed-test").is_err());
 
         let mut oversized = BTreeMap::new();
         assert!(merge_tool_call_fragments(&mut oversized, vec![ToolCallFragment {
