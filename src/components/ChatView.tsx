@@ -271,6 +271,9 @@ function ChatView({
 
   const appendDelta = (delta: ChatDelta, id: string) => {
     if (delta.requestId !== id || !delta.delta) return;
+    if (assistantDraft.current.length === 0) {
+      updateActiveTurnActivity("Writing response", "Receiving streamed output from the selected model.");
+    }
     assistantDraft.current += delta.delta;
     setMessages((current) => {
       const lastIndex = current.length - 1;
@@ -284,7 +287,7 @@ function ChatView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending || (!selectedProvider?.available && !managedSelectionReady) || !modelId || !session.id) return;
+    if (!text || sending || loadingManagedModel || (!selectedProvider?.available && !managedSelectionReady) || !modelId || !session.id) return;
 
     const id = crypto.randomUUID();
     const transcript: ChatMessage[] = [...messages, { role: "user", content: text }];
@@ -326,7 +329,7 @@ function ChatView({
           setModelId(effectiveModelId);
         }
       }
-      updateActiveTurnActivity("Generating response", "The selected provider is generating the assistant response.");
+      updateActiveTurnActivity("Thinking", "Waiting for the selected model to begin responding.");
       setStatus("Generating locally…");
       if (session.title === "New session") {
         const firstLine = text.split(/\r?\n/)[0]?.trim() ?? "New chat";
@@ -415,7 +418,7 @@ function ChatView({
       {availableProviders.length === 0 && (
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
-          <p>Choose a local GGUF model here. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</p>
+          <p>Choose a local GGUF model here. Spindle prepares its configuration now and loads it only when you send your first message.</p>
           <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle prepares its configuration now and loads it only when you send your first message.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
@@ -484,7 +487,7 @@ function ChatView({
             placeholder="Message your local model…"
             rows={3}
             maxLength={65536}
-            disabled={(!selectedProvider?.available && !managedSelectionReady) || !modelId || sending}
+            disabled={(!selectedProvider?.available && !managedSelectionReady) || !modelId || sending || loadingManagedModel}
           />
           <div className="chat-composer-footer">
             <div className="chat-model-controls">
@@ -586,7 +589,7 @@ function ChatView({
               {sending ? (
                 <button className="button primary stop-button" onClick={() => void stop()}>Stop</button>
               ) : (
-                <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || (!selectedProvider?.available && !managedSelectionReady) || !modelId}>
+                <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || (!selectedProvider?.available && !managedSelectionReady) || !modelId || loadingManagedModel}>
                   Send <span>↗</span>
                 </button>
               )}

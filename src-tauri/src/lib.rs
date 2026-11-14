@@ -406,7 +406,21 @@ async fn archive_project(app: AppHandle, project_id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-async fn delete_project(app: AppHandle, project_id: String) -> Result<(), String> {
+async fn delete_project(
+    app: AppHandle,
+    project_id: String,
+    permissions: State<'_, permissions::PermissionBroker>,
+) -> Result<(), String> {
+    let project_for_sessions = project_id.clone();
+    let sessions = with_project_database(&app, move |database| {
+        projects::list_sessions(database, project_for_sessions)
+    })
+    .await?;
+    // Remove in-memory permission grants before deleting the owning database records.
+    // If revocation fails, leave the project intact rather than retaining stale authority.
+    for session in sessions {
+        permissions.revoke_all(&session.id)?;
+    }
     with_project_database(&app, move |database| {
         projects::delete_project(database, project_id)
     })
