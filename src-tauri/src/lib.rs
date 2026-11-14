@@ -186,7 +186,8 @@ async fn run_agent_task(
 ) -> Result<agent_runtime::AgentRunSummary, String> {
     if !agent_runtime::execution_worker_ready() {
         return Err(
-            "Agent execution is disabled until model-authored tools run inside the authenticated Windows worker and the adversarial acceptance suite passes.".into()
+            "Agent execution is disabled until model-authored tools run inside the authenticated Windows worker and the adversarial acceptance suite passes."
+                .into(),
         );
     }
     let database = database_path(&app)?;
@@ -417,9 +418,11 @@ async fn remove_session_task_artifacts(
     project_root: &str,
 ) -> Result<(), String> {
     let lookup = session_id.to_owned();
-    let task_ids = with_project_database(app, move |database| {
-        projects::list_task_ids(database, lookup)
-    }).await?;
+    let task_ids =
+        with_project_database(app, move |database| {
+            projects::list_task_ids(database, lookup)
+        })
+        .await?;
     let database = database.to_path_buf();
     let root = project_root.to_owned();
     tokio::task::spawn_blocking(move || {
@@ -427,7 +430,9 @@ async fn remove_session_task_artifacts(
             git::remove_task_artifacts_if_safe(&database, &root, &task_id)?;
         }
         Ok(())
-    }).await.map_err(|error| format!("Task worktree cleanup failed: {error}"))?
+    })
+    .await
+    .map_err(|error| format!("Task worktree cleanup failed: {error}"))?
 }
 
 #[tauri::command]
@@ -439,7 +444,8 @@ async fn delete_project(
     let project_lookup = project_id.clone();
     let project = with_project_database(&app, move |database| {
         projects::get_project(database, project_lookup)
-    }).await?;
+    })
+    .await?;
     let project_for_sessions = project_id.clone();
     let sessions = with_project_database(&app, move |database| {
         projects::list_sessions(database, project_for_sessions)
@@ -514,7 +520,8 @@ async fn delete_session(
     let project_id = session.project_id.clone();
     let project = with_project_database(&app, move |database| {
         projects::get_project(database, project_id)
-    }).await?;
+    })
+    .await?;
     let database = database_path(&app)?;
     remove_session_task_artifacts(&app, &database, &session.id, &project.root_path).await?;
     permissions.revoke_all(&session.id)?;

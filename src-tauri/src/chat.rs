@@ -347,7 +347,11 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
     let thinking = message
-        .and_then(|message| message.get("thinking").or_else(|| message.get("reasoning")))
+        .and_then(|message| {
+            message
+                .get("thinking")
+                .or_else(|| message.get("reasoning"))
+        })
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
@@ -404,7 +408,8 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .map(str::to_owned);
     let thinking = provider_delta
         .and_then(|delta| {
-            delta.get("reasoning_content")
+            delta
+                .get("reasoning_content")
                 .or_else(|| delta.get("reasoning"))
                 .or_else(|| delta.get("thinking"))
         })
@@ -702,7 +707,10 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(reasoning.thinking.as_deref(), Some("Let me reason through this."));
+        assert_eq!(
+            reasoning.thinking.as_deref(),
+            Some("Let me reason through this.")
+        );
 
         let final_frame = parse_ollama_line(
             br#"{"done":true,"prompt_eval_count":12,"eval_count":8,"eval_duration":2000000000}"#,
@@ -732,7 +740,10 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(reasoning.thinking.as_deref(), Some("Inspecting the problem."));
+        assert_eq!(
+            reasoning.thinking.as_deref(),
+            Some("Inspecting the problem.")
+        );
 
         let usage = parse_lm_studio_line(
             br#"data: {"choices":[],"usage":{"prompt_tokens":21,"completion_tokens":13}}"#,
