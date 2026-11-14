@@ -1347,7 +1347,7 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
     let pinned_bytes = pinned.iter().map(|entry| entry.to_string().len()).sum::<usize>();
     let mut selected = Vec::<Vec<Value>>::new();
     let mut used = pinned_bytes;
-    for (index, group) in groups.into_iter().enumerate().rev() {
+    for group in groups.into_iter().rev() {
         let size = group.iter().map(|entry| entry.to_string().len()).sum::<usize>();
         let is_latest = selected.is_empty();
         let effective_budget = if is_latest {
@@ -1361,13 +1361,18 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
                 // the original system and user goal rather than a partial tool
                 // transcript. The model will receive an explicit context error
                 // instead of being invited to replay an uncertain side effect.
-                return pinned;
+                let mut safe = pinned;
+                safe.push(json!({
+                    "kind":"chat_message",
+                    "role":"user",
+                    "content":"RECOVERY: The previous tool history exceeded the supported context size. Its exact results may be unavailable. Do not repeat any mutating operation automatically. Inspect the current files and Git status before deciding how to proceed."
+                }));
+                return safe;
             }
             break;
         }
         used += size;
         selected.push(group);
-        let _ = index;
     }
     selected.reverse();
 
