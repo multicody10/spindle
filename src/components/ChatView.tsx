@@ -67,12 +67,11 @@ interface ChatViewProps {
   providersError: string | null;
   onRefreshProviders: () => void;
   modelLibrary: ModelLibraryEntry[];
-  modelLibraryBusy: boolean;
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
-  onSelectManagedModel: (path: string) => Promise<void>;
-  onLoadManagedModel: () => Promise<string>;
-  managedModelReady: boolean;
+  onSelectManagedModel: (path: string, onProgress: (message: string) => void) => Promise<string>;
+  onEjectManagedModel: () => Promise<void>;
+  onOpenModelManager: () => void;
   contextTokens: number;
   generation: GenerationSettings;
   session?: ProjectSession | null;
@@ -84,12 +83,11 @@ function ChatView({
   providersError,
   onRefreshProviders,
   modelLibrary,
-  modelLibraryBusy,
   managedModelPath,
   runtimeStatus,
   onSelectManagedModel,
-  onLoadManagedModel,
-  managedModelReady,
+  onEjectManagedModel,
+  onOpenModelManager,
   contextTokens,
   generation,
   session = null
@@ -116,9 +114,6 @@ function ChatView({
     runtimeStatus?.running &&
     runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === managedModelPath.replace(/\\/g, "/").toLowerCase()
   );
-  const managedRuntimeBusy = Boolean(runtimeStatus?.running && !managedRuntimeLoaded);
-  const hasInstalledBackend = runtimeStatus?.installedBackends.some((item) => item.installed) ?? false;
-
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
     if (providerId === "llama-cpp" && !selected?.available) {
@@ -146,35 +141,19 @@ function ChatView({
   }, [availableProviders.length, modelLibrary.length, providerId]);
 
   const selectManagedModel = async (path: string) => {
-    if (!path || sending) return;
+    if (!path || sending || loadingManagedModel) return;
     setProviderId("llama-cpp");
     setModelId("");
     setError(null);
-    setStatus("Inspecting the GGUF and preparing its configuration…");
-    try {
-      await onSelectManagedModel(path);
-      setStatus("Model selected. Use Load model below when you are ready to start inference.");
-    } catch (reason) {
-      setError("Could not prepare the selected model: " + String(reason));
-      setStatus("Model selection failed.");
-    }
-  };
-
-  const loadManagedModel = async () => {
-    if (!managedModelPath || !managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded) return;
     setLoadingManagedModel(true);
-    setError(null);
-    setStatus(hasInstalledBackend
-      ? "Loading the selected model into Spindle Runtime…"
-      : "Installing a compatible backend and loading the selected model…");
+    setStatus("Inspecting and optimizing the selected GGUF…");
     try {
-      const loadedModelId = await onLoadManagedModel();
-      setProviderId("llama-cpp");
+      const loadedModelId = await onSelectManagedModel(path, setStatus);
       setModelId(loadedModelId);
       setStatus("Model loaded. Chat is ready.");
     } catch (reason) {
-      setError(String(reason));
-      setStatus("Could not load the selected model.");
+      setError("Could not prepare and load the selected model: " + String(reason));
+      setStatus("Model loading failed.");
     } finally {
       setLoadingManagedModel(false);
     }
@@ -319,8 +298,8 @@ function ChatView({
       {availableProviders.length === 0 && (
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
-          <p>You can still choose a local GGUF model here. Selecting it does not start llama.cpp or load the model into memory.</p>
-          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library, then use the Load model button in this chat. Spindle installs a compatible backend if needed and starts the model for you.</span></div>
+          <p>Choose a local GGUF model here. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</p>
+          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
         </section>
@@ -334,7 +313,7 @@ function ChatView({
           <div className="chat-empty">
             <div className="chat-empty-mark">✳</div>
             <strong>Your local chat workspace</strong>
-            <p>Choose a model below, then press Load model. The runtime stays stopped until you explicitly start it.</p>
+            <p>Choose a local GGUF below to have Spindle prepare and start it automatically, or select an already running local provider.</p>
           </div>
         ) : (
           <div className="chat-message-list">
@@ -380,66 +359,66 @@ function ChatView({
           <div className="chat-composer-footer">
             <div className="chat-model-controls">
               <select
-                className="chat-provider-picker"
-                aria-label="Provider"
-                value={providerId}
-                disabled={sending}
+                className="chat-model-picker"
+                aria-label="Model"
+                title="Choose a local model"
+                value={providerId === "llama-cpp"
+                  ? (managedModelPath ? "llama-cpp:" + managedModelPath : "")
+                  : (modelId ? providerId + ":" + modelId : "")}
+                disabled={sending || loadingManagedModel}
                 onChange={(event) => {
-                  const value = event.target.value as ChatProviderId;
-                  setProviderId(value);
-                  if (value === "llama-cpp") {
-                    const candidate = managedModelPath || modelLibrary[0]?.path;
-                    if (candidate) void selectManagedModel(candidate);
-                    else setModelId("");
+                  const value = event.target.value;
+                  const separator = value.indexOf(":");
+                  if (separator < 0) return;
+                  const nextProvider = value.slice(0, separator) as ChatProviderId;
+                  const nextModel = value.slice(separator + 1);
+                  if (!nextModel) return;
+                  if (nextProvider === "llama-cpp") {
+                    void selectManagedModel(nextModel);
                   } else {
-                    setModelId(providers.find((provider) => provider.id === value)?.models[0]?.id ?? "");
+                    setProviderId(nextProvider);
+                    setModelId(nextModel);
                   }
                 }}
               >
-                <option value="ollama">Ollama</option>
-                <option value="lm-studio">LM Studio</option>
-                <option value="llama-cpp">Spindle Runtime</option>
-              </select>
-              <select
-                className="chat-model-picker"
-                aria-label="Model"
-                value={providerId === "llama-cpp" ? managedModelPath : modelId}
-                disabled={sending || (providerId === "llama-cpp"
-                  ? modelLibraryBusy || modelLibrary.length === 0 || Boolean(runtimeStatus?.running)
-                  : !selectedProvider?.available || selectedProvider.models.length === 0)}
-                onChange={(event) => {
-                  if (providerId === "llama-cpp") void selectManagedModel(event.target.value);
-                  else setModelId(event.target.value);
-                }}
-              >
-                {providerId === "llama-cpp" ? (
-                  <>
-                    <option value="">Choose a local GGUF model…</option>
+                <option value="">Choose a model…</option>
+                {(modelLibrary.length > 0 || managedModelPath) && (
+                  <optgroup label="Spindle Runtime · GGUF">
                     {managedModelPath && !modelLibrary.some((entry) => entry.path === managedModelPath) && (
-                      <option value={managedModelPath}>{managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}</option>
+                      <option value={"llama-cpp:" + managedModelPath}>
+                        {managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}
+                      </option>
                     )}
                     {modelLibrary.map((entry) => (
-                      <option key={entry.path} value={entry.path}>
+                      <option key={entry.path} value={"llama-cpp:" + entry.path}>
                         {entry.fileName} · {entry.source}
                       </option>
                     ))}
-                  </>
-                ) : (
-                  <>
-                    {selectedProvider?.models.map((model) => (
-                      <option key={model.id} value={model.id}>{model.id}</option>
-                    ))}
-                    {(!selectedProvider || selectedProvider.models.length === 0) && (
-                      <option value="">No models available</option>
-                    )}
-                  </>
+                  </optgroup>
                 )}
+                {providers.filter((provider) => provider.available && provider.id !== "llama-cpp").map((provider) => (
+                  <optgroup key={provider.id} label={provider.name}>
+                    {provider.models.map((model) => (
+                      <option key={model.id} value={provider.id + ":" + model.id}>{model.id}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
               <button
                 type="button"
                 className="chat-refresh"
+                onClick={onOpenModelManager}
+                disabled={sending || loadingManagedModel}
+                title="Open model library and runtime settings"
+                aria-label="Open model library and runtime settings"
+              >
+                ⚙
+              </button>
+              <button
+                type="button"
+                className="chat-refresh"
                 onClick={onRefreshProviders}
-                disabled={providersBusy || sending}
+                disabled={providersBusy || sending || loadingManagedModel}
                 title="Refresh local providers"
                 aria-label="Refresh local providers"
               >
@@ -449,23 +428,29 @@ function ChatView({
                 <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
                 {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
-              {providerId === "llama-cpp" && (
+              {providerId === "llama-cpp" && error && managedModelPath && !managedRuntimeLoaded && (
                 <button
                   type="button"
                   className="button subtle chat-load-model"
-                  onClick={() => void loadManagedModel()}
-                  disabled={!managedModelReady || loadingManagedModel || sending || managedRuntimeBusy || managedRuntimeLoaded}
-                  title={managedRuntimeBusy ? "Stop the currently loaded model before switching" : managedRuntimeLoaded ? "This model is already loaded" : "Install a backend if needed, then load this model"}
+                  onClick={() => void selectManagedModel(managedModelPath)}
+                  disabled={sending || loadingManagedModel}
+                  title="Retry preparing and loading this model"
                 >
-                  {loadingManagedModel
-                    ? "Loading…"
-                    : managedRuntimeLoaded
-                      ? "Loaded"
-                      : managedRuntimeBusy
-                        ? "Runtime busy"
-                        : hasInstalledBackend
-                          ? "Load model"
-                          : "Install & load"}
+                  Retry
+                </button>
+              )}
+              {providerId === "llama-cpp" && runtimeStatus?.running && (
+                <button
+                  type="button"
+                  className="chat-refresh"
+                  onClick={() => void onEjectManagedModel().catch((reason) => {
+                    setError("Could not eject the managed model: " + String(reason));
+                  })}
+                  disabled={sending || loadingManagedModel}
+                  title="Eject the managed model and release memory"
+                  aria-label="Eject the managed model and release memory"
+                >
+                  ⏏
                 </button>
               )}
             </div>

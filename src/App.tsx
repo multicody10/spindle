@@ -50,7 +50,7 @@ const formatNumber = (value: number | null | undefined) =>
   value === null || value === undefined ? "Unknown" : new Intl.NumberFormat().format(value);
 
 function App() {
-  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "runtime" | "workspace" | "projects" | "benchmark">("chat");
+  const [activeView, setActiveView] = useState<"model-lab" | "chat" | "workspace" | "projects" | "benchmark">("chat");
   const [activeSession, setActiveSession] = useState<ProjectSession | null>(null);
   const [chatInstance, setChatInstance] = useState(0);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -85,32 +85,106 @@ function App() {
     setMessage("New GGUF selected. Inspect it before configuring or loading the model.");
   }, [modelPath]);
 
-  const prepareChatModel = useCallback(async (path: string) => {
+  const prepareChatModel = useCallback(async (
+    path: string,
+    onProgress: (message: string) => void
+  ): Promise<string> => {
     const candidatePath = path.trim();
     if (!candidatePath) throw new Error("Select a local GGUF model first.");
+
     setModelPath(candidatePath);
     setModel(null);
     setOptimizationWarnings([]);
     setError(null);
+
     try {
+      onProgress("Inspecting GGUF metadata…");
       const inspected = await api.inspectModel(candidatePath);
+      onProgress("Restoring the model's saved configuration…");
       const saved = await api.loadConfiguration(inspected.path, configuration.profile);
+      let nextConfiguration: ModelConfiguration;
+      let detectedHardware = hardware ?? await api.hardware();
+      if (!hardware) setHardware(detectedHardware);
+
       if (saved) {
-        setConfiguration(saved);
-        setOptimizationWarnings([]);
+        nextConfiguration = { ...saved, modelPath: inspected.path };
       } else {
+        onProgress("Optimizing the model for this hardware…");
         const optimized = await api.optimizeModel(inspected.path, configuration.profile);
-        setHardware(optimized.hardware);
-        setConfiguration(optimized.configuration);
+        detectedHardware = optimized.hardware;
+        nextConfiguration = { ...optimized.configuration, modelPath: inspected.path };
         setOptimizationWarnings(optimized.warnings);
       }
+
+      setHardware(detectedHardware);
+      setConfiguration(nextConfiguration);
       setModelPath(inspected.path);
       setModel(inspected);
+      onProgress("Saving model configuration…");
+      await api.saveConfiguration(nextConfiguration);
+
+      onProgress("Checking the managed runtime…");
+      let current = await api.runtimeStatus();
+      const normalizePath = (value: string | null | undefined) =>
+        value?.replace(/\\/g, "/").toLowerCase() ?? "";
+      const sameModelAlreadyLoaded = current.running &&
+        normalizePath(current.modelPath) === normalizePath(inspected.path);
+
+      if (current.running && !sameModelAlreadyLoaded) {
+        onProgress("Stopping the previously loaded model…");
+        current = await api.stopRuntime();
+        setRuntimeStatus(current);
+      }
+
+      if (!sameModelAlreadyLoaded) {
+        const hasNvidia = detectedHardware?.gpus.some((gpu) =>
+          gpu.vendor.toLowerCase().includes("nvidia")
+        ) ?? false;
+        const preferredBackends: RuntimeBackend[] = hasNvidia
+          ? ["cuda", "vulkan", "cpu"]
+          : ["vulkan", "cpu", "cuda"];
+        const installed = new Set(
+          current.installedBackends
+            .filter((item) => item.installed)
+            .map((item) => item.backend)
+        );
+        const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
+        if (!backend) throw new Error("No compatible llama.cpp backend is available.");
+
+        if (!installed.has(backend)) {
+          onProgress("Installing the verified " + backend.toUpperCase() + " backend…");
+          await api.installRuntime(backend);
+          current = await api.runtimeStatus();
+          setRuntimeStatus(current);
+          if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
+            throw new Error("The selected llama.cpp backend did not finish installing.");
+          }
+        }
+
+        onProgress("Starting " + backend.toUpperCase() + " and loading the model into memory…");
+        current = await api.startRuntime(inspected.path, nextConfiguration, backend);
+      }
+
+      setRuntimeStatus(current);
+      onProgress("Connecting to the loaded model…");
+      const discovered = await api.localProviders();
+      setLocalProviders(discovered);
+      const managedProvider = discovered.find((provider) =>
+        provider.id === "llama-cpp" && provider.available
+      );
+      const loadedModelId = managedProvider?.models[0]?.id;
+      if (!loadedModelId) {
+        throw new Error(
+          "The model runtime started, but its local endpoint did not report a loaded model. Open Models for runtime details."
+        );
+      }
+
+      return loadedModelId;
     } catch (reason) {
       setError(String(reason));
       throw reason;
     }
-  }, [configuration.profile]);
+  }, [configuration.profile, hardware]);
 
   const refreshModelLibrary = useCallback(async () => {
     setModelLibraryBusy(true);
@@ -142,53 +216,16 @@ function App() {
     }
   }, []);
 
-  const loadChatModel = useCallback(async (): Promise<string> => {
-    const candidatePath = modelPath.trim();
-    if (!candidatePath || model?.path !== candidatePath || configuration.modelPath !== candidatePath) {
-      throw new Error("Select a GGUF model and let Spindle finish inspecting it first.");
-    }
 
-    let current = await api.runtimeStatus();
-    setRuntimeStatus(current);
-    if (current.running) {
-      const runningPath = current.modelPath?.replace(/\\/g, "/").toLowerCase();
-      const selectedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
-      if (runningPath !== selectedPath) {
-        throw new Error("Another model is already loaded. Stop it in Tools → Runtime before switching models.");
-      }
-    } else {
-      const hasNvidia = hardware?.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia")) ?? false;
-      const preferredBackends: RuntimeBackend[] = hasNvidia
-        ? ["cuda", "vulkan", "cpu"]
-        : ["vulkan", "cpu", "cuda"];
-      const installed = new Set(
-        current.installedBackends.filter((item) => item.installed).map((item) => item.backend)
-      );
-      const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
-      if (!backend) throw new Error("No compatible llama.cpp backend is available.");
 
-      if (!installed.has(backend)) {
-        await api.installRuntime(backend);
-        current = await api.runtimeStatus();
-        setRuntimeStatus(current);
-        if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
-          throw new Error("The selected llama.cpp backend did not finish installing.");
-        }
-      }
-
-      const started = await api.startRuntime(candidatePath, configuration, backend);
-      setRuntimeStatus(started);
-    }
-
-    const discovered = await api.localProviders();
-    setLocalProviders(discovered);
-    const managedProvider = discovered.find((provider) => provider.id === "llama-cpp" && provider.available);
-    const loadedModelId = managedProvider?.models[0]?.id;
-    if (!loadedModelId) {
-      throw new Error("llama.cpp started, but its model endpoint did not report a loaded model. Check Tools → Runtime for details.");
-    }
-    return loadedModelId;
-  }, [configuration, hardware, model, modelPath]);
+  const ejectChatModel = useCallback(async () => {
+    const stopped = await api.stopRuntime();
+    setRuntimeStatus(stopped);
+    setModelPath("");
+    setModel(null);
+    setOptimizationWarnings([]);
+    await refreshLocalProviders();
+  }, [refreshLocalProviders]);
 
   useEffect(() => {
     void refreshModelLibrary();
@@ -270,8 +307,8 @@ function App() {
     [configuration.profile]
   );
 
-  const inspect = async () => {
-    const candidatePath = modelPath.trim();
+  const inspect = async (path = modelPath) => {
+    const candidatePath = path.trim();
     if (!candidatePath) {
       setError("Enter the full path to a local GGUF model.");
       return;
@@ -436,10 +473,9 @@ function App() {
           Projects
         </button>
 
-        <details className="sidebar-tools" open={activeView === "runtime" || activeView === "workspace" || activeView === "benchmark"}>
+        <details className="sidebar-tools" open={activeView === "workspace" || activeView === "benchmark"}>
           <summary><span className="nav-icon">⌘</span><span>Tools</span><span className="sidebar-tools-chevron">⌄</span></summary>
           <div className="sidebar-tool-list">
-            <button className={"nav-item " + (activeView === "runtime" ? "active" : "")} onClick={() => setActiveView("runtime")}><span className="nav-icon">▣</span> Runtime</button>
             <button className={"nav-item " + (activeView === "workspace" ? "active" : "")} onClick={() => setActiveView("workspace")}><span className="nav-icon">⌘</span> Workspace</button>
             <button className={"nav-item " + (activeView === "benchmark" ? "active" : "")} onClick={() => setActiveView("benchmark")}><span className="nav-icon">◷</span> Benchmarks</button>
           </div>
@@ -448,7 +484,7 @@ function App() {
         <div className="sidebar-bottom">
           <button className={"sidebar-settings " + (activeView === "model-lab" ? "active" : "")} onClick={() => setActiveView("model-lab")}>
             <span aria-hidden="true">⚙</span>
-            Settings
+            Models
           </button>
           <div className="version-line">Spindle {appInfo?.version ?? "—"}</div>
         </div>
@@ -457,10 +493,12 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "runtime" ? "MANAGED INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
-            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "runtime" ? "Runtime" : activeView === "workspace" ? "Workspace" : "Settings"}</h1>
+            <div className="eyebrow">{activeView === "projects" ? "PROJECTS" : activeView === "benchmark" ? "LOCAL INFERENCE" : activeView === "chat" ? "LOCAL INFERENCE" : activeView === "workspace" ? "PROJECT ACCESS" : "MODEL & APPLICATION"}</div>
+            <h1>{activeView === "projects" ? "Projects & sessions" : activeView === "benchmark" ? "Benchmarks" : activeView === "chat" ? (activeSession?.title || "Chat") : activeView === "workspace" ? "Workspace" : "Models & runtime"}</h1>
           </div>
-          
+          {activeView === "model-lab" && (
+            <button className="button subtle" onClick={() => setActiveView("chat")}>Open chat</button>
+          )}
         </header>
 
         <div className={"content " + (activeView === "chat" ? "content-chat" : "")}>
@@ -476,22 +514,14 @@ function App() {
               providersError={providersError}
               onRefreshProviders={() => void refreshLocalProviders()}
               modelLibrary={modelLibrary?.models ?? []}
-              modelLibraryBusy={modelLibraryBusy}
               managedModelPath={modelPath}
               runtimeStatus={runtimeStatus}
               onSelectManagedModel={prepareChatModel}
-              onLoadManagedModel={loadChatModel}
-              managedModelReady={Boolean(model && model.path === modelPath && configuration.modelPath === modelPath)}
+              onEjectManagedModel={ejectChatModel}
+              onOpenModelManager={() => setActiveView("model-lab")}
               contextTokens={configuration.runtime.contextTokens}
               generation={configuration.generation}
               session={activeSession}
-            />
-          ) : activeView === "runtime" ? (
-            <RuntimeView
-              modelPath={modelPath}
-              configuration={configuration}
-              hardware={hardware}
-              onRuntimeChange={() => void refreshLocalProviders()}
             />
           ) : activeView === "workspace" ? (
             <WorkspaceView />
@@ -602,7 +632,7 @@ function App() {
                   type="button"
                   key={entry.path}
                   className={"model-library-entry " + (modelPath === entry.path ? "selected" : "")}
-                  onClick={() => selectModelPath(entry.path)}
+                  onClick={() => { selectModelPath(entry.path); void inspect(entry.path); }}
                   title={entry.path}
                 >
                   <span>
@@ -744,6 +774,13 @@ function App() {
               </div>
             </div>
           </section>
+
+          <RuntimeView
+            modelPath={modelPath}
+            configuration={configuration}
+            hardware={hardware}
+            onRuntimeChange={() => void refreshLocalProviders()}
+          />
 
           <section className="section-heading">
             <div><span className="eyebrow">06 / APPLICATION UPDATES</span><h2>Updates</h2></div>

@@ -81,11 +81,11 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
 
   const start = async () => {
     if (!modelPath.trim()) {
-      setError("Inspect a GGUF model in Model Lab before starting llama.cpp.");
+      setError("Inspect a GGUF model in Models before starting llama.cpp.");
       return;
     }
     if (!selectedModelMatchesConfiguration) {
-      setError("The selected model and its saved configuration do not match. Inspect the selected GGUF in Model Lab before loading it.");
+      setError("The selected model and its saved configuration do not match. Inspect the selected GGUF in Models before loading it.");
       return;
     }
     setBusy(true);
@@ -195,7 +195,7 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
         </div>
         <div className="runtime-model-path">
           <span>SELECTED MODEL</span>
-          <strong title={modelPath || "No model selected"}>{modelPath || "No GGUF model selected. Inspect one in Model Lab first."}</strong>
+          <strong title={modelPath || "No model selected"}>{modelPath || "No GGUF model selected. Inspect one in Models first."}</strong>
         </div>
         <div className="runtime-hardware">
           <span>DETECTED GPU</span>
@@ -217,7 +217,7 @@ function RuntimeView({ modelPath, configuration, hardware, onRuntimeChange }: Ru
           ) : (
             <button className="button primary" onClick={() => void start()} disabled={busy || !selectedInstall?.installed || !selectedModelMatchesConfiguration}>Load model and start</button>
           )}
-          <span>{status?.running ? "Chat can now connect to llama.cpp." : selectedModelMatchesConfiguration ? "The inspected GGUF remains at its original path. Spindle passes it to llama.cpp without copying or modifying it." : "Select and inspect a GGUF model in Model Lab before loading it."}</span>
+          <span>{status?.running ? "Chat can now connect to llama.cpp." : selectedModelMatchesConfiguration ? "The inspected GGUF remains at its original path. Spindle passes it to llama.cpp without copying or modifying it." : "Select and inspect a GGUF model in Models before loading it."}</span>
         </div>
       </section>
 
