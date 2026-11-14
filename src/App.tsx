@@ -102,15 +102,13 @@ function App() {
   const prepareChatModel = useCallback(async (
     path: string,
     onProgress: (message: string) => void
-  ): Promise<string> => {
+  ): Promise<void> => {
     const candidatePath = path.trim();
     if (!candidatePath) throw new Error("Select a local GGUF model first.");
-
     setModelPath(candidatePath);
     setModel(null);
     setOptimizationWarnings([]);
     setError(null);
-
     try {
       onProgress("Inspecting GGUF metadata…");
       const inspected = await api.inspectModel(candidatePath);
@@ -119,9 +117,9 @@ function App() {
       let nextConfiguration: ModelConfiguration;
       let detectedHardware = hardware ?? await api.hardware();
       if (!hardware) setHardware(detectedHardware);
-
       if (saved) {
         nextConfiguration = { ...saved, modelPath: inspected.path };
+        setOptimizationWarnings([]);
       } else {
         onProgress("Optimizing the model for this hardware…");
         const optimized = await api.optimizeModel(inspected.path, configuration.profile);
@@ -129,76 +127,60 @@ function App() {
         nextConfiguration = { ...optimized.configuration, modelPath: inspected.path };
         setOptimizationWarnings(optimized.warnings);
       }
-
       setHardware(detectedHardware);
       setConfiguration(nextConfiguration);
       setModelPath(inspected.path);
       setModel(inspected);
       onProgress("Saving model configuration…");
       await api.saveConfiguration(nextConfiguration);
-
-      onProgress("Checking the managed runtime…");
-      let current = await api.runtimeStatus();
-      const normalizePath = (value: string | null | undefined) =>
-        value?.replace(/\\/g, "/").toLowerCase() ?? "";
-      const sameModelAlreadyLoaded = current.running &&
-        normalizePath(current.modelPath) === normalizePath(inspected.path);
-
-      if (current.running && !sameModelAlreadyLoaded) {
-        onProgress("Stopping the previously loaded model…");
-        current = await api.stopRuntime();
-        setRuntimeStatus(current);
-      }
-
-      if (!sameModelAlreadyLoaded) {
-        const hasNvidia = detectedHardware?.gpus.some((gpu) =>
-          gpu.vendor.toLowerCase().includes("nvidia")
-        ) ?? false;
-        const preferredBackends: RuntimeBackend[] = hasNvidia
-          ? ["cuda", "vulkan", "cpu"]
-          : ["vulkan", "cpu", "cuda"];
-        const installed = new Set(
-          current.installedBackends
-            .filter((item) => item.installed)
-            .map((item) => item.backend)
-        );
-        const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
-        if (!backend) throw new Error("No compatible llama.cpp backend is available.");
-
-        if (!installed.has(backend)) {
-          onProgress("Installing the verified " + backend.toUpperCase() + " backend…");
-          await api.installRuntime(backend);
-          current = await api.runtimeStatus();
-          setRuntimeStatus(current);
-          if (!current.installedBackends.some((item) => item.backend === backend && item.installed)) {
-            throw new Error("The selected llama.cpp backend did not finish installing.");
-          }
-        }
-
-        onProgress("Starting " + backend.toUpperCase() + " and loading the model into memory…");
-        current = await api.startRuntime(inspected.path, nextConfiguration, backend);
-      }
-
-      setRuntimeStatus(current);
-      onProgress("Connecting to the loaded model…");
-      const discovered = await api.localProviders();
-      setLocalProviders(discovered);
-      const managedProvider = discovered.find((provider) =>
-        provider.id === "llama-cpp" && provider.available
-      );
-      const loadedModelId = managedProvider?.models[0]?.id;
-      if (!loadedModelId) {
-        throw new Error(
-          "The model runtime started, but its local endpoint did not report a loaded model. Open Models for runtime details."
-        );
-      }
-
-      return loadedModelId;
+      onProgress("Model selected. It will load into memory when you send your first message.");
     } catch (reason) {
       setError(String(reason));
       throw reason;
     }
   }, [configuration.profile, hardware]);
+
+  const loadChatModel = useCallback(async (
+    path: string,
+    onProgress: (message: string) => void
+  ): Promise<string> => {
+    const candidatePath = path.trim();
+    if (!candidatePath) throw new Error("Select a local GGUF model first.");
+    const normalizePath = (value: string | null | undefined) => value?.replace(/\\/g, "/").toLowerCase() ?? "";
+    let current = await api.runtimeStatus();
+    const alreadyLoaded = current.running && normalizePath(current.modelPath) === normalizePath(candidatePath);
+    if (current.running && !alreadyLoaded) {
+      onProgress("Ejecting the previously loaded model…");
+      current = await api.stopRuntime();
+      setRuntimeStatus(current);
+    }
+    if (!alreadyLoaded) {
+      const detectedHardware = hardware ?? await api.hardware();
+      if (!hardware) setHardware(detectedHardware);
+      const hasNvidia = detectedHardware.gpus.some((gpu) => gpu.vendor.toLowerCase().includes("nvidia"));
+      const preferredBackends: RuntimeBackend[] = hasNvidia ? ["cuda", "vulkan", "cpu"] : ["vulkan", "cpu", "cuda"];
+      let installed = new Set(current.installedBackends.filter((item) => item.installed).map((item) => item.backend));
+      const backend = preferredBackends.find((item) => installed.has(item)) ?? preferredBackends[0];
+      if (!backend) throw new Error("No compatible llama.cpp backend is available.");
+      if (!installed.has(backend)) {
+        onProgress("Installing the verified " + backend.toUpperCase() + " backend…");
+        await api.installRuntime(backend);
+        current = await api.runtimeStatus();
+        setRuntimeStatus(current);
+        installed = new Set(current.installedBackends.filter((item) => item.installed).map((item) => item.backend));
+        if (!installed.has(backend)) throw new Error("The selected llama.cpp backend did not finish installing.");
+      }
+      onProgress("Loading model weights into memory…");
+      current = await api.startRuntime(candidatePath, configuration, backend);
+    }
+    setRuntimeStatus(current);
+    onProgress("Connecting to the managed model endpoint…");
+    const discovered = await api.localProviders();
+    setLocalProviders(discovered);
+    const loadedModelId = discovered.find((provider) => provider.id === "llama-cpp" && provider.available)?.models[0]?.id;
+    if (!loadedModelId) throw new Error("The runtime started, but the local endpoint did not report a loaded model.");
+    return loadedModelId;
+  }, [configuration, hardware]);
 
   const refreshModelLibrary = useCallback(async () => {
     setModelLibraryBusy(true);
@@ -235,9 +217,7 @@ function App() {
   const ejectChatModel = useCallback(async () => {
     const stopped = await api.stopRuntime();
     setRuntimeStatus(stopped);
-    setModelPath("");
-    setModel(null);
-    setOptimizationWarnings([]);
+    setMessage("Model ejected from memory. The selected model and its configuration are retained.");
     await refreshLocalProviders();
   }, [refreshLocalProviders]);
 
@@ -521,6 +501,58 @@ function App() {
     } catch { /* Session persistence is still handled by the local database. */ }
   };
 
+  const deleteChat = async (projectId: string, sessionId: string) => {
+    const session = (sessionsByProject[projectId] ?? []).find((item) => item.id === sessionId);
+    if (!session || sidebarBusy) return;
+    if (!window.confirm("Delete chat “" + session.title + "”? Its saved messages and task history will be permanently removed. Project files will not be touched.")) return;
+    setSidebarBusy(true);
+    setProjectError(null);
+    try {
+      await api.deleteSession(sessionId);
+      const remaining = (sessionsByProject[projectId] ?? []).filter((item) => item.id !== sessionId);
+      setSessionsByProject((current) => ({ ...current, [projectId]: remaining }));
+      if (activeSession?.id === sessionId) {
+        const nextSession = remaining[0] ?? null;
+        setActiveSession(nextSession);
+        persistActiveSelection(projectId, nextSession?.id ?? null);
+      }
+    } catch (reason) {
+      setProjectError("Could not delete chat: " + String(reason));
+    } finally {
+      setSidebarBusy(false);
+    }
+  };
+
+  const deleteProject = async (projectId: string) => {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project || sidebarBusy) return;
+    if (!window.confirm("Delete project “" + project.name + "” from Spindle? All of its chats, messages, and task history will be removed. Files in “" + project.rootPath + "” will not be deleted.")) return;
+    setSidebarBusy(true);
+    setProjectError(null);
+    try {
+      await api.deleteProject(projectId);
+      const remainingProjects = projects.filter((item) => item.id !== projectId);
+      setProjects(remainingProjects);
+      setSessionsByProject((current) => {
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
+      if (activeProjectId === projectId) {
+        const nextProject = remainingProjects[0] ?? null;
+        const nextSession = nextProject ? (sessionsByProject[nextProject.id] ?? [])[0] ?? null : null;
+        setActiveProjectId(nextProject?.id ?? "");
+        setExpandedProjectId(nextProject?.id ?? "");
+        setActiveSession(nextSession);
+        persistActiveSelection(nextProject?.id ?? "", nextSession?.id ?? null);
+      }
+    } catch (reason) {
+      setProjectError("Could not delete project: " + String(reason));
+    } finally {
+      setSidebarBusy(false);
+    }
+  };
+
   const selectProject = (projectId: string) => {
     const projectSessions = sessionsByProject[projectId] ?? [];
     const nextSession = projectSessions[0] ?? null;
@@ -646,20 +678,23 @@ function App() {
                     <span className="sidebar-project-name">{project.name}</span>
                   </button>
                   <button type="button" className="sidebar-project-add" onClick={() => void createChat(project.id)} disabled={sidebarBusy} title={"New chat in " + project.name} aria-label={"New chat in " + project.name}>+</button>
+                  <button type="button" className="sidebar-project-delete" onClick={() => void deleteProject(project.id)} disabled={sidebarBusy} title={"Delete " + project.name} aria-label={"Delete project " + project.name}>×</button>
                 </div>
                 {expanded && (
                   <div className="sidebar-chat-list">
                     {sessions.map((session) => (
-                      <button
-                        type="button"
-                        key={session.id}
-                        className={"sidebar-chat-item " + (activeSession?.id === session.id && activeView === "chat" ? "active" : "")}
-                        onClick={() => selectProjectSession(project.id, session)}
-                        title={session.title}
-                      >
-                        <span className="sidebar-chat-icon">○</span>
-                        <span>{session.title || "New chat"}</span>
-                      </button>
+                      <div className="sidebar-chat-entry" key={session.id}>
+                        <button
+                          type="button"
+                          className={"sidebar-chat-item " + (activeSession?.id === session.id && activeView === "chat" ? "active" : "")}
+                          onClick={() => selectProjectSession(project.id, session)}
+                          title={session.title}
+                        >
+                          <span className="sidebar-chat-icon">○</span>
+                          <span>{session.title || "New chat"}</span>
+                        </button>
+                        <button type="button" className="sidebar-chat-delete" onClick={() => void deleteChat(project.id, session.id)} disabled={sidebarBusy} title={"Delete " + session.title} aria-label={"Delete chat " + session.title}>×</button>
+                      </div>
                     ))}
                     {sessions.length === 0 && <span className="sidebar-no-chats">No chats yet</span>}
                   </div>
@@ -702,6 +737,7 @@ function App() {
                 managedModelPath={modelPath}
                 runtimeStatus={runtimeStatus}
                 onSelectManagedModel={prepareChatModel}
+                onLoadManagedModel={loadChatModel}
                 onEjectManagedModel={ejectChatModel}
                 onOpenModelManager={() => setActiveView("settings")}
                 onSessionTitleChange={handleSessionTitleChange}

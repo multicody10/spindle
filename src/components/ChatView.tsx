@@ -37,6 +37,14 @@ function readRememberedModel(sessionId?: string): RememberedModelSelection | nul
   } catch { return null; }
 }
 
+type TurnActivityState = "active" | "complete" | "error";
+interface TurnActivity {
+  id: string;
+  label: string;
+  detail: string;
+  state: TurnActivityState;
+}
+
 const MAX_CHAT_MESSAGES = 64;
 const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
 const MAX_CHAT_HISTORY_BYTES = 256 * 1024;
@@ -92,7 +100,8 @@ interface ChatViewProps {
   modelLibrary: ModelLibraryEntry[];
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
-  onSelectManagedModel: (path: string, onProgress: (message: string) => void) => Promise<string>;
+  onSelectManagedModel: (path: string, onProgress: (message: string) => void) => Promise<void>;
+  onLoadManagedModel: (path: string, onProgress: (message: string) => void) => Promise<string>;
   onEjectManagedModel: () => Promise<void>;
   onOpenModelManager: () => void;
   contextTokens: number;
@@ -110,6 +119,7 @@ function ChatView({
   managedModelPath,
   runtimeStatus,
   onSelectManagedModel,
+  onLoadManagedModel,
   onEjectManagedModel,
   onOpenModelManager,
   contextTokens,
@@ -129,11 +139,36 @@ function ChatView({
   const [status, setStatus] = useState("Choose a local model. Spindle Runtime only needs to start when you are ready to chat.");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ChatResult | null>(null);
+  const [turnActivities, setTurnActivities] = useState<TurnActivity[]>([]);
   const endOfMessages = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const cancelRequested = useRef(false);
   const assistantDraft = useRef("");
   const assistantPersisted = useRef(false);
+
+  const addTurnActivity = (label: string, detail: string, state: TurnActivityState = "complete") => {
+    setTurnActivities((current) => [
+      ...current.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
+      { id: crypto.randomUUID(), label, detail, state }
+    ].slice(-12));
+  };
+
+  const updateActiveTurnActivity = (label: string, detail: string) => {
+    setTurnActivities((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.state === "active") next[next.length - 1] = { ...last, label, detail };
+      else next.push({ id: crypto.randomUUID(), label, detail, state: "active" });
+      return next.slice(-12);
+    });
+  };
+
+  const finishTurnActivity = (label: string, detail: string, state: TurnActivityState = "complete") => {
+    setTurnActivities((current) => [
+      ...current.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
+      { id: crypto.randomUUID(), label, detail, state }
+    ].slice(-12));
+  };
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
@@ -141,6 +176,7 @@ function ChatView({
     (!rememberedModel || rememberedModel.providerId === "llama-cpp")
     ? rememberedModel?.managedModelPath || managedModelPath
     : "";
+  const managedSelectionReady = providerId === "llama-cpp" && Boolean(selectedManagedModelPath);
   const managedRuntimeLoaded = Boolean(
     runtimeStatus?.running &&
     runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === selectedManagedModelPath.replace(/\\/g, "/").toLowerCase()
@@ -183,18 +219,23 @@ function ChatView({
   const selectManagedModel = async (path: string) => {
     if (!path || sending || loadingManagedModel) return;
     setProviderId("llama-cpp");
-    setModelId("");
+    setModelId(path);
     setError(null);
     setLoadingManagedModel(true);
-    setStatus("Inspecting and optimizing the selected GGUF…");
+    setStatus("Inspecting model metadata and preparing its configuration…");
+    setTurnActivities([{ id: crypto.randomUUID(), label: "Model selected", detail: "The model is not loaded. It will start only when you send your first message.", state: "complete" }]);
     try {
-      const loadedModelId = await onSelectManagedModel(path, setStatus);
-      setModelId(loadedModelId);
-      rememberModel("llama-cpp", loadedModelId, path);
-      setStatus("Model loaded. Chat is ready.");
+      await onSelectManagedModel(path, (detail) => {
+        setStatus(detail);
+        updateActiveTurnActivity("Preparing model", detail);
+      });
+      rememberModel("llama-cpp", path, path);
+      setStatus("Model selected. It will load into memory when you send your first message.");
+      finishTurnActivity("Ready to load", "No model weights have been loaded yet.");
     } catch (reason) {
-      setError("Could not prepare and load the selected model: " + String(reason));
-      setStatus("Model loading failed.");
+      setError("Could not inspect the selected model: " + String(reason));
+      setStatus("Model preparation failed.");
+      finishTurnActivity("Model preparation failed", String(reason), "error");
     } finally {
       setLoadingManagedModel(false);
     }
@@ -223,15 +264,6 @@ function ChatView({
   }, [session.id]);
 
 
-  const autoLoadAttempt = useRef<string | null>(null);
-  useEffect(() => {
-    if (providerId !== "llama-cpp" || !selectedManagedModelPath || managedRuntimeLoaded || providersBusy || loadingManagedModel || sending) return;
-    const attemptKey = session.id + ":" + selectedManagedModelPath;
-    if (autoLoadAttempt.current === attemptKey) return;
-    autoLoadAttempt.current = attemptKey;
-    void selectManagedModel(selectedManagedModelPath);
-  }, [providerId, selectedManagedModelPath, managedRuntimeLoaded, providersBusy, loadingManagedModel, sending, session.id]);
-
   useEffect(() => () => {
     const current = activeRequest.current;
     if (current) void api.cancelChat(current);
@@ -252,7 +284,7 @@ function ChatView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending || !selectedProvider?.available || !modelId || !session.id) return;
+    if (!text || sending || (!selectedProvider?.available && !managedSelectionReady) || !modelId || !session.id) return;
 
     const id = crypto.randomUUID();
     const transcript: ChatMessage[] = [...messages, { role: "user", content: text }];
@@ -270,10 +302,32 @@ function ChatView({
     cancelRequested.current = false;
     setError(null);
     setLastResult(null);
-    setStatus("Generating locally…");
+    setStatus("Preparing your request…");
+    setTurnActivities([{ id: crypto.randomUUID(), label: "Preparing turn", detail: "Checking the selected provider and model.", state: "active" }]);
 
     let unlisten: (() => void) | undefined;
     try {
+      let effectiveModelId = modelId;
+      if (providerId === "llama-cpp") {
+        const selectedPath = selectedManagedModelPath || modelId;
+        const normalizePath = (value: string | null | undefined) => value?.replace(/\\/g, "/").toLowerCase() ?? "";
+        const runtimeHasSelection = Boolean(runtimeStatus?.running && normalizePath(runtimeStatus.modelPath) === normalizePath(selectedPath));
+        if (!runtimeHasSelection) {
+          updateActiveTurnActivity("Loading model", "Installing a compatible backend if needed, then loading model weights into memory.");
+          effectiveModelId = await onLoadManagedModel(selectedPath, (detail) => {
+            setStatus(detail);
+            updateActiveTurnActivity("Loading model", detail);
+          });
+          setModelId(effectiveModelId);
+          rememberModel("llama-cpp", effectiveModelId, selectedPath);
+          addTurnActivity("Model ready", "The selected GGUF is loaded and the local endpoint is responding.");
+        } else if (effectiveModelId === selectedPath) {
+          effectiveModelId = selectedProvider?.models[0]?.id ?? effectiveModelId;
+          setModelId(effectiveModelId);
+        }
+      }
+      updateActiveTurnActivity("Generating response", "The selected provider is generating the assistant response.");
+      setStatus("Generating locally…");
       if (session.title === "New session") {
         const firstLine = text.split(/\r?\n/)[0]?.trim() ?? "New chat";
         const title = firstLine.slice(0, 64) || "New chat";
@@ -284,14 +338,14 @@ function ChatView({
           setError("The chat started, but its title could not be saved: " + String(reason));
         }
       }
-      await api.updateSessionModel(session.id, providerId, modelId);
+      await api.updateSessionModel(session.id, providerId, effectiveModelId);
       await api.appendSessionMessage(session.id, "user", text);
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
       const result = await api.startChat({
         requestId: id,
         sessionId: session.id,
         providerId,
-        model: modelId,
+        model: effectiveModelId,
         messages: history,
         contextTokens,
         generation
@@ -306,6 +360,11 @@ function ChatView({
         }
       }
       setStatus("Response complete.");
+      finishTurnActivity("Response complete", [
+        result.outputTokens !== null ? result.outputTokens.toLocaleString() + " output tokens" : null,
+        result.tokensPerSecond !== null ? result.tokensPerSecond.toFixed(1) + " tokens/s" : null,
+        (result.durationMs / 1000).toFixed(1) + " seconds"
+      ].filter(Boolean).join(" · "));
     } catch (reason) {
       if (!assistantPersisted.current && assistantDraft.current.trim()) {
         try {
@@ -318,9 +377,11 @@ function ChatView({
       const message = String(reason);
       if (cancelRequested.current || message.includes("Generation cancelled")) {
         setStatus("Generation stopped. The partial response has been kept.");
+        finishTurnActivity("Generation stopped", "The partial response was preserved.");
       } else {
         setError(message);
         setStatus("The provider could not complete this request.");
+        finishTurnActivity("Generation failed", message, "error");
       }
     } finally {
       unlisten?.();
@@ -355,7 +416,7 @@ function ChatView({
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
           <p>Choose a local GGUF model here. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</p>
-          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</span></div>
+          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle prepares its configuration now and loads it only when you send your first message.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
         </section>
@@ -374,7 +435,8 @@ function ChatView({
         ) : (
           <div className="chat-message-list">
             {messages.map((message, index) => (
-              <article className={"chat-message " + message.role} key={index}>
+              <div className="chat-message-group" key={index}>
+              <article className={"chat-message " + message.role}>
                 <div className="chat-message-role">{message.role === "assistant" ? "SPINDLE" : message.role.toUpperCase()}</div>
                 <div className="chat-message-content">
                   {message.content || (message.role === "assistant" && sending ? <span className="typing-indicator">Thinking…</span> : null)}
@@ -387,6 +449,18 @@ function ChatView({
                   </div>
                 )}
               </article>
+              {message.role === "user" && index === messages.length - 2 && turnActivities.length > 0 && (
+                <div className="chat-turn-timeline" aria-label="Turn activity">
+                  <div className="chat-turn-heading">TURN ACTIVITY</div>
+                  {turnActivities.map((activity) => (
+                    <div className={"chat-turn-activity " + activity.state} key={activity.id}>
+                      <span className="chat-turn-indicator" />
+                      <div><strong>{activity.label}</strong><span>{activity.detail}</span></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              </div>
             ))}
             <div ref={endOfMessages} />
           </div>
@@ -410,7 +484,7 @@ function ChatView({
             placeholder="Message your local model…"
             rows={3}
             maxLength={65536}
-            disabled={!selectedProvider?.available || !modelId || sending}
+            disabled={(!selectedProvider?.available && !managedSelectionReady) || !modelId || sending}
           />
           <div className="chat-composer-footer">
             <div className="chat-model-controls">
@@ -491,15 +565,7 @@ function ChatView({
                 {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
               {providerId === "llama-cpp" && selectedManagedModelPath && !managedRuntimeLoaded && (
-                <button
-                  type="button"
-                  className="button subtle chat-load-model"
-                  onClick={() => void selectManagedModel(selectedManagedModelPath)}
-                  disabled={sending || loadingManagedModel}
-                  title="Retry preparing and loading this model"
-                >
-                  Retry
-                </button>
+                <span className="chat-model-pending">Selected · loads on first message</span>
               )}
               {providerId === "llama-cpp" && runtimeStatus?.running && (
                 <button
@@ -520,7 +586,7 @@ function ChatView({
               {sending ? (
                 <button className="button primary stop-button" onClick={() => void stop()}>Stop</button>
               ) : (
-                <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || !selectedProvider?.available || !modelId}>
+                <button className="button primary send-button" onClick={() => void send()} disabled={!draft.trim() || (!selectedProvider?.available && !managedSelectionReady) || !modelId}>
                   Send <span>↗</span>
                 </button>
               )}
