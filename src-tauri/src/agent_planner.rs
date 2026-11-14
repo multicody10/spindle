@@ -442,6 +442,8 @@ Make the plan specific to the observed repository. Do not invent files, dependen
         ],
         context_tokens,
         generation,
+        tools: Vec::new(),
+        tool_history: Vec::new(),
     };
     crate::validate_chat_request(&request)?;
     projects::append_task_event(
