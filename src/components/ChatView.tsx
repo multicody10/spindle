@@ -140,9 +140,10 @@ function ChatView({
   const [status, setStatus] = useState("Choose a local model. Spindle Runtime only needs to start when you are ready to chat.");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ChatResult | null>(null);
-  const [turnActivities, setTurnActivities] = useState<TurnActivity[]>([]);
-  const [thinkingText, setThinkingText] = useState("");
+  const [turnActivitiesByMessageIndex, setTurnActivitiesByMessageIndex] = useState<Record<number, TurnActivity[]>>({});
+  const [thinkingByMessageIndex, setThinkingByMessageIndex] = useState<Record<number, string>>({});
   const thinkingDraft = useRef("");
+  const activeTurnMessageIndex = useRef<number | null>(null);
   const autoPrepareAttempt = useRef<string | null>(null);
   const endOfMessages = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
@@ -151,15 +152,25 @@ function ChatView({
   const assistantPersisted = useRef(false);
 
   const addTurnActivity = (label: string, detail: string, state: TurnActivityState = "complete") => {
-    setTurnActivities((current) => [
-      ...current.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
-      { id: crypto.randomUUID(), label, detail, state }
-    ].slice(-12));
+    const index = activeTurnMessageIndex.current;
+    if (index === null) return;
+    setTurnActivitiesByMessageIndex((current) => {
+      const existing = current[index] ?? [];
+      return {
+        ...current,
+        [index]: [
+          ...existing.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
+          { id: crypto.randomUUID(), label, detail, state }
+        ].slice(-12)
+      };
+    });
   };
 
   const updateActiveTurnActivity = (label: string, detail: string) => {
-    setTurnActivities((current) => {
-      const next = [...current];
+    const index = activeTurnMessageIndex.current;
+    if (index === null) return;
+    setTurnActivitiesByMessageIndex((current) => {
+      const next = [...(current[index] ?? [])];
       const last = next[next.length - 1];
       if (last?.state === "active" && last.label === label) {
         next[next.length - 1] = { ...last, detail };
@@ -167,15 +178,23 @@ function ChatView({
         if (last?.state === "active") next[next.length - 1] = { ...last, state: "complete" };
         next.push({ id: crypto.randomUUID(), label, detail, state: "active" });
       }
-      return next.slice(-12);
+      return { ...current, [index]: next.slice(-12) };
     });
   };
 
   const finishTurnActivity = (label: string, detail: string, state: TurnActivityState = "complete") => {
-    setTurnActivities((current) => [
-      ...current.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
-      { id: crypto.randomUUID(), label, detail, state }
-    ].slice(-12));
+    const index = activeTurnMessageIndex.current;
+    if (index === null) return;
+    setTurnActivitiesByMessageIndex((current) => {
+      const existing = current[index] ?? [];
+      return {
+        ...current,
+        [index]: [
+          ...existing.map((entry) => entry.state === "active" ? { ...entry, state: "complete" as const } : entry),
+          { id: crypto.randomUUID(), label, detail, state }
+        ].slice(-12)
+      };
+    });
   };
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
@@ -232,7 +251,7 @@ function ChatView({
     setError(null);
     setLoadingManagedModel(true);
     setStatus("Inspecting model metadata and preparing its configuration…");
-    setTurnActivities([{ id: crypto.randomUUID(), label: "Model selected", detail: "The model is not loaded. It will start only when you send your first message.", state: "complete" }]);
+    setStatus("Inspecting model metadata and preparing its configuration…");
     try {
       await onSelectManagedModel(path, (detail) => {
         setStatus(detail);
@@ -304,7 +323,8 @@ function ChatView({
   };
 
   const appendThinking = (event: ChatThinkingDelta, requestId: string) => {
-    if (event.requestId !== requestId || !event.delta || thinkingDraft.current.length >= 256 * 1024) return;
+    const turnIndex = activeTurnMessageIndex.current;
+    if (turnIndex === null || event.requestId !== requestId || !event.delta || thinkingDraft.current.length >= 256 * 1024) return;
     if (!thinkingDraft.current) {
       updateActiveTurnActivity("Reasoning", "The selected provider is streaming a separate reasoning channel.");
     }
@@ -318,7 +338,7 @@ function ChatView({
     }
     const next = event.delta.slice(0, end);
     thinkingDraft.current += next;
-    setThinkingText(thinkingDraft.current);
+    setThinkingByMessageIndex((current) => ({ ...current, [turnIndex]: thinkingDraft.current }));
   };
 
   const send = async () => {
@@ -332,11 +352,22 @@ function ChatView({
       setError("This message exceeds the local chat request limit. Shorten it and try again.");
       return;
     }
+    const userMessageIndex = transcript.length - 1;
+    activeTurnMessageIndex.current = userMessageIndex;
     setMessages([...transcript, { role: "assistant", content: "" }]);
     assistantDraft.current = "";
     assistantPersisted.current = false;
     thinkingDraft.current = "";
-    setThinkingText("");
+    setThinkingByMessageIndex((current) => ({ ...current, [userMessageIndex]: "" }));
+    setTurnActivitiesByMessageIndex((current) => ({
+      ...current,
+      [userMessageIndex]: [{
+        id: crypto.randomUUID(),
+        label: "Preparing turn",
+        detail: "Checking the selected provider and model.",
+        state: "active"
+      }]
+    }));
     setDraft("");
     setSending(true);
     activeRequest.current = id;
@@ -344,7 +375,6 @@ function ChatView({
     setError(null);
     setLastResult(null);
     setStatus("Preparing your request…");
-    setTurnActivities([{ id: crypto.randomUUID(), label: "Preparing turn", detail: "Checking the selected provider and model.", state: "active" }]);
 
     let unlisten: (() => void) | undefined;
     let unlistenThinking: (() => void) | undefined;
@@ -493,20 +523,24 @@ function ChatView({
                   </div>
                 )}
               </article>
-              {message.role === "user" && index === messages.length - 2 && turnActivities.length > 0 && (
-                <div className="chat-turn-timeline" aria-label="Turn activity">
-                  <div className="chat-turn-heading">TURN ACTIVITY</div>
-                  {turnActivities.map((activity) => (
-                    <div className={"chat-turn-activity " + activity.state} key={activity.id}>
-                      <span className="chat-turn-indicator" />
-                      <div><strong>{activity.label}</strong><span>{activity.detail}</span></div>
+              {message.role === "user" && (
+                <div>
+                  {(turnActivitiesByMessageIndex[index]?.length ?? 0) > 0 && (
+                    <div className="chat-turn-timeline" aria-label="Turn activity">
+                      <div className="chat-turn-heading">TURN ACTIVITY</div>
+                      {(turnActivitiesByMessageIndex[index] ?? []).map((activity) => (
+                        <div className={"chat-turn-activity " + activity.state} key={activity.id}>
+                          <span className="chat-turn-indicator" />
+                          <div><strong>{activity.label}</strong><span>{activity.detail}</span></div>
+                        </div>
+                      ))}
+                      {thinkingByMessageIndex[index] && (
+                        <details className="chat-thinking-card" open={sending && activeTurnMessageIndex.current === index}>
+                          <summary>Provider supplied reasoning</summary>
+                          <div className="chat-thinking-content">{thinkingByMessageIndex[index]}</div>
+                        </details>
+                      )}
                     </div>
-                  ))}
-                  {thinkingText && (
-                    <details className="chat-thinking-card" open={sending}>
-                      <summary>Provider supplied reasoning</summary>
-                      <div className="chat-thinking-content">{thinkingText}</div>
-                    </details>
                   )}
                 </div>
               )}
