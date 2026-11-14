@@ -294,11 +294,25 @@ async fn verify_model(
 }
 
 fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
-    let mut messages = request.messages.iter()
-        .filter_map(|message| serde_json::to_value(message).ok())
-        .collect::<Vec<_>>();
+    let interleaved_history = request.tool_history.iter().any(|entry| {
+        entry.get("kind").and_then(Value::as_str) == Some("chat_message")
+    });
+    let mut messages = if interleaved_history {
+        Vec::new()
+    } else {
+        request.messages.iter()
+            .filter_map(|message| serde_json::to_value(message).ok())
+            .collect::<Vec<_>>()
+    };
     for entry in &request.tool_history {
         match entry.get("kind").and_then(Value::as_str) {
+            Some("chat_message") if interleaved_history => {
+                let role = entry.get("role").and_then(Value::as_str).unwrap_or("");
+                let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
+                if matches!(role, "system" | "user" | "assistant") {
+                    messages.push(json!({"role":role,"content":content}));
+                }
+            }
             Some("assistant_tool_calls") => {
                 let calls = entry.get("calls").and_then(Value::as_array).cloned().unwrap_or_default();
                 let tool_calls = calls.into_iter().filter_map(|call| {
@@ -1063,10 +1077,14 @@ mod tests {
                 },
             }],
             tool_history:vec![
+                json!({"kind":"chat_message","role":"system","content":"You are Spindle."}),
+                json!({"kind":"chat_message","role":"user","content":"Inspect README"}),
                 json!({"kind":"assistant_tool_calls","calls":[
                     {"id":"call_abc","name":"read_file","arguments":{"path":"README.md"}}
                 ]}),
                 json!({"kind":"tool_result","id":"call_abc","name":"read_file","content":"{\"ok\":true}"}),
+                json!({"kind":"chat_message","role":"assistant","content":"I inspected README."}),
+                json!({"kind":"chat_message","role":"user","content":"Now inspect package.json."}),
             ],
         };
         let body = lm_studio_body(&request);
@@ -1079,11 +1097,16 @@ mod tests {
         assert_eq!(ollama["tools"][0]["function"]["name"], "read_file");
         assert_eq!(ollama["messages"][1]["tool_calls"][0]["function"]["name"], "read_file");
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");
-        assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_abc");
-        assert_eq!(body["messages"][2]["tool_call_id"], "call_abc");
-        assert_eq!(body["messages"][2]["role"], "tool");
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "call_abc");
+        assert_eq!(body["messages"][3]["tool_call_id"], "call_abc");
+        assert_eq!(body["messages"][3]["role"], "tool");
+        assert_eq!(body["messages"][4]["content"], "I inspected README.");
+        assert_eq!(body["messages"][5]["content"], "Now inspect package.json.");
         let ollama_messages = provider_messages(&request, true);
-        assert_eq!(ollama_messages[2]["tool_name"], "read_file");
+        assert_eq!(ollama_messages[3]["tool_name"], "read_file");
+        assert_eq!(ollama_messages[4]["content"], "I inspected README.");
     }
 
     #[test]

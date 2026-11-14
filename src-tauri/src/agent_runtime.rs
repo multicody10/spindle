@@ -432,6 +432,11 @@ async fn loop_agent(
             }
             tool_history.push(entry);
         } else {
+            tool_history.push(json!({
+                "kind":"chat_message",
+                "role":message.role,
+                "content":message.content
+            }));
             messages.push(ChatMessage {
                 role: message.role,
                 content: message.content,
@@ -490,6 +495,8 @@ async fn loop_agent(
             "Implement this request in the isolated task worktree only:\n\n{}\n\nInspect the repository before editing. Finish only after reviewing the complete diff and running applicable validation that this session is authorized to run.",
             task.prompt
         );
+        tool_history.push(json!({"kind":"chat_message","role":"system","content":system}));
+        tool_history.push(json!({"kind":"chat_message","role":"user","content":user}));
         messages.push(ChatMessage {
             role: "system".into(),
             content: system.clone(),
@@ -502,6 +509,7 @@ async fn loop_agent(
         save_message(context.database, &task.id, "user", &user).await?;
     } else if messages.last().is_none_or(|message| message.role != "user") {
         let recovery = "RECOVERY: Spindle restarted after persisting the previous assistant turn. Its tool result may not have been committed. Do not repeat the previous write blindly. Inspect the current files and task diff, determine which effects already happened, then continue safely.";
+        tool_history.push(json!({"kind":"chat_message","role":"user","content":recovery}));
         messages.push(ChatMessage {
             role: "user".into(),
             content: recovery.into(),
@@ -537,7 +545,7 @@ async fn loop_agent(
             session_id: task.session_id.clone(),
             provider_id: provider,
             model: input.model.clone(),
-            messages: bounded_context(&messages, input.context_tokens),
+            messages: Vec::new(),
             context_tokens: input.context_tokens,
             generation: generation.clone(),
             tools: native_tool_definitions(),
@@ -662,6 +670,7 @@ async fn loop_agent(
                     .into(),
             );
         }
+        tool_history.push(json!({"kind":"chat_message","role":"assistant","content":raw}));
         messages.push(ChatMessage {
             role: "assistant".into(),
             content: raw.clone(),
@@ -681,6 +690,7 @@ async fn loop_agent(
                 let correction = format!(
                     "PROTOCOL ERROR: {error}. Your prior response was not executed. Use provider-native function calling for tool actions. Never serialize tool calls as assistant text. When complete, return exactly one JSON object: {\"type\":\"final\",\"summary\":\"...\",\"completed\":true}. Do not use Markdown fences."
                 );
+                tool_history.push(json!({"kind":"chat_message","role":"user","content":correction}));
                 messages.push(ChatMessage {
                     role: "user".into(),
                     content: correction.clone(),
@@ -725,6 +735,7 @@ async fn loop_agent(
                     && !diff_reviewed_after_last_change
                 {
                     let instruction = "REVIEW REQUIRED: You have not inspected the final diff after the most recent file change. Call get_diff, examine every change, correct any issue, and only then return a completed final response.";
+                    tool_history.push(json!({"kind":"chat_message","role":"user","content":instruction}));
                     messages.push(ChatMessage {
                         role: "user".into(),
                         content: instruction.into(),
@@ -1172,18 +1183,66 @@ fn recover_incomplete_tool_calls(history: &[Value]) -> Vec<Value> {
 }
 
 fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
-    let mut groups: Vec<Vec<Value>> = Vec::new();
-    for entry in history {
-        if entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls") {
-            groups.push(vec![entry.clone()]);
-        } else if let Some(group) = groups.last_mut() {
-            group.push(entry.clone());
+    let mut pinned = Vec::<Value>::new();
+    let mut pinned_indices = HashSet::<usize>::new();
+    let mut has_system = false;
+    let mut has_initial_user = false;
+    for (index, entry) in history.iter().enumerate() {
+        if entry.get("kind").and_then(Value::as_str) != Some("chat_message") {
+            continue;
+        }
+        match entry.get("role").and_then(Value::as_str) {
+            Some("system") if !has_system => {
+                has_system = true;
+                pinned_indices.insert(index);
+                pinned.push(entry.clone());
+            }
+            Some("user") if has_system && !has_initial_user => {
+                has_initial_user = true;
+                pinned_indices.insert(index);
+                pinned.push(entry.clone());
+            }
+            _ => {}
+        }
+        if has_system && has_initial_user {
+            break;
         }
     }
-    let mut selected = Vec::new();
-    let mut used = 0usize;
+
+    let mut groups = Vec::<Vec<Value>>::new();
+    let mut index = 0usize;
+    while index < history.len() {
+        if pinned_indices.contains(&index) {
+            index += 1;
+            continue;
+        }
+        let entry = &history[index];
+        if entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls") {
+            let expected = entry.get("calls").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+            let mut group = vec![entry.clone()];
+            let mut results = 0usize;
+            index += 1;
+            while index < history.len() && results < expected {
+                let next = &history[index];
+                if next.get("kind").and_then(Value::as_str) == Some("tool_result") {
+                    group.push(next.clone());
+                    results += 1;
+                    index += 1;
+                } else {
+                    break;
+                }
+            }
+            groups.push(group);
+        } else {
+            groups.push(vec![entry.clone()]);
+            index += 1;
+        }
+    }
+
+    let mut selected = Vec::<Vec<Value>>::new();
+    let mut used = pinned.iter().map(|entry| entry.to_string().len()).sum::<usize>();
     for group in groups.into_iter().rev() {
-        let size = group.iter().map(Value::to_string).map(|value| value.len()).sum::<usize>();
+        let size = group.iter().map(|entry| entry.to_string().len()).sum::<usize>();
         if used.saturating_add(size) > budget {
             break;
         }
@@ -1191,7 +1250,10 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
         selected.push(group);
     }
     selected.reverse();
-    selected.into_iter().flatten().collect()
+
+    let mut result = pinned;
+    result.extend(selected.into_iter().flatten());
+    result
 }
 
 fn native_tool_definitions() -> Vec<ChatToolDefinition> {
