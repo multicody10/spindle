@@ -502,6 +502,9 @@ async fn stream_chat(
                 ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&line)?,
             };
             if let Some(frame) = frame {
+                if let Some(thinking) = frame.thinking {
+                    emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
+                }
                 if let Some(delta) = frame.delta {
                     content.push_str(&delta);
                     app.emit(
@@ -512,9 +515,6 @@ async fn stream_chat(
                         },
                     )
                     .map_err(|_| "Could not deliver the model response to Spindle.".to_string())?;
-                }
-                if let Some(thinking) = frame.thinking {
-                    emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
                 }
                 if frame.metrics.prompt_tokens.is_some() {
                     metrics.prompt_tokens = frame.metrics.prompt_tokens;
@@ -545,6 +545,9 @@ async fn stream_chat(
             ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&buffer)?,
         };
         if let Some(frame) = frame {
+            if let Some(thinking) = frame.thinking {
+                emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
+            }
             if let Some(delta) = frame.delta {
                 content.push_str(&delta);
                 app.emit(
@@ -555,9 +558,6 @@ async fn stream_chat(
                     },
                 )
                 .map_err(|_| "Could not deliver the model response to Spindle.".to_string())?;
-            }
-            if let Some(thinking) = frame.thinking {
-                emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
             }
             if frame.metrics.prompt_tokens.is_some() {
                 metrics.prompt_tokens = frame.metrics.prompt_tokens;
