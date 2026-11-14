@@ -17,6 +17,7 @@ const MAX_MODEL_RESPONSE_BYTES: u64 = 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
 const MAX_STREAM_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_THINKING_BYTES: usize = 256 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -59,6 +60,13 @@ pub struct ChatRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatDelta {
+    pub request_id: String,
+    pub delta: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatThinkingDelta {
     pub request_id: String,
     pub delta: String,
 }
@@ -144,6 +152,7 @@ struct StreamMetrics {
 #[derive(Debug, Default)]
 struct ParsedFrame {
     delta: Option<String>,
+    thinking: Option<String>,
     done: bool,
     metrics: StreamMetrics,
 }
@@ -331,15 +340,21 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         return Err(format!("Ollama: {message}"));
     }
 
-    let delta = document
-        .get("message")
+    let message = document.get("message");
+    let delta = message
         .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .filter(|content| !content.is_empty())
+        .map(str::to_owned);
+    let thinking = message
+        .and_then(|message| message.get("thinking").or_else(|| message.get("reasoning")))
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
 
     Ok(Some(ParsedFrame {
         delta,
+        thinking,
         done: document
             .get("done")
             .and_then(Value::as_bool)
@@ -381,9 +396,18 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first());
-    let delta = choice
-        .and_then(|choice| choice.get("delta"))
+    let provider_delta = choice.and_then(|choice| choice.get("delta"));
+    let delta = provider_delta
         .and_then(|delta| delta.get("content"))
+        .and_then(Value::as_str)
+        .filter(|content| !content.is_empty())
+        .map(str::to_owned);
+    let thinking = provider_delta
+        .and_then(|delta| {
+            delta.get("reasoning_content")
+                .or_else(|| delta.get("reasoning"))
+                .or_else(|| delta.get("thinking"))
+        })
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
@@ -391,6 +415,7 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
 
     Ok(Some(ParsedFrame {
         delta,
+        thinking,
         done: false,
         metrics: StreamMetrics {
             prompt_tokens: usage
@@ -415,6 +440,7 @@ async fn stream_chat(
     let mut total_bytes = 0usize;
     let mut metrics = StreamMetrics::default();
     let mut content = String::new();
+    let mut thinking_bytes = 0usize;
     let mut finished = false;
 
     loop {
@@ -460,6 +486,44 @@ async fn stream_chat(
                         },
                     )
                     .map_err(|_| "Could not deliver the model response to Spindle.".to_string())?;
+                }
+                if let Some(thinking) = frame.thinking {
+                    let remaining = MAX_THINKING_BYTES.saturating_sub(thinking_bytes);
+                    let mut end = thinking.len().min(remaining);
+                    while !thinking.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    if end > 0 {
+                        let delta = thinking[..end].to_owned();
+                        thinking_bytes += delta.len();
+                        app.emit(
+                            "chat-thinking",
+                            ChatThinkingDelta {
+                                request_id: request_id.to_owned(),
+                                delta,
+                            },
+                        )
+                        .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())?;
+                    }
+                }
+                if let Some(thinking) = frame.thinking {
+                    let remaining = MAX_THINKING_BYTES.saturating_sub(thinking_bytes);
+                    let mut end = thinking.len().min(remaining);
+                    while !thinking.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    if end > 0 {
+                        let delta = thinking[..end].to_owned();
+                        thinking_bytes += delta.len();
+                        app.emit(
+                            "chat-thinking",
+                            ChatThinkingDelta {
+                                request_id: request_id.to_owned(),
+                                delta,
+                            },
+                        )
+                        .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())?;
+                    }
                 }
                 if frame.metrics.prompt_tokens.is_some() {
                     metrics.prompt_tokens = frame.metrics.prompt_tokens;
@@ -639,6 +703,13 @@ mod tests {
         assert_eq!(token.delta.as_deref(), Some("Hello"));
         assert!(!token.done);
 
+        let reasoning = parse_ollama_line(
+            br#"{"message":{"thinking":"Let me reason through this."},"done":false}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(reasoning.thinking.as_deref(), Some("Let me reason through this."));
+
         let final_frame = parse_ollama_line(
             br#"{"done":true,"prompt_eval_count":12,"eval_count":8,"eval_duration":2000000000}"#,
         )
@@ -661,6 +732,13 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(token.delta.as_deref(), Some("world"));
+
+        let reasoning = parse_lm_studio_line(
+            br#"data: {"choices":[{"delta":{"reasoning_content":"Inspecting the problem."}}]}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(reasoning.thinking.as_deref(), Some("Inspecting the problem."));
 
         let usage = parse_lm_studio_line(
             br#"data: {"choices":[],"usage":{"prompt_tokens":21,"completion_tokens":13}}"#,

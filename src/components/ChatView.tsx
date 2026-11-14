@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
 import type {
   ChatDelta,
+  ChatThinkingDelta,
   ChatMessage,
   ChatProviderId,
   ChatResult,
@@ -140,6 +141,8 @@ function ChatView({
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ChatResult | null>(null);
   const [turnActivities, setTurnActivities] = useState<TurnActivity[]>([]);
+  const [thinkingText, setThinkingText] = useState("");
+  const thinkingDraft = useRef("");
   const endOfMessages = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<string | null>(null);
   const cancelRequested = useRef(false);
@@ -285,6 +288,24 @@ function ChatView({
     });
   };
 
+  const appendThinking = (event: ChatThinkingDelta, requestId: string) => {
+    if (event.requestId !== requestId || !event.delta || thinkingDraft.current.length >= 256 * 1024) return;
+    if (!thinkingDraft.current) {
+      updateActiveTurnActivity("Reasoning", "The selected provider is streaming a separate reasoning channel.");
+    }
+    const remaining = 256 * 1024 - thinkingDraft.current.length;
+    let end = Math.min(event.delta.length, remaining);
+    while (end > 0 && !/^[\\s\\S]$/.test(event.delta[end - 1] ?? "")) end--;
+    // Keep the cap byte-safe and avoid splitting a UTF-16 surrogate pair.
+    if (end > 0 && end < event.delta.length) {
+      const code = event.delta.charCodeAt(end - 1);
+      if (code >= 0xD800 && code <= 0xDBFF) end--;
+    }
+    const next = event.delta.slice(0, end);
+    thinkingDraft.current += next;
+    setThinkingText(thinkingDraft.current);
+  };
+
   const send = async () => {
     const text = draft.trim();
     if (!text || sending || loadingManagedModel || (!selectedProvider?.available && !managedSelectionReady) || !modelId || !session.id) return;
@@ -299,6 +320,8 @@ function ChatView({
     setMessages([...transcript, { role: "assistant", content: "" }]);
     assistantDraft.current = "";
     assistantPersisted.current = false;
+    thinkingDraft.current = "";
+    setThinkingText("");
     setDraft("");
     setSending(true);
     activeRequest.current = id;
@@ -309,6 +332,7 @@ function ChatView({
     setTurnActivities([{ id: crypto.randomUUID(), label: "Preparing turn", detail: "Checking the selected provider and model.", state: "active" }]);
 
     let unlisten: (() => void) | undefined;
+    let unlistenThinking: (() => void) | undefined;
     try {
       let effectiveModelId = modelId;
       if (providerId === "llama-cpp") {
@@ -344,6 +368,7 @@ function ChatView({
       await api.updateSessionModel(session.id, providerId, effectiveModelId);
       await api.appendSessionMessage(session.id, "user", text);
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
+      unlistenThinking = await listen<ChatThinkingDelta>("chat-thinking", (event) => appendThinking(event.payload, id));
       const result = await api.startChat({
         requestId: id,
         sessionId: session.id,
@@ -388,6 +413,7 @@ function ChatView({
       }
     } finally {
       unlisten?.();
+      unlistenThinking?.();
       activeRequest.current = null;
       setSending(false);
     }
@@ -461,6 +487,12 @@ function ChatView({
                       <div><strong>{activity.label}</strong><span>{activity.detail}</span></div>
                     </div>
                   ))}
+                  {thinkingText && (
+                    <details className="chat-thinking-card" open={sending}>
+                      <summary>Provider supplied reasoning</summary>
+                      <div className="chat-thinking-content">{thinkingText}</div>
+                    </details>
+                  )}
                 </div>
               )}
               </div>

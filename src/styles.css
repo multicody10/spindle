@@ -1960,3 +1960,7 @@ footer { color: #626c78; font-size: 9px; }
 .chat-turn-activity span:not(.chat-turn-indicator){color:#7f8996;font-size:11.5px;line-height:1.45;overflow-wrap:anywhere}
 @keyframes spindle-turn-pulse{0%,100%{opacity:.45;transform:scale(.9)}50%{opacity:1;transform:scale(1.05)}}
 @media(max-width:760px){.sidebar-project-delete,.sidebar-chat-delete{opacity:1}}
+
+.chat-thinking-card{margin-top:9px;border-top:1px solid #20262e;padding-top:8px}
+.chat-thinking-card>summary{color:#aab5c2;font-size:11px;cursor:pointer;user-select:none}
+.chat-thinking-content{max-height:240px;overflow:auto;margin-top:8px;color:#929eac;font-size:11.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
