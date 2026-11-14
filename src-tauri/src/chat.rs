@@ -3,7 +3,7 @@ use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -18,6 +18,10 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
 const MAX_STREAM_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_THINKING_BYTES: usize = 256 * 1024;
+const MAX_TOOL_CALLS_PER_TURN: usize = 16;
+const MAX_TOOL_ARGUMENT_BYTES: usize = 32 * 1024;
+const MAX_TOOL_NAME_BYTES: usize = 64;
+const MAX_TOOL_ID_BYTES: usize = 128;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -45,6 +49,53 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ChatToolFunctionDefinition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolFunctionDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ChatToolFunctionCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolFunctionCall {
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone)]
+struct ToolCallFragment {
+    index: usize,
+    id: Option<String>,
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct PartialToolCall {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
@@ -55,6 +106,10 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub context_tokens: usize,
     pub generation: GenerationSettings,
+    #[serde(default)]
+    pub tools: Vec<ChatToolDefinition>,
+    #[serde(default)]
+    pub tool_history: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +136,7 @@ pub struct ChatResult {
     pub output_tokens: Option<u64>,
     pub tokens_per_second: Option<f64>,
     pub content: String,
+    pub tool_calls: Vec<ChatToolCall>,
 }
 
 #[derive(Default)]
@@ -153,6 +209,7 @@ struct StreamMetrics {
 struct ParsedFrame {
     delta: Option<String>,
     thinking: Option<String>,
+    tool_calls: Vec<ToolCallFragment>,
     done: bool,
     metrics: StreamMetrics,
 }
@@ -236,6 +293,44 @@ async fn verify_model(
     Ok(())
 }
 
+fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
+    let mut messages = request.messages.iter()
+        .filter_map(|message| serde_json::to_value(message).ok())
+        .collect::<Vec<_>>();
+    for entry in &request.tool_history {
+        match entry.get("kind").and_then(Value::as_str) {
+            Some("assistant_tool_calls") => {
+                let calls = entry.get("calls").and_then(Value::as_array).cloned().unwrap_or_default();
+                let tool_calls = calls.into_iter().filter_map(|call| {
+                    let id = call.get("id").and_then(Value::as_str)?;
+                    let name = call.get("name").and_then(Value::as_str)?;
+                    let arguments = call.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                    Some(if ollama {
+                        json!({"function":{"name":name,"arguments":arguments}})
+                    } else {
+                        json!({"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}})
+                    })
+                }).collect::<Vec<_>>();
+                if !tool_calls.is_empty() {
+                    messages.push(json!({"role":"assistant","content":if ollama { json!("") } else { Value::Null },"tool_calls":tool_calls}));
+                }
+            }
+            Some("tool_result") => {
+                let id = entry.get("id").and_then(Value::as_str).unwrap_or("");
+                let name = entry.get("name").and_then(Value::as_str).unwrap_or("");
+                let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
+                if ollama {
+                    messages.push(json!({"role":"tool","content":content,"name":name}));
+                } else {
+                    messages.push(json!({"role":"tool","tool_call_id":id,"name":name,"content":content}));
+                }
+            }
+            _ => {}
+        }
+    }
+    messages
+}
+
 fn ollama_body(request: &ChatRequest) -> Value {
     let generation = &request.generation;
     let mut options = json!({
@@ -260,19 +355,23 @@ fn ollama_body(request: &ChatRequest) -> Value {
     if let Some(seed) = generation.seed {
         options["seed"] = json!(seed);
     }
-    json!({
+    let mut body = json!({
         "model": request.model,
-        "messages": request.messages,
+        "messages": provider_messages(request, true),
         "stream": true,
         "options": options,
-    })
+    });
+    if !request.tools.is_empty() {
+        body["tools"] = json!(request.tools);
+    }
+    body
 }
 
 fn lm_studio_body(request: &ChatRequest) -> Value {
     let generation = &request.generation;
     let mut body = json!({
         "model": request.model,
-        "messages": request.messages,
+        "messages": provider_messages(request, false),
         "stream": true,
         "stream_options": {"include_usage": true},
         "temperature": generation.temperature,
@@ -284,6 +383,10 @@ fn lm_studio_body(request: &ChatRequest) -> Value {
     });
     if let Some(seed) = generation.seed {
         body["seed"] = json!(seed);
+    }
+    if !request.tools.is_empty() {
+        body["tools"] = json!(request.tools);
+        body["tool_choice"] = json!("auto");
     }
     body
 }
@@ -351,10 +454,27 @@ fn parse_ollama_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
+    let tool_calls = message.and_then(|message| message.get("tool_calls"))
+        .and_then(Value::as_array)
+        .map(|calls| calls.iter().enumerate().filter_map(|(index, call)| {
+            let function = call.get("function")?;
+            let name = function.get("name").and_then(Value::as_str).map(str::to_owned);
+            let arguments = function.get("arguments").map(|value| {
+                value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
+            });
+            Some(ToolCallFragment {
+                index,
+                id: call.get("id").and_then(Value::as_str).map(str::to_owned),
+                name,
+                arguments,
+            })
+        }).collect::<Vec<_>>())
+        .unwrap_or_default();
 
     Ok(Some(ParsedFrame {
         delta,
         thinking,
+        tool_calls,
         done: document
             .get("done")
             .and_then(Value::as_bool)
@@ -412,11 +532,28 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_owned);
+    let tool_calls = provider_delta.and_then(|delta| delta.get("tool_calls"))
+        .and_then(Value::as_array)
+        .map(|calls| calls.iter().enumerate().filter_map(|(fallback_index, call)| {
+            let index = call.get("index").and_then(Value::as_u64).unwrap_or(fallback_index as u64) as usize;
+            let function = call.get("function");
+            let arguments = function.and_then(|function| function.get("arguments")).map(|value| {
+                value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
+            });
+            Some(ToolCallFragment {
+                index,
+                id: call.get("id").and_then(Value::as_str).map(str::to_owned),
+                name: function.and_then(|function| function.get("name")).and_then(Value::as_str).map(str::to_owned),
+                arguments,
+            })
+        }).collect::<Vec<_>>())
+        .unwrap_or_default();
     let usage = document.get("usage");
 
     Ok(Some(ParsedFrame {
         delta,
         thinking,
+        tool_calls,
         done: false,
         metrics: StreamMetrics {
             prompt_tokens: usage
@@ -456,18 +593,82 @@ fn emit_thinking(
     .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())
 }
 
+fn merge_tool_call_fragments(
+    partial: &mut BTreeMap<usize, PartialToolCall>,
+    fragments: Vec<ToolCallFragment>,
+) -> Result<(), String> {
+    for fragment in fragments {
+        if fragment.index >= MAX_TOOL_CALLS_PER_TURN {
+            return Err(format!("The provider exceeded the {MAX_TOOL_CALLS_PER_TURN}-call limit for one turn."));
+        }
+        let call = partial.entry(fragment.index).or_default();
+        if let Some(id) = fragment.id {
+            if id.is_empty() || id.len() > MAX_TOOL_ID_BYTES || id.chars().any(char::is_control) {
+                return Err("The provider returned an invalid tool-call identifier.".into());
+            }
+            if call.id.as_ref().is_some_and(|existing| existing != &id) {
+                return Err("The provider changed a tool-call identifier while streaming.".into());
+            }
+            call.id = Some(id);
+        }
+        if let Some(name) = fragment.name {
+            if name.is_empty() || name.len() > MAX_TOOL_NAME_BYTES || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err("The provider returned an invalid tool name.".into());
+            }
+            if !call.name.is_empty() && call.name != name {
+                return Err("The provider changed a tool name while streaming.".into());
+            }
+            call.name = name;
+        }
+        if let Some(arguments) = fragment.arguments {
+            if call.arguments.len().saturating_add(arguments.len()) > MAX_TOOL_ARGUMENT_BYTES {
+                return Err("A tool call exceeded the 32 KiB argument limit.".into());
+            }
+            call.arguments.push_str(&arguments);
+        }
+    }
+    Ok(())
+}
+
+fn finish_tool_calls(partial: BTreeMap<usize, PartialToolCall>) -> Result<Vec<ChatToolCall>, String> {
+    let mut ids = HashSet::new();
+    let mut calls = Vec::with_capacity(partial.len());
+    for (index, call) in partial {
+        if call.name.is_empty() {
+            return Err("The provider returned a tool call without a function name.".into());
+        }
+        let id = call.id.unwrap_or_else(|| format!("ollama_call_{index}"));
+        if !ids.insert(id.clone()) {
+            return Err("The provider returned duplicate tool-call identifiers.".into());
+        }
+        let arguments_text = if call.arguments.is_empty() { "{}" } else { &call.arguments };
+        let arguments: Value = serde_json::from_str(arguments_text)
+            .map_err(|_| format!("The provider returned invalid JSON arguments for '{}'.", call.name))?;
+        if !arguments.is_object() {
+            return Err(format!("Tool '{}' arguments must be a JSON object.", call.name));
+        }
+        calls.push(ChatToolCall {
+            id,
+            kind: "function".into(),
+            function: ChatToolFunctionCall { name: call.name, arguments },
+        });
+    }
+    Ok(calls)
+}
+
 async fn stream_chat(
     app: &AppHandle,
     request_id: &str,
     provider: ChatProvider,
     mut response: Response,
     cancellation: &Notify,
-) -> Result<(StreamMetrics, String), String> {
+) -> Result<(StreamMetrics, String, Vec<ChatToolCall>), String> {
     let mut buffer = Vec::<u8>::new();
     let mut total_bytes = 0usize;
     let mut metrics = StreamMetrics::default();
     let mut content = String::new();
     let mut thinking_bytes = 0usize;
+    let mut partial_tool_calls = BTreeMap::<usize, PartialToolCall>::new();
     let mut finished = false;
 
     loop {
@@ -503,6 +704,7 @@ async fn stream_chat(
                 ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&line)?,
             };
             if let Some(frame) = frame {
+                merge_tool_call_fragments(&mut partial_tool_calls, frame.tool_calls)?;
                 if let Some(thinking) = frame.thinking {
                     emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
                 }
@@ -546,6 +748,7 @@ async fn stream_chat(
             ChatProvider::LmStudio | ChatProvider::LlamaCpp => parse_lm_studio_line(&buffer)?,
         };
         if let Some(frame) = frame {
+            merge_tool_call_fragments(&mut partial_tool_calls, frame.tool_calls)?;
             if let Some(thinking) = frame.thinking {
                 emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
             }
@@ -577,7 +780,11 @@ async fn stream_chat(
         return Err("The local provider stream ended before it sent a completion marker.".into());
     }
 
-    Ok((metrics, content))
+    let tool_calls = finish_tool_calls(partial_tool_calls)?;
+    if !tool_calls.is_empty() && !content.trim().is_empty() {
+        return Err("The provider mixed a tool call with ordinary assistant text in the same turn; this ambiguous response was rejected.".into());
+    }
+    Ok((metrics, content, tool_calls))
 }
 
 async fn read_error_body(mut response: Response) -> String {
@@ -653,7 +860,7 @@ pub async fn run(
     }
 
     let request_id = request.request_id.clone();
-    let (metrics, content) = stream_chat(
+    let (metrics, content, tool_calls) = stream_chat(
         &app,
         &request_id,
         request.provider_id,
@@ -681,6 +888,7 @@ pub async fn run(
         output_tokens: metrics.output_tokens,
         tokens_per_second,
         content,
+        tool_calls,
     })
 }
 
@@ -784,6 +992,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         let body = llama_cpp_body(&request, 3);
         assert_eq!(body["id_slot"], 3);
