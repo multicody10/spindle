@@ -295,11 +295,11 @@ function ChatView({
     }
     const remaining = 256 * 1024 - thinkingDraft.current.length;
     let end = Math.min(event.delta.length, remaining);
-    while (end > 0 && !/^[\\s\\S]$/.test(event.delta[end - 1] ?? "")) end--;
-    // Keep the cap byte-safe and avoid splitting a UTF-16 surrogate pair.
+    // Avoid cutting a UTF-16 surrogate pair at the display limit.
     if (end > 0 && end < event.delta.length) {
-      const code = event.delta.charCodeAt(end - 1);
-      if (code >= 0xD800 && code <= 0xDBFF) end--;
+      const last = event.delta.charCodeAt(end - 1);
+      const next = event.delta.charCodeAt(end);
+      if (last >= 0xD800 && last <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end--;
     }
     const next = event.delta.slice(0, end);
     thinkingDraft.current += next;
@@ -459,7 +459,7 @@ function ChatView({
           <div className="chat-empty">
             <div className="chat-empty-mark">✳</div>
             <strong>Your local chat workspace</strong>
-            <p>Choose a local GGUF below to have Spindle prepare and start it automatically, or select an already running local provider.</p>
+            <p>Choose a local GGUF below. Spindle inspects it now and loads it only after your first message, or select an already running local provider.</p>
           </div>
         ) : (
           <div className="chat-message-list">

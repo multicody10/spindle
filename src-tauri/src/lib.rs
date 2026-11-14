@@ -477,12 +477,16 @@ async fn delete_session(
     session_id: String,
     permissions: State<'_, permissions::PermissionBroker>,
 ) -> Result<(), String> {
-    let permission_session_id = session_id.clone();
+    let lookup_id = session_id.clone();
+    let session = with_project_database(&app, move |database| {
+        projects::get_session(database, lookup_id)
+    })
+    .await?;
+    permissions.revoke_all(&session.id)?;
     with_project_database(&app, move |database| {
         projects::delete_session(database, session_id)
     })
-    .await?;
-    permissions.revoke_all(&permission_session_id)
+    .await
 }
 #[tauri::command]
 async fn update_session_model(

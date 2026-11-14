@@ -429,6 +429,32 @@ fn parse_lm_studio_line(line: &[u8]) -> Result<Option<ParsedFrame>, String> {
     }))
 }
 
+fn emit_thinking(
+    app: &AppHandle,
+    request_id: &str,
+    thinking: &str,
+    emitted_bytes: &mut usize,
+) -> Result<(), String> {
+    let remaining = MAX_THINKING_BYTES.saturating_sub(*emitted_bytes);
+    let mut end = thinking.len().min(remaining);
+    while !thinking.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == 0 {
+        return Ok(());
+    }
+    let delta = thinking[..end].to_owned();
+    *emitted_bytes += delta.len();
+    app.emit(
+        "chat-thinking",
+        ChatThinkingDelta {
+            request_id: request_id.to_owned(),
+            delta,
+        },
+    )
+    .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())
+}
+
 async fn stream_chat(
     app: &AppHandle,
     request_id: &str,
@@ -488,42 +514,7 @@ async fn stream_chat(
                     .map_err(|_| "Could not deliver the model response to Spindle.".to_string())?;
                 }
                 if let Some(thinking) = frame.thinking {
-                    let remaining = MAX_THINKING_BYTES.saturating_sub(thinking_bytes);
-                    let mut end = thinking.len().min(remaining);
-                    while !thinking.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    if end > 0 {
-                        let delta = thinking[..end].to_owned();
-                        thinking_bytes += delta.len();
-                        app.emit(
-                            "chat-thinking",
-                            ChatThinkingDelta {
-                                request_id: request_id.to_owned(),
-                                delta,
-                            },
-                        )
-                        .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())?;
-                    }
-                }
-                if let Some(thinking) = frame.thinking {
-                    let remaining = MAX_THINKING_BYTES.saturating_sub(thinking_bytes);
-                    let mut end = thinking.len().min(remaining);
-                    while !thinking.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    if end > 0 {
-                        let delta = thinking[..end].to_owned();
-                        thinking_bytes += delta.len();
-                        app.emit(
-                            "chat-thinking",
-                            ChatThinkingDelta {
-                                request_id: request_id.to_owned(),
-                                delta,
-                            },
-                        )
-                        .map_err(|_| "Could not deliver provider reasoning to Spindle.".to_string())?;
-                    }
+                    emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
                 }
                 if frame.metrics.prompt_tokens.is_some() {
                     metrics.prompt_tokens = frame.metrics.prompt_tokens;
@@ -564,6 +555,9 @@ async fn stream_chat(
                     },
                 )
                 .map_err(|_| "Could not deliver the model response to Spindle.".to_string())?;
+            }
+            if let Some(thinking) = frame.thinking {
+                emit_thinking(app, request_id, &thinking, &mut thinking_bytes)?;
             }
             if frame.metrics.prompt_tokens.is_some() {
                 metrics.prompt_tokens = frame.metrics.prompt_tokens;
