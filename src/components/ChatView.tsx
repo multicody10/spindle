@@ -301,7 +301,7 @@ function ChatView({
         <section className="panel chat-help">
           <strong>No inference server is running</strong>
           <p>You can still choose a local GGUF model here. Selecting it does not start llama.cpp or load the model into memory.</p>
-          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library, then use the Load model button in this chat. Spindle installs a compatible backend if needed and starts the model for you.</span></div>
+          <div><b>Spindle Runtime</b><span>Choose any model from your indexed GGUF library. Spindle inspects and optimizes it, installs a compatible backend if needed, and starts it automatically.</span></div>
           <div><b>Ollama</b><span>To use Ollama, start its local service and install a model there. Refresh discovery afterward.</span></div>
           <div><b>LM Studio</b><span>To use LM Studio, start its local server and load a model in the Chat or Developer view.</span></div>
         </section>
@@ -315,7 +315,7 @@ function ChatView({
           <div className="chat-empty">
             <div className="chat-empty-mark">✳</div>
             <strong>Your local chat workspace</strong>
-            <p>Choose a model below, then press Load model. The runtime stays stopped until you explicitly start it.</p>
+            <p>Choose a local GGUF below to have Spindle prepare and start it automatically, or select an already running local provider.</p>
           </div>
         ) : (
           <div className="chat-message-list">
