@@ -545,7 +545,7 @@ async fn loop_agent(
             session_id: task.session_id.clone(),
             provider_id: provider,
             model: input.model.clone(),
-            messages: Vec::new(),
+            messages: bounded_context(&messages, input.context_tokens),
             context_tokens: input.context_tokens,
             generation: generation.clone(),
             tools: native_tool_definitions(),
@@ -1414,7 +1414,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_execution_stays_disabled_until_the_isolated_worker_is_ready() {
+    fn arbitrary_process_execution_stays_disabled_when_native_tool_calling_is_ready() {
         assert!(!execution_worker_ready());
         assert!(native_tool_calling_ready());
     }
