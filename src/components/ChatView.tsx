@@ -14,6 +14,29 @@ import type {
   RuntimeStatus
 } from "../lib/types";
 
+const MODEL_SELECTION_KEY = "spindle.model-selection.v1";
+
+interface RememberedModelSelection {
+  providerId: ChatProviderId;
+  modelId: string;
+  managedModelPath: string;
+}
+
+function readRememberedModel(sessionId?: string): RememberedModelSelection | null {
+  try {
+    const raw = sessionId
+      ? localStorage.getItem(MODEL_SELECTION_KEY + "." + sessionId)
+      : null;
+    const saved = JSON.parse(raw ?? localStorage.getItem(MODEL_SELECTION_KEY) ?? "null") as Partial<RememberedModelSelection> | null;
+    if (!saved || !["ollama", "lm-studio", "llama-cpp"].includes(saved.providerId ?? "") || typeof saved.modelId !== "string") return null;
+    return {
+      providerId: saved.providerId as ChatProviderId,
+      modelId: saved.modelId,
+      managedModelPath: typeof saved.managedModelPath === "string" ? saved.managedModelPath : ""
+    };
+  } catch { return null; }
+}
+
 const MAX_CHAT_MESSAGES = 64;
 const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
 const MAX_CHAT_HISTORY_BYTES = 256 * 1024;
@@ -74,7 +97,8 @@ interface ChatViewProps {
   onOpenModelManager: () => void;
   contextTokens: number;
   generation: GenerationSettings;
-  session?: ProjectSession | null;
+  session: ProjectSession;
+  onSessionTitleChange: (sessionId: string, title: string) => void;
 }
 
 function ChatView({
@@ -90,11 +114,14 @@ function ChatView({
   onOpenModelManager,
   contextTokens,
   generation,
-  session = null
+  session,
+  onSessionTitleChange
 }: ChatViewProps) {
-  const [providerId, setProviderId] = useState<ChatProviderId>(managedModelPath ? "llama-cpp" : "ollama");
-  const [ephemeralSessionId] = useState(() => crypto.randomUUID());
-  const [modelId, setModelId] = useState("");
+  const rememberedModel = readRememberedModel(session.id);
+  const [providerId, setProviderId] = useState<ChatProviderId>(
+    session.providerId ?? rememberedModel?.providerId ?? (managedModelPath ? "llama-cpp" : "ollama")
+  );
+  const [modelId, setModelId] = useState(session.modelId ?? rememberedModel?.modelId ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -110,10 +137,26 @@ function ChatView({
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const availableProviders = providers.filter((provider) => provider.available);
+  const selectedManagedModelPath = rememberedModel?.managedModelPath || managedModelPath;
   const managedRuntimeLoaded = Boolean(
     runtimeStatus?.running &&
-    runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === managedModelPath.replace(/\\/g, "/").toLowerCase()
+    runtimeStatus.modelPath?.replace(/\\/g, "/").toLowerCase() === selectedManagedModelPath.replace(/\\/g, "/").toLowerCase()
   );
+
+  const rememberModel = (nextProvider: ChatProviderId, nextModel: string, modelPath = "") => {
+    const selection: RememberedModelSelection = {
+      providerId: nextProvider,
+      modelId: nextModel,
+      managedModelPath: modelPath
+    };
+    try {
+      localStorage.setItem(MODEL_SELECTION_KEY, JSON.stringify(selection));
+      localStorage.setItem(MODEL_SELECTION_KEY + "." + session.id, JSON.stringify(selection));
+    } catch { /* SQLite session metadata remains the durable fallback. */ }
+    void api.updateSessionModel(session.id, nextProvider, nextModel).catch((reason) => {
+      setError("Could not save this chat's model selection: " + String(reason));
+    });
+  };
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
     if (providerId === "llama-cpp" && !selected?.available) {
@@ -150,6 +193,7 @@ function ChatView({
     try {
       const loadedModelId = await onSelectManagedModel(path, setStatus);
       setModelId(loadedModelId);
+      rememberModel("llama-cpp", loadedModelId, path);
       setStatus("Model loaded. Chat is ready.");
     } catch (reason) {
       setError("Could not prepare and load the selected model: " + String(reason));
@@ -169,20 +213,27 @@ function ChatView({
     setLastResult(null);
     setError(null);
     setStatus(session ? "Restoring saved session…" : "Select a running local provider and a loaded model.");
-    if (session?.providerId) setProviderId(session.providerId);
-    if (session?.modelId) setModelId(session.modelId);
-    if (session) {
-      void api.listSessionMessages(session.id).then((stored) => {
+    setProviderId(session.providerId ?? rememberedModel?.providerId ?? "ollama");
+    setModelId(session.modelId ?? rememberedModel?.modelId ?? "");
+    void api.listSessionMessages(session.id).then((stored) => {
         if (disposed) return;
         setMessages(stored.map(({ role, content }) => ({ role, content })));
         setStatus("Session restored.");
-      }).catch((reason) => {
-        if (!disposed) setError("Could not restore session history: " + String(reason));
-      });
-    }
+    }).catch((reason) => {
+      if (!disposed) setError("Could not restore session history: " + String(reason));
+    });
     return () => { disposed = true; };
-  }, [session?.id]);
+  }, [session.id]);
 
+
+  const autoLoadAttempt = useRef<string | null>(null);
+  useEffect(() => {
+    if (providerId !== "llama-cpp" || !selectedManagedModelPath || managedRuntimeLoaded || providersBusy || loadingManagedModel || sending) return;
+    const attemptKey = session.id + ":" + selectedManagedModelPath;
+    if (autoLoadAttempt.current === attemptKey) return;
+    autoLoadAttempt.current = attemptKey;
+    void selectManagedModel(selectedManagedModelPath);
+  }, [providerId, selectedManagedModelPath, managedRuntimeLoaded, providersBusy, loadingManagedModel, sending, session.id]);
 
   useEffect(() => () => {
     const current = activeRequest.current;
@@ -204,7 +255,7 @@ function ChatView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending || !selectedProvider?.available || !modelId) return;
+    if (!text || sending || !selectedProvider?.available || !modelId || !session.id) return;
 
     const id = crypto.randomUUID();
     const transcript: ChatMessage[] = [...messages, { role: "user", content: text }];
@@ -226,14 +277,23 @@ function ChatView({
 
     let unlisten: (() => void) | undefined;
     try {
-      if (session) {
-        await api.updateSessionModel(session.id, providerId, modelId);
-        await api.appendSessionMessage(session.id, "user", text);
+      if (session.title === "New session") {
+        const firstLine = text.split(/\r?\n/)[0]?.trim() ?? "New chat";
+        const title = firstLine.slice(0, 64) || "New chat";
+        try {
+          const renamed = await api.renameSession(session.id, title);
+          onSessionTitleChange(session.id, renamed.title);
+        } catch (reason) {
+          setError("The chat started, but its title could not be saved: " + String(reason));
+        }
       }
+      rememberModel(providerId, modelId, providerId === "llama-cpp" ? selectedManagedModelPath : "");
+      await api.updateSessionModel(session.id, providerId, modelId);
+      await api.appendSessionMessage(session.id, "user", text);
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
       const result = await api.startChat({
         requestId: id,
-        sessionId: session?.id ?? ephemeralSessionId,
+        sessionId: session.id,
         providerId,
         model: modelId,
         messages: history,
@@ -241,7 +301,7 @@ function ChatView({
         generation
       });
       setLastResult(result);
-      if (session && result.content.trim()) {
+      if (result.content.trim()) {
         try {
           await api.appendSessionMessage(session.id, "assistant", result.content);
           assistantPersisted.current = true;
@@ -251,7 +311,7 @@ function ChatView({
       }
       setStatus("Response complete.");
     } catch (reason) {
-      if (session && !assistantPersisted.current && assistantDraft.current.trim()) {
+      if (!assistantPersisted.current && assistantDraft.current.trim()) {
         try {
           await api.appendSessionMessage(session.id, "assistant", assistantDraft.current);
           assistantPersisted.current = true;
@@ -363,7 +423,7 @@ function ChatView({
                 aria-label="Model"
                 title="Choose a local model"
                 value={providerId === "llama-cpp"
-                  ? (managedModelPath ? "llama-cpp:" + managedModelPath : "")
+                  ? (selectedManagedModelPath ? "llama-cpp:" + selectedManagedModelPath : "")
                   : (modelId ? providerId + ":" + modelId : "")}
                 disabled={sending || loadingManagedModel}
                 onChange={(event) => {
@@ -378,15 +438,16 @@ function ChatView({
                   } else {
                     setProviderId(nextProvider);
                     setModelId(nextModel);
+                    rememberModel(nextProvider, nextModel);
                   }
                 }}
               >
                 <option value="">Choose a model…</option>
                 {(modelLibrary.length > 0 || managedModelPath) && (
                   <optgroup label="Spindle Runtime · GGUF">
-                    {managedModelPath && !modelLibrary.some((entry) => entry.path === managedModelPath) && (
-                      <option value={"llama-cpp:" + managedModelPath}>
-                        {managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}
+                    {selectedManagedModelPath && !modelLibrary.some((entry) => entry.path === selectedManagedModelPath) && (
+                      <option value={"llama-cpp:" + selectedManagedModelPath}>
+                        {selectedManagedModelPath.split(/[\\/]/).pop() ?? selectedManagedModelPath}
                       </option>
                     )}
                     {modelLibrary.map((entry) => (
@@ -428,11 +489,11 @@ function ChatView({
                 <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
                 {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
-              {providerId === "llama-cpp" && error && managedModelPath && !managedRuntimeLoaded && (
+              {providerId === "llama-cpp" && selectedManagedModelPath && !managedRuntimeLoaded && (
                 <button
                   type="button"
                   className="button subtle chat-load-model"
-                  onClick={() => void selectManagedModel(managedModelPath)}
+                  onClick={() => void selectManagedModel(selectedManagedModelPath)}
                   disabled={sending || loadingManagedModel}
                   title="Retry preparing and loading this model"
                 >
@@ -465,11 +526,7 @@ function ChatView({
             </div>
           </div>
         </div>
-        <p className="chat-footnote">
-          {session
-            ? "This conversation is saved to the selected project session."
-            : "New chats stay in memory for this window. Open a project session to save conversation history."}
-        </p>
+        <p className="chat-footnote">This conversation is saved to {session.title === "New session" ? "the selected project" : session.title}.</p>
       </div>
     </section>
   );
