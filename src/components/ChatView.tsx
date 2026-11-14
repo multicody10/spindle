@@ -361,66 +361,56 @@ function ChatView({
           <div className="chat-composer-footer">
             <div className="chat-model-controls">
               <select
-                className="chat-provider-picker"
-                aria-label="Provider"
-                value={providerId}
+                className="chat-model-picker"
+                aria-label="Model"
+                title="Choose a local model"
+                value={providerId === "llama-cpp"
+                  ? (managedModelPath ? "llama-cpp:" + managedModelPath : "")
+                  : (modelId ? providerId + ":" + modelId : "")}
                 disabled={sending || loadingManagedModel}
                 onChange={(event) => {
-                  const value = event.target.value as ChatProviderId;
-                  setProviderId(value);
-                  if (value === "llama-cpp") {
-                    const candidate = managedModelPath || modelLibrary[0]?.path;
-                    if (candidate) void selectManagedModel(candidate);
-                    else setModelId("");
+                  const value = event.target.value;
+                  const separator = value.indexOf(":");
+                  if (separator < 0) return;
+                  const nextProvider = value.slice(0, separator) as ChatProviderId;
+                  const nextModel = value.slice(separator + 1);
+                  if (!nextModel) return;
+                  if (nextProvider === "llama-cpp") {
+                    void selectManagedModel(nextModel);
                   } else {
-                    setModelId(providers.find((provider) => provider.id === value)?.models[0]?.id ?? "");
+                    setProviderId(nextProvider);
+                    setModelId(nextModel);
                   }
                 }}
               >
-                <option value="ollama">Ollama</option>
-                <option value="lm-studio">LM Studio</option>
-                <option value="llama-cpp">Spindle Runtime</option>
-              </select>
-              <select
-                className="chat-model-picker"
-                aria-label="Model"
-                value={providerId === "llama-cpp" ? managedModelPath : modelId}
-                disabled={sending || loadingManagedModel || (providerId === "llama-cpp"
-                  ? modelLibraryBusy || (modelLibrary.length === 0 && !managedModelPath)
-                  : !selectedProvider?.available || selectedProvider.models.length === 0)}
-                onChange={(event) => {
-                  if (providerId === "llama-cpp") void selectManagedModel(event.target.value);
-                  else setModelId(event.target.value);
-                }}
-              >
-                {providerId === "llama-cpp" ? (
-                  <>
-                    <option value="">Choose a local GGUF model…</option>
+                <option value="">Choose a model…</option>
+                {(modelLibrary.length > 0 || managedModelPath) && (
+                  <optgroup label="Spindle Runtime · GGUF">
                     {managedModelPath && !modelLibrary.some((entry) => entry.path === managedModelPath) && (
-                      <option value={managedModelPath}>{managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}</option>
+                      <option value={"llama-cpp:" + managedModelPath}>
+                        {managedModelPath.split(/[\\/]/).pop() ?? managedModelPath}
+                      </option>
                     )}
                     {modelLibrary.map((entry) => (
-                      <option key={entry.path} value={entry.path}>
+                      <option key={entry.path} value={"llama-cpp:" + entry.path}>
                         {entry.fileName} · {entry.source}
                       </option>
                     ))}
-                  </>
-                ) : (
-                  <>
-                    {selectedProvider?.models.map((model) => (
-                      <option key={model.id} value={model.id}>{model.id}</option>
-                    ))}
-                    {(!selectedProvider || selectedProvider.models.length === 0) && (
-                      <option value="">No models available</option>
-                    )}
-                  </>
+                  </optgroup>
                 )}
+                {providers.filter((provider) => provider.available && provider.id !== "llama-cpp").map((provider) => (
+                  <optgroup key={provider.id} label={provider.name}>
+                    {provider.models.map((model) => (
+                      <option key={model.id} value={provider.id + ":" + model.id}>{model.id}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
               <button
                 type="button"
                 className="chat-refresh"
                 onClick={onOpenModelManager}
-                disabled={sending}
+                disabled={sending || loadingManagedModel}
                 title="Open model library and runtime settings"
                 aria-label="Open model library and runtime settings"
               >
@@ -430,7 +420,7 @@ function ChatView({
                 type="button"
                 className="chat-refresh"
                 onClick={onRefreshProviders}
-                disabled={providersBusy || sending}
+                disabled={providersBusy || sending || loadingManagedModel}
                 title="Refresh local providers"
                 aria-label="Refresh local providers"
               >
@@ -454,8 +444,7 @@ function ChatView({
                   ⏏
                 </button>
               )}
-            </div>
-            <div className="chat-submit-controls">
+            </div>           <div className="chat-submit-controls">
               {sending ? (
                 <button className="button primary stop-button" onClick={() => void stop()}>Stop</button>
               ) : (
