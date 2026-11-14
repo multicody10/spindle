@@ -70,7 +70,7 @@ interface ChatViewProps {
   modelLibraryBusy: boolean;
   managedModelPath: string;
   runtimeStatus: RuntimeStatus | null;
-  onSelectManagedModel: (path: string) => Promise<string>;
+  onSelectManagedModel: (path: string, onProgress: (message: string) => void) => Promise<string>;
   onEjectManagedModel: () => Promise<void>;
   onOpenModelManager: () => void;
   contextTokens: number;
@@ -150,7 +150,7 @@ function ChatView({
     setLoadingManagedModel(true);
     setStatus("Inspecting and optimizing the selected GGUF…");
     try {
-      const loadedModelId = await onSelectManagedModel(path);
+      const loadedModelId = await onSelectManagedModel(path, setStatus);
       setModelId(loadedModelId);
       setStatus("Model loaded. Chat is ready.");
     } catch (reason) {
