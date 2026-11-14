@@ -374,6 +374,9 @@ function ChatView({
     let unlistenThinking: (() => void) | undefined;
     try {
       let effectiveModelId = modelId;
+      // Persist the user's prompt before a lazy runtime start can fail.
+      await api.updateSessionModel(session.id, providerId, effectiveModelId);
+      await api.appendSessionMessage(session.id, "user", text);
       if (providerId === "llama-cpp") {
         const selectedPath = selectedManagedModelPath || modelId;
         const normalizePath = (value: string | null | undefined) => value?.replace(/\\/g, "/").toLowerCase() ?? "";
@@ -405,7 +408,6 @@ function ChatView({
         }
       }
       await api.updateSessionModel(session.id, providerId, effectiveModelId);
-      await api.appendSessionMessage(session.id, "user", text);
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
       unlistenThinking = await listen<ChatThinkingDelta>("chat-thinking", (event) => appendThinking(event.payload, id));
       const result = await api.startChat({
