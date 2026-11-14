@@ -1301,6 +1301,7 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
     let mut pinned_indices = HashSet::<usize>::new();
     let mut has_system = false;
     let mut has_initial_user = false;
+
     for (index, entry) in history.iter().enumerate() {
         if entry.get("kind").and_then(Value::as_str) != Some("chat_message") {
             continue;
@@ -1323,55 +1324,50 @@ fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
         }
     }
 
+    // Keep each tool-call batch and all following results/messages together up
+    // to the next batch. Never preserve an assistant "done" message while
+    // silently dropping the tool evidence it depends on.
     let mut groups = Vec::<Vec<Value>>::new();
-    let mut index = 0usize;
-    while index < history.len() {
+    let mut current = Vec::<Value>::new();
+    for (index, entry) in history.iter().enumerate() {
         if pinned_indices.contains(&index) {
-            index += 1;
             continue;
         }
-        let entry = &history[index];
-        if entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls") {
-            let expected = entry
-                .get("calls")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
-            let mut group = vec![entry.clone()];
-            let mut results = 0usize;
-            index += 1;
-            while index < history.len() && results < expected {
-                let next = &history[index];
-                if next.get("kind").and_then(Value::as_str) == Some("tool_result") {
-                    group.push(next.clone());
-                    results += 1;
-                    index += 1;
-                } else {
-                    break;
-                }
-            }
-            groups.push(group);
-        } else {
-            groups.push(vec![entry.clone()]);
-            index += 1;
+        if entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls")
+            && !current.is_empty()
+        {
+            groups.push(std::mem::take(&mut current));
         }
+        current.push(entry.clone());
+    }
+    if !current.is_empty() {
+        groups.push(current);
     }
 
+    let pinned_bytes = pinned.iter().map(|entry| entry.to_string().len()).sum::<usize>();
     let mut selected = Vec::<Vec<Value>>::new();
-    let mut used = pinned
-        .iter()
-        .map(|entry| entry.to_string().len())
-        .sum::<usize>();
-    for group in groups.into_iter().rev() {
-        let size = group
-            .iter()
-            .map(|entry| entry.to_string().len())
-            .sum::<usize>();
-        if used.saturating_add(size) > budget {
+    let mut used = pinned_bytes;
+    for (index, group) in groups.into_iter().enumerate().rev() {
+        let size = group.iter().map(|entry| entry.to_string().len()).sum::<usize>();
+        let is_latest = selected.is_empty();
+        let effective_budget = if is_latest {
+            budget.max(used.saturating_add(size).min(MAX_CONTEXT_BYTES))
+        } else {
+            budget
+        };
+        if used.saturating_add(size) > effective_budget || used.saturating_add(size) > MAX_CONTEXT_BYTES {
+            if is_latest {
+                // If one atomic group exceeds the global context ceiling, keep
+                // the original system and user goal rather than a partial tool
+                // transcript. The model will receive an explicit context error
+                // instead of being invited to replay an uncertain side effect.
+                return pinned;
+            }
             break;
         }
         used += size;
         selected.push(group);
+        let _ = index;
     }
     selected.reverse();
 
@@ -1638,6 +1634,25 @@ mod tests {
         let truncated = diff_page(&diff, true, 0, 4_096);
         assert_eq!(truncated["complete"], false);
         assert_eq!(truncated["diffTruncated"], true);
+    }
+
+    #[test]
+    fn bounded_history_keeps_the_latest_tool_batch_atomic_over_the_soft_budget() {
+        let result = "x".repeat(8 * 1024);
+        let history = vec![
+            json!({"kind":"chat_message","role":"system","content":"system"}),
+            json!({"kind":"chat_message","role":"user","content":"goal"}),
+            json!({"kind":"assistant_tool_calls","calls":[
+                {"id":"call-1","name":"read_file","arguments":{}}
+            ]}),
+            json!({"kind":"tool_result","id":"call-1","name":"read_file","content":result}),
+            json!({"kind":"chat_message","role":"assistant","content":"I read the file."}),
+        ];
+        let bounded = bounded_tool_history(&history, 2 * 1024);
+        assert_eq!(bounded.len(), history.len());
+        assert_eq!(bounded[2]["kind"], "assistant_tool_calls");
+        assert_eq!(bounded[3]["kind"], "tool_result");
+        assert_eq!(bounded[4]["content"], "I read the file.");
     }
 
     #[test]
