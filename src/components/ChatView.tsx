@@ -386,7 +386,7 @@ function ChatView({
                 aria-label="Model"
                 value={providerId === "llama-cpp" ? managedModelPath : modelId}
                 disabled={sending || loadingManagedModel || (providerId === "llama-cpp"
-                  ? modelLibraryBusy || modelLibrary.length === 0
+                  ? modelLibraryBusy || (modelLibrary.length === 0 && !managedModelPath)
                   : !selectedProvider?.available || selectedProvider.models.length === 0)}
                 onChange={(event) => {
                   if (providerId === "llama-cpp") void selectManagedModel(event.target.value);
