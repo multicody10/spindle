@@ -159,29 +159,23 @@ function ChatView({
   };
   useEffect(() => {
     const selected = providers.find((provider) => provider.id === providerId);
-    if (providerId === "llama-cpp" && !selected?.available) {
-      setModelId("");
-      return;
-    }
-    if (!selected?.available) {
-      setModelId("");
-      const first = providers.find((provider) => provider.available);
-      if (first) {
-        setProviderId(first.id as ChatProviderId);
-        setModelId(first.models[0]?.id ?? "");
-      }
-      return;
-    }
-    if (!selected.models.some((model) => model.id === modelId)) {
-      setModelId(selected.models[0]?.id ?? "");
-    }
+    // Preserve the user's saved choice while its server is offline. Silently switching
+    // providers here would make a restart appear to forget the selected model.
+    if (!selected?.available || modelId) return;
+    setModelId(selected.models[0]?.id ?? "");
   }, [providers, providerId, modelId]);
 
   useEffect(() => {
-    if (providerId === "ollama" && availableProviders.length === 0 && modelLibrary.length > 0) {
+    if (
+      !session.providerId &&
+      !rememberedModel &&
+      providerId === "ollama" &&
+      availableProviders.length === 0 &&
+      modelLibrary.length > 0
+    ) {
       setProviderId("llama-cpp");
     }
-  }, [availableProviders.length, modelLibrary.length, providerId]);
+  }, [availableProviders.length, modelLibrary.length, providerId, rememberedModel, session.providerId]);
 
   const selectManagedModel = async (path: string) => {
     if (!path || sending || loadingManagedModel) return;
@@ -463,6 +457,11 @@ function ChatView({
                     ))}
                   </optgroup>
                 ))}
+                {selectedProvider && !selectedProvider.available && providerId !== "llama-cpp" && modelId && (
+                  <optgroup label={selectedProvider.name + " · offline"}>
+                    <option value={providerId + ":" + modelId}>{modelId} · unavailable</option>
+                  </optgroup>
+                )}
               </select>
               <button
                 type="button"
