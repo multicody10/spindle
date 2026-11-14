@@ -85,7 +85,10 @@ function App() {
     setMessage("New GGUF selected. Inspect it before configuring or loading the model.");
   }, [modelPath]);
 
-  const prepareChatModel = useCallback(async (path: string): Promise<string> => {
+  const prepareChatModel = useCallback(async (
+    path: string,
+    onProgress: (message: string) => void
+  ): Promise<string> => {
     const candidatePath = path.trim();
     if (!candidatePath) throw new Error("Select a local GGUF model first.");
 
@@ -95,7 +98,9 @@ function App() {
     setError(null);
 
     try {
+      onProgress("Inspecting GGUF metadata…");
       const inspected = await api.inspectModel(candidatePath);
+      onProgress("Restoring the model's saved configuration…");
       const saved = await api.loadConfiguration(inspected.path, configuration.profile);
       let nextConfiguration: ModelConfiguration;
       let detectedHardware = hardware ?? await api.hardware();
@@ -104,6 +109,7 @@ function App() {
       if (saved) {
         nextConfiguration = { ...saved, modelPath: inspected.path };
       } else {
+        onProgress("Optimizing the model for this hardware…");
         const optimized = await api.optimizeModel(inspected.path, configuration.profile);
         detectedHardware = optimized.hardware;
         nextConfiguration = { ...optimized.configuration, modelPath: inspected.path };
@@ -114,8 +120,10 @@ function App() {
       setConfiguration(nextConfiguration);
       setModelPath(inspected.path);
       setModel(inspected);
+      onProgress("Saving model configuration…");
       await api.saveConfiguration(nextConfiguration);
 
+      onProgress("Checking the managed runtime…");
       let current = await api.runtimeStatus();
       const normalizePath = (value: string | null | undefined) =>
         value?.replace(/\\/g, "/").toLowerCase() ?? "";
@@ -123,6 +131,7 @@ function App() {
         normalizePath(current.modelPath) === normalizePath(inspected.path);
 
       if (current.running && !sameModelAlreadyLoaded) {
+        onProgress("Stopping the previously loaded model…");
         current = await api.stopRuntime();
         setRuntimeStatus(current);
       }
@@ -143,6 +152,7 @@ function App() {
         if (!backend) throw new Error("No compatible llama.cpp backend is available.");
 
         if (!installed.has(backend)) {
+          onProgress("Installing the verified " + backend.toUpperCase() + " backend…");
           await api.installRuntime(backend);
           current = await api.runtimeStatus();
           setRuntimeStatus(current);
@@ -151,10 +161,12 @@ function App() {
           }
         }
 
+        onProgress("Starting " + backend.toUpperCase() + " and loading the model into memory…");
         current = await api.startRuntime(inspected.path, nextConfiguration, backend);
       }
 
       setRuntimeStatus(current);
+      onProgress("Connecting to the loaded model…");
       const discovered = await api.localProviders();
       setLocalProviders(discovered);
       const managedProvider = discovered.find((provider) =>
