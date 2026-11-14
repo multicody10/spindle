@@ -127,6 +127,15 @@ fn open(database: &Path) -> Result<Connection, String> {
            PRIMARY KEY(task_id, sequence)
          );
          CREATE INDEX IF NOT EXISTS idx_agent_run_messages_task ON agent_run_messages(task_id, sequence);
+         CREATE TABLE IF NOT EXISTS agent_run_tool_entries (
+           task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+           sequence INTEGER NOT NULL,
+           kind TEXT NOT NULL CHECK(kind IN ('assistant_tool_calls','tool_result')),
+           payload_json TEXT NOT NULL,
+           created_at INTEGER NOT NULL,
+           PRIMARY KEY(task_id, sequence)
+         );
+         CREATE INDEX IF NOT EXISTS idx_agent_run_tool_entries_task ON agent_run_tool_entries(task_id, sequence);
          CREATE TABLE IF NOT EXISTS project_memories (
            id TEXT PRIMARY KEY,
            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -146,7 +155,8 @@ fn open(database: &Path) -> Result<Connection, String> {
          CREATE INDEX IF NOT EXISTS idx_project_memories_active
            ON project_memories(project_id, archived, importance DESC, updated_at DESC);
          INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, unixepoch());
-         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch());",
+         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, unixepoch());
+         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, unixepoch());",
         )
         .map_err(|error| format!("Could not migrate project and agent storage: {error}"))?;
     Ok(connection)
@@ -822,6 +832,14 @@ pub struct AgentTranscriptMessage {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunEntry {
+    pub role: String,
+    pub content: String,
+    pub kind: Option<String>,
+}
+
 const MAX_AGENT_TRANSCRIPT_MESSAGES: usize = 128;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_AGENT_TRANSCRIPT_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -907,7 +925,11 @@ pub fn save_agent_message(
         return Err("The selected agent task no longer exists.".into());
     }
     let (count, bytes): (i64, i64) = transaction.query_row(
-        "SELECT COUNT(*),COALESCE(SUM(length(content)),0) FROM agent_run_messages WHERE task_id=?1",
+        "SELECT
+           (SELECT COUNT(*) FROM agent_run_messages WHERE task_id=?1)
+           + (SELECT COUNT(*) FROM agent_run_tool_entries WHERE task_id=?1),
+           COALESCE((SELECT SUM(length(content)) FROM agent_run_messages WHERE task_id=?1),0)
+           + COALESCE((SELECT SUM(length(payload_json)) FROM agent_run_tool_entries WHERE task_id=?1),0)",
         params![task_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|error| error.to_string())?;
@@ -918,7 +940,11 @@ pub fn save_agent_message(
     }
     let sequence: i64 = transaction
         .query_row(
-            "SELECT COALESCE(MAX(sequence),0)+1 FROM agent_run_messages WHERE task_id=?1",
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM (
+               SELECT sequence FROM agent_run_messages WHERE task_id=?1
+               UNION ALL
+               SELECT sequence FROM agent_run_tool_entries WHERE task_id=?1
+             )",
             params![task_id],
             |row| row.get(0),
         )
@@ -928,6 +954,84 @@ pub fn save_agent_message(
         params![task_id, sequence, role, content, now()],
     ).map_err(|error| format!("Could not persist the agent transcript: {error}"))?;
     transaction.commit().map_err(|error| error.to_string())
+}
+
+pub fn save_agent_tool_entry(
+    database: PathBuf,
+    task_id: String,
+    kind: String,
+    payload: Value,
+) -> Result<(), String> {
+    if !matches!(kind.as_str(), "assistant_tool_calls" | "tool_result") {
+        return Err("The agent tool transcript entry kind is invalid.".into());
+    }
+    let encoded = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
+    if encoded.is_empty() || encoded.len() > MAX_AGENT_TRANSCRIPT_MESSAGE_BYTES {
+        return Err("Agent tool transcript entries must contain 1 byte to 1 MiB.".into());
+    }
+
+    let mut connection = open(&database)?;
+    let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let valid: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE id=?1)",
+        params![task_id],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    if !valid {
+        return Err("The selected agent task no longer exists.".into());
+    }
+    let (count, bytes): (i64, i64) = transaction.query_row(
+        "SELECT
+           (SELECT COUNT(*) FROM agent_run_messages WHERE task_id=?1)
+           + (SELECT COUNT(*) FROM agent_run_tool_entries WHERE task_id=?1),
+           COALESCE((SELECT SUM(length(content)) FROM agent_run_messages WHERE task_id=?1),0)
+           + COALESCE((SELECT SUM(length(payload_json)) FROM agent_run_tool_entries WHERE task_id=?1),0)",
+        params![task_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|error| error.to_string())?;
+    if count as usize >= MAX_AGENT_TRANSCRIPT_MESSAGES
+        || (bytes as usize).saturating_add(encoded.len()) > MAX_AGENT_TRANSCRIPT_BYTES
+    {
+        return Err("The durable agent transcript reached its configured size limit. The run must compact its context before continuing.".into());
+    }
+    let sequence: i64 = transaction.query_row(
+        "SELECT COALESCE(MAX(sequence),0)+1 FROM (
+           SELECT sequence FROM agent_run_messages WHERE task_id=?1
+           UNION ALL
+           SELECT sequence FROM agent_run_tool_entries WHERE task_id=?1
+         )",
+        params![task_id],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    transaction.execute(
+        "INSERT INTO agent_run_tool_entries(task_id,sequence,kind,payload_json,created_at) VALUES (?1,?2,?3,?4,?5)",
+        params![task_id, sequence, kind, encoded, now()],
+    ).map_err(|error| format!("Could not persist the agent tool transcript: {error}"))?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+pub fn load_agent_run_entries(
+    database: PathBuf,
+    task_id: String,
+) -> Result<Vec<AgentRunEntry>, String> {
+    let connection = open(&database)?;
+    let mut statement = connection.prepare(
+        "SELECT role,content,kind FROM (
+           SELECT sequence,role,content,NULL AS kind
+             FROM agent_run_messages WHERE task_id=?1
+           UNION ALL
+           SELECT sequence,'tool' AS role,payload_json AS content,kind
+             FROM agent_run_tool_entries WHERE task_id=?1
+         ) ORDER BY sequence ASC"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map(params![task_id], |row| {
+        Ok(AgentRunEntry {
+            role: row.get(0)?,
+            content: row.get(1)?,
+            kind: row.get(2)?,
+        })
+    }).map_err(|error| error.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|error| error.to_string())
 }
 
 pub fn load_agent_messages(
@@ -1418,6 +1522,66 @@ mod tests {
         );
         archive_project(database.clone(), project.id).unwrap();
         assert!(list_projects(database.clone()).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agent_tool_entries_share_a_durable_order_without_overloading_chat_roles() {
+        let (root, database) = test_database();
+        let project_root = root.join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let project = create_project(
+            database.clone(),
+            project_root.display().to_string(),
+            "Example".into(),
+        ).unwrap();
+        let session = create_session(database.clone(), project.id.clone(), "Agent".into()).unwrap();
+        let task = create_task(
+            database.clone(),
+            project.id,
+            session.id,
+            "Inspect the project.".into(),
+        ).unwrap();
+
+        save_agent_message(
+            database.clone(),
+            task.id.clone(),
+            "user".into(),
+            "__SPINDLE_NATIVE_TOOL_HISTORY_V1__{\\"kind\\":\\"tool_result\\"}".into(),
+        ).unwrap();
+        save_agent_tool_entry(
+            database.clone(),
+            task.id.clone(),
+            "assistant_tool_calls".into(),
+            serde_json::json!({"kind":"assistant_tool_calls","calls":[{"id":"call-1","name":"read_file","arguments":{}}]}),
+        ).unwrap();
+        save_agent_tool_entry(
+            database.clone(),
+            task.id.clone(),
+            "tool_result".into(),
+            serde_json::json!({"kind":"tool_result","id":"call-1","name":"read_file","content":"{}"}),
+        ).unwrap();
+        save_agent_message(
+            database.clone(),
+            task.id.clone(),
+            "assistant".into(),
+            "I inspected the file.".into(),
+        ).unwrap();
+
+        let entries = load_agent_run_entries(database.clone(), task.id.clone()).unwrap();
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].role, "user");
+        assert!(entries[0].kind.is_none());
+        assert!(entries[0].content.starts_with("__SPINDLE_NATIVE_TOOL_HISTORY_V1__"));
+        assert_eq!(entries[1].kind.as_deref(), Some("assistant_tool_calls"));
+        assert_eq!(entries[2].kind.as_deref(), Some("tool_result"));
+        assert_eq!(entries[3].role, "assistant");
+        assert!(entries[3].kind.is_none());
+
+        let visible_messages = load_agent_messages(database, task.id).unwrap();
+        assert_eq!(visible_messages.len(), 2);
+        assert_eq!(visible_messages[0].role, "user");
+        assert_eq!(visible_messages[1].role, "assistant");
         fs::remove_dir_all(root).unwrap();
     }
 
