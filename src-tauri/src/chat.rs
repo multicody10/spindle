@@ -320,7 +320,7 @@ fn provider_messages(request: &ChatRequest, ollama: bool) -> Vec<Value> {
                 let name = entry.get("name").and_then(Value::as_str).unwrap_or("");
                 let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
                 if ollama {
-                    messages.push(json!({"role":"tool","content":content,"name":name}));
+                    messages.push(json!({"role":"tool","content":content,"tool_name":name}));
                 } else {
                     messages.push(json!({"role":"tool","tool_call_id":id,"name":name,"content":content}));
                 }
@@ -612,13 +612,13 @@ fn merge_tool_call_fragments(
             call.id = Some(id);
         }
         if let Some(name) = fragment.name {
-            if name.is_empty() || name.len() > MAX_TOOL_NAME_BYTES || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err("The provider returned an invalid tool name.".into());
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err("The provider returned an invalid tool name fragment.".into());
             }
-            if !call.name.is_empty() && call.name != name {
-                return Err("The provider changed a tool name while streaming.".into());
+            if call.name.len().saturating_add(name.len()) > MAX_TOOL_NAME_BYTES {
+                return Err("The provider returned an oversized tool name.".into());
             }
-            call.name = name;
+            call.name.push_str(&name);
         }
         if let Some(arguments) = fragment.arguments {
             if call.arguments.len().saturating_add(arguments.len()) > MAX_TOOL_ARGUMENT_BYTES {
@@ -1080,6 +1080,8 @@ mod tests {
         assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_abc");
         assert_eq!(body["messages"][2]["tool_call_id"], "call_abc");
         assert_eq!(body["messages"][2]["role"], "tool");
+        let ollama_messages = provider_messages(&request, true);
+        assert_eq!(ollama_messages[2]["tool_name"], "read_file");
     }
 
     #[test]

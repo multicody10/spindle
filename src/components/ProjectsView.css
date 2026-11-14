@@ -74,3 +74,13 @@
 .task-state.running { color:#8eb9e8; }
 .task-state.interrupted,.task-state.cancelled { color:#d7b777; }
 .task-state.completed { color:#83d5ad; }
+
+
+.tool-safety-note { color:#91a8c0; font-size:9px; line-height:1.5; border-left:2px solid #477cad; padding:6px 9px; margin:8px 0; background:#0d1823; }
+.agent-event-list > div.agent-event { border-left-color:#47576a; }
+.agent-event-list > div.agent-event.active { border-left-color:#6b9fd1; }
+.agent-event-list > div.agent-event.success { border-left-color:#67b58c; }
+.agent-event-list > div.agent-event.error { border-left-color:#c77b7b; }
+.agent-event-list > div.agent-event.warning { border-left-color:#c6a66c; }
+.agent-event-list > div.agent-event.error > span { color:#e1a0a0; }
+.agent-event-list > div.agent-event.success > span { color:#9bd5b5; }

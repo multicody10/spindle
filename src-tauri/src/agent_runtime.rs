@@ -25,15 +25,15 @@ use tokio::sync::Notify;
 const MAX_TURNS: usize = 48;
 const MAX_TOOL_CALLS: usize = 64;
 const MAX_CONTEXT_BYTES: usize = 240 * 1024;
-const MAX_TOOL_OUTPUT_BYTES: usize = 16 * 1024;
+const MAX_TOOL_OUTPUT_BYTES: usize = 12 * 1024;
 const MAX_READ_LINES: usize = 300;
 const TOOL_HISTORY_PREFIX: &str = "__SPINDLE_NATIVE_TOOL_HISTORY_V1__";
 const MAX_NATIVE_TOOL_CALLS_PER_TURN: usize = 8;
-const MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN: usize = 128 * 1024;
+const MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN: usize = 64 * 1024;
 const EVENT_NAME: &str = "agent-run-event";
 
-// Model-authored workspace tools must remain disabled until they execute in a
-// separately authenticated AppContainer worker and pass Windows adversarial tests.
+// Arbitrary process execution and external side-effect tools remain disabled until
+// they execute in a separately authenticated worker and pass Windows adversarial tests.
 pub fn execution_worker_ready() -> bool {
     false
 }
@@ -409,6 +409,7 @@ async fn loop_agent(
     for entry in recovered_tool_results {
         let id = entry.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
         let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+        save_tool_history_entry(context.database, &task.id, "user", &entry).await?;
         event(
             context.app,
             context.database,
@@ -416,7 +417,6 @@ async fn loop_agent(
             "tool_recovered_interrupted",
             json!({"callId":id,"tool":name}),
         ).await?;
-        save_tool_history_entry(context.database, &task.id, "user", &entry).await?;
         tool_history.push(entry);
     }
 
@@ -1268,13 +1268,13 @@ fn native_tool_definitions() -> Vec<ChatToolDefinition> {
             "path":{"type":"string"}
         }), &["path"]),
         definition("create_file", "Create a new UTF-8 file in the isolated task worktree. Requires project write permission.", json!({
-            "path":{"type":"string"},"content":{"type":"string","maxLength":1048576}
+            "path":{"type":"string"},"content":{"type":"string","maxLength":32768}
         }), &["path","content"]),
         definition("write_file", "Replace an existing file only when its current revision matches the revision returned by read_file.", json!({
-            "path":{"type":"string"},"content":{"type":"string","maxLength":1048576},"expectedRevision":{"type":"string"}
+            "path":{"type":"string"},"content":{"type":"string","maxLength":32768},"expectedRevision":{"type":"string"}
         }), &["path","content","expectedRevision"]),
         definition("edit_file", "Replace one exact, unique text anchor in an existing file in the isolated task worktree.", json!({
-            "path":{"type":"string"},"oldText":{"type":"string","minLength":1,"maxLength":131072},"newText":{"type":"string","maxLength":131072}
+            "path":{"type":"string"},"oldText":{"type":"string","minLength":1,"maxLength":32768},"newText":{"type":"string","maxLength":32768}
         }), &["path","oldText","newText"]),
         definition("delete_file", "Delete a file in the isolated task worktree only when its revision matches read_file.", json!({
             "path":{"type":"string"},"expectedRevision":{"type":"string"}
