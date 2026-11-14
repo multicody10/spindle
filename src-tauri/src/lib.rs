@@ -1387,6 +1387,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request).is_ok());
     }
@@ -1406,6 +1408,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request)
             .unwrap_err()
@@ -1427,6 +1431,8 @@ mod tests {
             }],
             context_tokens: 4096,
             generation: configuration.generation,
+            tools: Vec::new(),
+            tool_history: Vec::new(),
         };
         assert!(validate_chat_request(&request).is_err());
     }

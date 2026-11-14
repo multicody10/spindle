@@ -25,10 +25,11 @@ use tokio::sync::Notify;
 const MAX_TURNS: usize = 48;
 const MAX_TOOL_CALLS: usize = 64;
 const MAX_CONTEXT_BYTES: usize = 240 * 1024;
-const MAX_TOOL_OUTPUT_BYTES: usize = 48 * 1024;
+const MAX_TOOL_OUTPUT_BYTES: usize = 16 * 1024;
 const MAX_READ_LINES: usize = 300;
 const TOOL_HISTORY_PREFIX: &str = "__SPINDLE_NATIVE_TOOL_HISTORY_V1__";
 const MAX_NATIVE_TOOL_CALLS_PER_TURN: usize = 8;
+const MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN: usize = 128 * 1024;
 const EVENT_NAME: &str = "agent-run-event";
 
 // Model-authored workspace tools must remain disabled until they execute in a
@@ -404,6 +405,21 @@ async fn loop_agent(
         }
     }
 
+    let recovered_tool_results = recover_incomplete_tool_calls(&tool_history);
+    for entry in recovered_tool_results {
+        let id = entry.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
+        let name = entry.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+        event(
+            context.app,
+            context.database,
+            &task.id,
+            "tool_recovered_interrupted",
+            json!({"callId":id,"tool":name}),
+        ).await?;
+        save_tool_history_entry(context.database, &task.id, "user", &entry).await?;
+        tool_history.push(entry);
+    }
+
     if messages.is_empty() {
         let (manager, grant) = task_workspace(worktree)?;
         let mut project_context = build_context(&manager, &grant, project)?;
@@ -461,7 +477,11 @@ async fn loop_agent(
 
     let mut generation = input.generation.clone();
     generation.max_output_tokens = generation.max_output_tokens.clamp(256, 4_096);
-    let mut tool_calls = 0usize;
+    let mut tool_calls = tool_history.iter()
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls"))
+        .filter_map(|entry| entry.get("calls").and_then(Value::as_array))
+        .map(Vec::len)
+        .sum::<usize>();
     let mut malformed = 0usize;
     let mut repeated_reads = HashMap::<String, usize>::new();
     let mut seen_reads = HashSet::<String>::new();
@@ -507,6 +527,12 @@ async fn loop_agent(
             if tool_calls.saturating_add(response.tool_calls.len()) > MAX_TOOL_CALLS {
                 return Err(format!("The agent exceeded its {MAX_TOOL_CALLS}-call tool budget."));
             }
+            let argument_bytes = response.tool_calls.iter()
+                .map(|call| call.function.arguments.to_string().len())
+                .sum::<usize>();
+            if argument_bytes > MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN {
+                return Err(format!("The provider returned more than {MAX_NATIVE_TOOL_ARGUMENT_BYTES_PER_TURN} bytes of tool arguments in one turn."));
+            }
             let mut unique_ids = HashSet::new();
             let calls = response.tool_calls.iter().map(|call| {
                 if !unique_ids.insert(call.id.clone()) {
@@ -529,9 +555,27 @@ async fn loop_agent(
                 let target = arguments.get("path").and_then(Value::as_str).unwrap_or("").to_owned();
                 event(
                     context.app, context.database, &task.id, "tool_started",
-                    json!({"callId":call.id,"tool":tool,"target":target,"turn":turn,"arguments":arguments}),
+                    json!({
+                        "callId":call.id,"tool":tool,"target":target,"turn":turn,
+                        "argumentBytes":arguments.to_string().len()
+                    }),
                 ).await?;
-                let result = execute_tool(context, task, worktree, &tool, arguments).await;
+                let fingerprint = format!("{tool}:{arguments}");
+                let repeated_read = if is_read_tool(&tool) {
+                    let count = repeated_reads.entry(fingerprint.clone()).or_default();
+                    *count += 1;
+                    *count > 2 && seen_reads.contains(&fingerprint)
+                } else {
+                    false
+                };
+                if is_read_tool(&tool) && !repeated_read {
+                    seen_reads.insert(fingerprint);
+                }
+                let result = if repeated_read {
+                    Err("This exact read-only request was repeated without new evidence. Choose a different path or query.".to_string())
+                } else {
+                    execute_tool(context, task, worktree, &tool, arguments).await
+                };
                 let tool_result = match result {
                     Ok((value, changed)) => {
                         if changed {
@@ -995,7 +1039,7 @@ fn parse_turn(raw: &str) -> Result<ModelTurn, String> {
 fn is_read_tool(tool: &str) -> bool {
     matches!(
         tool,
-        "list_files" | "read_file" | "search_files" | "get_diff" | "list_skills" | "load_skill"
+        "list_files" | "read_file" | "search_files" | "get_diff" | "list_skills" | "load_skill" | "git_status" | "git_history"
     )
 }
 
@@ -1137,6 +1181,32 @@ async fn save_tool_history_entry(
 ) -> Result<(), String> {
     let encoded = serde_json::to_string(entry).map_err(|error| error.to_string())?;
     save_message(database, task_id, role, &format!("{TOOL_HISTORY_PREFIX}{encoded}")).await
+}
+
+fn recover_incomplete_tool_calls(history: &[Value]) -> Vec<Value> {
+    let Some((index, pending)) = history.iter().enumerate().rev()
+        .find(|(_, entry)| entry.get("kind").and_then(Value::as_str) == Some("assistant_tool_calls"))
+    else {
+        return Vec::new();
+    };
+    let calls = pending.get("calls").and_then(Value::as_array).cloned().unwrap_or_default();
+    let completed = history.iter().skip(index + 1)
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("tool_result"))
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    calls.into_iter().filter_map(|call| {
+        let id = call.get("id").and_then(Value::as_str)?;
+        if completed.contains(id) {
+            return None;
+        }
+        let name = call.get("name").and_then(Value::as_str).unwrap_or("unknown");
+        Some(json!({
+            "kind":"tool_result",
+            "id":id,
+            "name":name,
+            "content":"{\"ok\":false,\"error\":\"Spindle restarted before this tool result was committed. Its side effect may or may not have occurred. Do not replay this call automatically. Inspect current files and Git status, then continue from the observed state.\"}"
+        }))
+    }).collect()
 }
 
 fn bounded_tool_history(history: &[Value], budget: usize) -> Vec<Value> {
@@ -1319,6 +1389,37 @@ mod tests {
     fn agent_execution_stays_disabled_until_the_isolated_worker_is_ready() {
         assert!(!execution_worker_ready());
         assert!(native_tool_calling_ready());
+    }
+
+    #[test]
+    fn interrupted_tool_calls_are_recovered_without_replaying_side_effects() {
+        let history = vec![
+            json!({"kind":"assistant_tool_calls","calls":[
+                {"id":"call-1","name":"write_file","arguments":{"path":"src/lib.rs"}},
+                {"id":"call-2","name":"read_file","arguments":{"path":"README.md"}}
+            ]}),
+            json!({"kind":"tool_result","id":"call-1","name":"write_file","content":"{\"ok\":true}"}),
+        ];
+        let recovered = recover_incomplete_tool_calls(&history);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0]["id"], "call-2");
+        assert!(recovered[0]["content"].as_str().unwrap().contains("Do not replay this call automatically"));
+    }
+
+    #[test]
+    fn recovered_tool_budget_counts_prior_calls() {
+        let history = vec![
+            json!({"kind":"assistant_tool_calls","calls":[
+                {"id":"call-1","name":"read_file","arguments":{}},
+                {"id":"call-2","name":"read_file","arguments":{}}
+            ]})
+        ];
+        let count = history.iter()
+            .filter(|entry| entry["kind"] == "assistant_tool_calls")
+            .filter_map(|entry| entry["calls"].as_array())
+            .map(Vec::len)
+            .sum::<usize>();
+        assert_eq!(count, 2);
     }
 
     #[test]

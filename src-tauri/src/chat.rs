@@ -1002,6 +1002,87 @@ mod tests {
     }
 
     #[test]
+    fn parses_ollama_native_tool_call_payloads() {
+        let frame = parse_ollama_line(
+            br#"{"message":{"tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":true}"#,
+        ).unwrap().unwrap();
+        assert_eq!(frame.tool_calls.len(), 1);
+        let mut partial = BTreeMap::new();
+        merge_tool_call_fragments(&mut partial, frame.tool_calls).unwrap();
+        let calls = finish_tool_calls(partial).unwrap();
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].function.arguments["path"], "README.md");
+    }
+
+    #[test]
+    fn assembles_streamed_openai_tool_call_fragments() {
+        let first = parse_lm_studio_line(
+            br#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":"}}]}}]}"#,
+        ).unwrap().unwrap();
+        let second = parse_lm_studio_line(
+            br#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"README.md\"}"}}]}}]}"#,
+        ).unwrap().unwrap();
+        let mut partial = BTreeMap::new();
+        merge_tool_call_fragments(&mut partial, first.tool_calls).unwrap();
+        merge_tool_call_fragments(&mut partial, second.tool_calls).unwrap();
+        let calls = finish_tool_calls(partial).unwrap();
+        assert_eq!(calls[0].id, "call_abc");
+        assert_eq!(calls[0].function.arguments["path"], "README.md");
+    }
+
+    #[test]
+    fn rejects_malformed_and_oversized_tool_arguments() {
+        let mut malformed = BTreeMap::new();
+        merge_tool_call_fragments(&mut malformed, vec![ToolCallFragment {
+            index: 0, id: Some("call_bad".into()), name: Some("read_file".into()),
+            arguments: Some("{".into()),
+        }]).unwrap();
+        assert!(finish_tool_calls(malformed).is_err());
+
+        let mut oversized = BTreeMap::new();
+        assert!(merge_tool_call_fragments(&mut oversized, vec![ToolCallFragment {
+            index: 0, id: Some("call_big".into()), name: Some("write_file".into()),
+            arguments: Some("x".repeat(MAX_TOOL_ARGUMENT_BYTES + 1)),
+        }]).is_err());
+    }
+
+    #[test]
+    fn provider_bodies_send_tool_schemas_and_round_trip_history() {
+        let configuration = crate::domain::ModelConfiguration::new(
+            "sample.gguf".into(), crate::domain::OptimizationProfile::Automatic,
+        );
+        let request = ChatRequest {
+            request_id:"123e4567-e89b-12d3-a456-426614174000".into(),
+            session_id:"session-one".into(),
+            provider_id:ChatProvider::LmStudio,
+            model:"local-model".into(),
+            messages:vec![ChatMessage { role:"user".into(), content:"Inspect README".into() }],
+            context_tokens:4096,
+            generation:configuration.generation,
+            tools:vec![ChatToolDefinition {
+                kind:"function".into(),
+                function:ChatToolFunctionDefinition {
+                    name:"read_file".into(),
+                    description:"Read a file".into(),
+                    parameters:json!({"type":"object","properties":{"path":{"type":"string"}}}),
+                },
+            }],
+            tool_history:vec![
+                json!({"kind":"assistant_tool_calls","calls":[
+                    {"id":"call_abc","name":"read_file","arguments":{"path":"README.md"}}
+                ]}),
+                json!({"kind":"tool_result","id":"call_abc","name":"read_file","content":"{\"ok\":true}"}),
+            ],
+        };
+        let body = lm_studio_body(&request);
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+        assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_abc");
+        assert_eq!(body["messages"][2]["tool_call_id"], "call_abc");
+        assert_eq!(body["messages"][2]["role"], "tool");
+    }
+
+    #[test]
     fn provider_identifiers_match_the_frontend_contract() {
         assert_eq!(ChatProvider::Ollama.id(), "ollama");
         assert_eq!(ChatProvider::LmStudio.id(), "lm-studio");
