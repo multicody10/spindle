@@ -212,7 +212,7 @@ function ChatView({
     setMessages([]);
     setLastResult(null);
     setError(null);
-    setStatus(session ? "Restoring saved session…" : "Select a running local provider and a loaded model.");
+    setStatus("Restoring saved session…");
     setProviderId(session.providerId ?? rememberedModel?.providerId ?? "ollama");
     setModelId(session.modelId ?? rememberedModel?.modelId ?? "");
     void api.listSessionMessages(session.id).then((stored) => {
@@ -287,7 +287,6 @@ function ChatView({
           setError("The chat started, but its title could not be saved: " + String(reason));
         }
       }
-      rememberModel(providerId, modelId, providerId === "llama-cpp" ? selectedManagedModelPath : "");
       await api.updateSessionModel(session.id, providerId, modelId);
       await api.appendSessionMessage(session.id, "user", text);
       unlisten = await listen<ChatDelta>("chat-delta", (event) => appendDelta(event.payload, id));
