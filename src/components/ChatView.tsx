@@ -428,7 +428,18 @@ function ChatView({
                 <span className={"status-dot " + (selectedProvider?.available || managedRuntimeLoaded ? "" : "red")} />
                 {selectedProvider?.available ? selectedProvider.name : managedRuntimeLoaded ? "Model loaded" : providerId === "llama-cpp" ? "Runtime stopped" : "Offline"}
               </span>
-              {providerId === "llama-cpp" && managedRuntimeLoaded && (
+              {providerId === "llama-cpp" && error && managedModelPath && !managedRuntimeLoaded && (
+                <button
+                  type="button"
+                  className="button subtle chat-load-model"
+                  onClick={() => void selectManagedModel(managedModelPath)}
+                  disabled={sending || loadingManagedModel}
+                  title="Retry preparing and loading this model"
+                >
+                  Retry
+                </button>
+              )}
+              {providerId === "llama-cpp" && runtimeStatus?.running && (
                 <button
                   type="button"
                   className="chat-refresh"
@@ -436,8 +447,8 @@ function ChatView({
                     setError("Could not eject the managed model: " + String(reason));
                   })}
                   disabled={sending || loadingManagedModel}
-                  title="Eject model and release memory"
-                  aria-label="Eject model and release memory"
+                  title="Eject the managed model and release memory"
+                  aria-label="Eject the managed model and release memory"
                 >
                   ⏏
                 </button>
