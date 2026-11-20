@@ -2640,6 +2640,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rappct"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11762a6aea3b0a87a51b21cb2085d252f10c01cd0f3f505e1da002cf6e2427da"
+dependencies = [
+ "thiserror 2.0.21",
+ "windows",
+]
+
+[[package]]
 name = "raw-window-handle"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3328,8 +3338,8 @@ dependencies = [
 name = "spindle"
 version = "0.4.0"
 dependencies = [
- "reqwest",
  "rappct",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3643,9 +3653,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-build"
-version = "2.7.4"
+version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adddb0e648752aaac5da9c3c3c6a68e1e87cab55e3b757b18a9441ef8c3ac614"
+checksum = "3e03658bfc9cb60f96a05b7d07a7f7cdfbf4c30b1bbfcb5cf6b5342cc2c9e0bc"
 dependencies = [
  "anyhow",
  "cargo_toml",
@@ -3807,9 +3817,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-utils"
-version = "2.10.2"
+version = "2.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "362ab21cd4cc713f2a02b1a9b5688198b1541cfb6907c4281e9190e0f0ef4aa3"
+checksum = "28d1d33d4453c5df0bf1672dbc7ada69d8ed74f56a4316d964a4aa73d4ecd3ad"
 dependencies = [
  "anyhow",
  "brotli",
@@ -3874,16 +3884,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fed54709c5b3a53d09bb1c113ea4f5ceafd1e772ddcb0030a82e1d56c087b08"
 dependencies = [
  "new_debug_unreachable",
-]
-
-[[package]]
-name = "rappct"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11762a6aea3b0a87a51b21cb2085d252f10c01cd0f3f505e1da002cf6e2427da"
-dependencies = [
- "thiserror 2.0.21",
- "windows",
 ]
 
 [[package]]
